@@ -3,6 +3,8 @@
 This repository to contains the code and methodology required to create 3D printable globes as per Koelemeijer and Winterbourne 2021 (submitted).  
 
 ![overview image](/Overview.JPEG)
+_Example of how a coloured global map can be represented as a physical object._
+
 
 ## Overview
 Measurements and models of global geophysical parameters such as potential fields, seismic velocity models and dynamic topography are well represented as traditional contoured and / or coloured maps. However, as teaching aids and for outreach, they offer little impact. Modern 3D printing techniques help to visualise these and other concepts that are difficult to grasp, such as the intangible structures in the deep Earth.
