@@ -1,6 +1,6 @@
 # 3D_globes
 
-This repository to contains the code and methodology required to create 3D printable globes as per Koelemeijer and Winterbourne (2021, Frontiers in Earth Science).  
+This repository to contains the code and methodology required to create 3D printable globes as per Koelemeijer and Winterbourne (2021), published in Frontiers in Earth Science (https://www.frontiersin.org/articles/10.3389/feart.2021.669095/abstract).  
 
 ![overview image](/Overview.JPEG)
 _Example of how a coloured global map can be represented as a physical object._
