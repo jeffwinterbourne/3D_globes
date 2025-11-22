@@ -129,3 +129,29 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# 3d models
+*.obj
+*.fbx
+*.glb
+*.gltf
+*.stl
+*.3mf
+
+# data files
+*.grd
+*.tif
+*.tiff
+*.nc
+*.hdf
+*.hdf5
+*.dat

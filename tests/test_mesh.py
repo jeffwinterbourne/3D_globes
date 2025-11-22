@@ -1,0 +1,84 @@
+import numpy as np
+import pytest
+from globe3d.mesh import (
+    generate_sphere_points_fibonacci,
+    generate_sphere_points_icosahedron,
+    resize_globe,
+    hollow_mesh,
+    create_inner_mesh,
+    compute_scale_factor,
+    project_vertices_to_sphere
+)
+
+def test_generate_sphere_points_fibonacci():
+    n_points = 100
+    radius = 2.0
+    vertices, faces = generate_sphere_points_fibonacci(n_points, radius)
+    
+    assert vertices.shape == (n_points, 3)
+    assert faces.shape[1] == 3
+    
+    # Check if points are on the sphere
+    radii = np.linalg.norm(vertices, axis=1)
+    assert np.allclose(radii, radius)
+
+def test_generate_sphere_points_icosahedron():
+    subdivisions = 1
+    radius = 1.0
+    vertices, faces = generate_sphere_points_icosahedron(subdivisions, radius)
+    
+    # Icosahedron has 12 vertices, subdivision adds more
+    assert vertices.shape[0] > 12
+    assert faces.shape[1] == 3
+    
+    # Check if points are on the sphere
+    radii = np.linalg.norm(vertices, axis=1)
+    assert np.allclose(radii, radius)
+
+def test_resize_globe():
+    vertices = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    scale = 2.0
+    resized = resize_globe(vertices, scale)
+    
+    expected = np.array([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    assert np.allclose(resized, expected)
+
+def test_compute_scale_factor():
+    vertices = np.array([[10.0, 0.0, 0.0], [0.0, 5.0, 0.0]])
+    desired_cube_size = 10.0
+    # Max val is 10.0. We want scaled max to be 5.0. So scale factor should be 0.5.
+    scale_factor = compute_scale_factor(vertices, desired_cube_size)
+    assert scale_factor == 0.5
+
+def test_project_vertices_to_sphere():
+    vertices = np.array([[2.0, 0.0, 0.0], [0.0, 0.5, 0.0]])
+    radius = 1.0
+    projected = project_vertices_to_sphere(vertices, radius)
+    
+    radii = np.linalg.norm(projected, axis=1)
+    assert np.allclose(radii, radius)
+
+def test_create_inner_mesh():
+    # Create a simple mesh (tetrahedron)
+    vertices = np.array([
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1]
+    ], dtype=float)
+    faces = np.array([
+        [0, 2, 1],
+        [0, 1, 3],
+        [0, 3, 2],
+        [1, 2, 3]
+    ])
+    
+    thickness = 0.1
+    inner_mesh = create_inner_mesh(vertices, faces, thickness)
+    
+    # Inner mesh should be smaller
+    assert inner_mesh.vertices.shape == vertices.shape
+    assert inner_mesh.faces.shape == faces.shape
+    
+    # Check bounding box is smaller
+    assert np.all(inner_mesh.bounds[1] - inner_mesh.bounds[0] < 1.0)
