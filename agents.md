@@ -1,6 +1,9 @@
 # Agent Guide - 3D Globes
 
-This document provides context and instructions for AI agents working on the `globe3d` project.
+This document provides context and instructions for AI agents working on the `globe3d` project.  Note that this is a
+repo level AGENTS.md - the guidance in 3d_globes/AGENTS.md is complementary to this document and includes important 
+information about setting up and using python in the lead developer's environment which should not be included in any
+documents within the git repository
 
 ## Project Purpose
 The `globe3d` library is designed to generate 3D printable models of globes with exaggerated topography. It processes geographic grid data (NetCDF, TIFF) and applies it to spherical meshes, handling displacement, vertex coloring, and hollowing for 3D printing.
@@ -32,15 +35,18 @@ pip install -e .
     - `displacement.py`: Topography application.
     - `io.py`: File export.
     - `plot.py`: Visualization.
-- **Docstrings**: All functions and classes must have descriptive docstrings (Google or NumPy style) explaining parameters and return values.
+- **Docstrings**: All functions and classes MUST have complete and up-to-date docstrings (Google or NumPy style) explaining all parameters (including kwargs) and return values. When updating a function's signature, you MUST update its docstring concurrently to ensure documentation standards are met.
 - **Type Hinting**: Use type hints where helpful for clarity.
 
 ## Quality & Testing
-- **Expectation**: We expect high code quality and reliability.
+- **Expectation**: We expect high code quality and reliability. Running tests is an expectation with each iteration to ensure no regression.
 - **Testing Framework**: `pytest`.
 - **Coverage**: Aim for high test coverage (>90%). All new features must include unit tests.
 - **Running Tests**:
   ```bash
-  pytest tests/
+  pytest
   ```
 - **Verification**: Before submitting changes, ensure all tests pass and the code is lint-free.
+
+## Documentation Maintenance
+- **Requirement**: Both this `agents.md` file and the `DEVELOPER_GUIDE.md` file must be kept live and up-to-date with any major architectural or structural changes. Future agents will rely on both documents to understand the current state of the project.

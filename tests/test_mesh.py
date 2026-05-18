@@ -7,8 +7,10 @@ from globe3d.mesh import (
     hollow_mesh,
     create_inner_mesh,
     compute_scale_factor,
-    project_vertices_to_sphere
+    project_vertices_to_sphere,
+    split_mesh_hemispheres
 )
+import trimesh
 
 def test_generate_sphere_points_fibonacci():
     n_points = 100
@@ -82,3 +84,23 @@ def test_create_inner_mesh():
     
     # Check bounding box is smaller
     assert np.all(inner_mesh.bounds[1] - inner_mesh.bounds[0] < 1.0)
+
+def test_split_mesh_hemispheres():
+    # Create a simple sphere
+    mesh = trimesh.creation.icosphere(radius=1.0)
+    
+    # Split it
+    top, bottom = split_mesh_hemispheres(mesh)
+    
+    assert top is not None
+    assert bottom is not None
+    
+    # Check if they are watertight (capped)
+    assert top.is_watertight
+    assert bottom.is_watertight
+    
+    # Check bounds roughly
+    # Top should have z >= 0 (approx)
+    assert top.bounds[0][2] >= -0.01
+    # Bottom should have z <= 0 (approx)
+    assert bottom.bounds[1][2] <= 0.01

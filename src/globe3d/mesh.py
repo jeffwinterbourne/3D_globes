@@ -381,3 +381,32 @@ def create_inner_mesh(outer_vertices, outer_faces, thickness):
     inner_mesh.apply_scale(scale_factor)
     inner_mesh.apply_translation((center - inner_mesh.centroid))  # keep the inner mesh centered
     return inner_mesh
+
+
+def split_mesh_hemispheres(mesh, normal=(0, 0, 1), origin=(0, 0, 0)):
+    """
+    Splits a mesh into two halves using a plane.
+
+    Args:
+        mesh (trimesh.Trimesh): The mesh to split.
+        normal (tuple): Normal vector of the splitting plane (default: Z-axis).
+        origin (tuple): Point on the splitting plane (default: origin).
+
+    Returns:
+        tuple: (top_mesh, bottom_mesh) where top_mesh is on the positive side of the normal.
+               Returns (None, None) if splitting fails.
+    """
+    try:
+        # slice_plane returns a new mesh that is capped by default in recent trimesh versions
+        # We need to slice twice to get both halves
+        
+        # Top half (keep positive side)
+        top_half = mesh.slice_plane(plane_origin=origin, plane_normal=normal, cap=True)
+        
+        # Bottom half (keep negative side -> normal is inverted)
+        bottom_half = mesh.slice_plane(plane_origin=origin, plane_normal=[-n for n in normal], cap=True)
+        
+        return top_half, bottom_half
+    except Exception as e:
+        print(f"Error splitting mesh: {e}")
+        return None, None

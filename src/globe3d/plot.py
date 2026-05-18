@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_vertex_distribution(vertices, title='Vertex Distribution', sample_size=10000):
+def plot_vertex_distribution(vertices, title='Vertex Distribution', sample_size=0):
     """
     Creates a quick scatter plot (using lat/lon) of the vertex distribution.
     For very large meshes, a random subset (sample_size) is shown.
@@ -9,9 +9,9 @@ def plot_vertex_distribution(vertices, title='Vertex Distribution', sample_size=
     Parameters:
       vertices: (n_points x 3) numpy array.
       title (str): Plot title.
-      sample_size (int): Number of points to sample for plotting.
+      sample_size (int): Number of points to sample for plotting (default 0). Set to 0 to plot all points.
     """
-    if vertices.shape[0] > sample_size:
+    if vertices.shape[0] > sample_size and sample_size > 0:
         idx = np.random.choice(vertices.shape[0], sample_size, replace=False)
         pts = vertices[idx]
     else:

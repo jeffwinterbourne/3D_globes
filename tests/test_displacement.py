@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
-from globe3d.displacement import displace_vertices, assign_vertex_colors
+from globe3d.displacement import displace_vertices, assign_vertex_colors, assign_vertex_colors_image
+from unittest.mock import patch
 
 def test_displace_vertices():
     # Create a simple grid
@@ -39,3 +40,45 @@ def test_assign_vertex_colors():
     
     assert colors.shape == (1, 3)
     assert np.all(colors >= 0.0) and np.all(colors <= 1.0)
+
+@patch('matplotlib.pyplot.imread')
+def test_assign_vertex_colors_image(mock_imread):
+    # Mock a simple 2x2 image
+    # Top-left (red), Top-right (green)
+    # Bottom-left (blue), Bottom-right (white)
+    img = np.array([
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        [[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]]
+    ])
+    mock_imread.return_value = img
+    
+    # Vertices:
+    # 1. North Pole (should map to top row, probably average or one of them depending on longitude)
+    # 2. South Pole (bottom row)
+    # 3. Equator, 0 lon (center of image horizontally, center vertically)
+    
+    vertices = np.array([
+        [0.0, 0.0, 1.0],   # North Pole
+        [0.0, 0.0, -1.0],  # South Pole
+        [1.0, 0.0, 0.0]    # Equator, 0 lon
+    ])
+    
+    colors = assign_vertex_colors_image(vertices, 'dummy.png')
+    
+    assert colors.shape == (3, 3)
+    # Check bounds
+    assert np.all(colors >= 0.0) and np.all(colors <= 1.0)
+    
+    # North pole -> lat 90 -> v=0. Should be top row.
+    # South pole -> lat -90 -> v=height-1. Should be bottom row.
+    # Equator -> lat 0 -> v=height/2.
+    
+    # Given nearest neighbor and 2x2 image:
+    # v=0 -> row 0
+    # v=1 -> row 1
+    
+    # North pole (0,0,1) -> lat 90 -> v=0.
+    # Lon is undefined but usually 0 -> u=0.5 -> index 0 or 1.
+    # Let's check if it picked a valid color from the image
+    assert np.any(np.all(colors[0] == img.reshape(-1, 3), axis=1))
+
