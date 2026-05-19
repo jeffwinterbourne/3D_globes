@@ -12,13 +12,13 @@ The `globe3d` library is designed to generate 3D printable models of globes with
 The project uses a Conda environment named `pygmt`.
 
 **Activation:**
-```bash
+```
 conda activate pygmt
 ```
 
 **Installation:**
 The package should be installed in editable mode to facilitate development:
-```bash
+```
 pip install -e .
 ```
 
@@ -43,7 +43,7 @@ pip install -e .
 - **Testing Framework**: `pytest`.
 - **Coverage**: Aim for high test coverage (>90%). All new features must include unit tests.
 - **Running Tests**:
-  ```bash
+  ```
   pytest
   ```
 - **Verification**: Before submitting changes, ensure all tests pass and the code is lint-free.
