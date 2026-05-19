@@ -31,6 +31,14 @@ def generate_sphere_points_fibonacci(n_points, radius=1.0, center=(0.0, 0.0, 0.0
     # Triangulate via the convex hull so we get faces for STL export.
     hull = ConvexHull(vertices)
     faces = hull.simplices
+
+    # ConvexHull does not guarantee consistent outward-facing winding order.
+    # Fix normals so all faces point outward, which is required for correct
+    # STL/OBJ export and boolean operations.
+    temp_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    temp_mesh.fix_normals()
+    faces = temp_mesh.faces
+
     return vertices, faces
 
 
@@ -156,6 +164,12 @@ def generate_sphere_points_icosahedron(subdivisions, radius=1.0, center=(0.0, 0.
     vertices, faces = create_icosahedron(radius, center)
     for _ in range(subdivisions):
         vertices, faces = subdivide_icosahedron(vertices, faces, radius, center)
+
+    # Ensure consistent outward-facing winding order.
+    temp_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    temp_mesh.fix_normals()
+    faces = temp_mesh.faces
+
     return vertices, faces
 
 
@@ -410,3 +424,108 @@ def split_mesh_hemispheres(mesh, normal=(0, 0, 1), origin=(0, 0, 0)):
     except Exception as e:
         print(f"Error splitting mesh: {e}")
         return None, None
+
+
+def create_hollow_hemispheres(
+    outer_vertices, outer_faces,
+    inner_vertices, inner_faces,
+    plane_normal=(0, 0, 1),
+    plane_origin=(0, 0, 0),
+    max_cap_edge=None,
+    engine=None,
+):
+    """
+    Creates two properly manifold, hollow hemispheres for 3D printing.
+
+    Implements the recommended workflow:
+      1. Split the outer mesh into two capped hemispheres along a plane.
+      2. Optionally refine the cap triangulation.
+      3. Boolean-subtract the inner mesh from each hemisphere.
+
+    This order of operations (split first, then hollow) avoids the issue
+    where capping a pre-hollowed mesh seals the inner cavity.
+
+    Parameters:
+      outer_vertices (numpy.ndarray): (N, 3) array of displaced outer shell vertices.
+      outer_faces (numpy.ndarray): (F, 3) array of outer shell face indices.
+      inner_vertices (numpy.ndarray): (M, 3) array of inner shell vertices
+          (typically a smooth, un-displaced sphere).
+      inner_faces (numpy.ndarray): (G, 3) array of inner shell face indices.
+      plane_normal (tuple): Normal vector of the cutting plane (default: z-axis,
+          splitting into north/south hemispheres).
+      plane_origin (tuple): A point on the cutting plane (default: origin).
+      max_cap_edge (float, optional): Maximum edge length for cap triangles.
+          If provided, the capped hemispheres are subdivided so that no edge
+          exceeds this length.  Since surface edges on a high-resolution globe
+          are already very short, only the large cap triangles are affected.
+          Recommended value: roughly 2-5% of the globe diameter.
+      engine (str, optional): Boolean engine for trimesh ('manifold' or
+          'blender'). If None, uses trimesh's default.
+
+    Returns:
+      tuple: (top_half, bottom_half) as trimesh.Trimesh objects.
+          Returns (None, None) if splitting or boolean operations fail.
+    """
+    import trimesh.remesh
+
+    normal = np.array(plane_normal, dtype=np.float64)
+    origin = np.array(plane_origin, dtype=np.float64)
+
+    # Build trimesh objects and ensure outward-facing normals.
+    outer_mesh = trimesh.Trimesh(vertices=outer_vertices, faces=outer_faces)
+    outer_mesh.fix_normals()
+    inner_mesh = trimesh.Trimesh(vertices=inner_vertices, faces=inner_faces)
+    inner_mesh.fix_normals()
+
+    # Step 1: Split the outer mesh into two capped hemispheres.
+    try:
+        top_outer = outer_mesh.slice_plane(
+            plane_origin=origin, plane_normal=normal, cap=True
+        )
+        bottom_outer = outer_mesh.slice_plane(
+            plane_origin=origin, plane_normal=-normal, cap=True
+        )
+    except Exception as e:
+        print(f"Error splitting outer mesh: {e}")
+        return None, None
+
+    if top_outer is None or bottom_outer is None:
+        print("Error: slice_plane returned None.")
+        return None, None
+
+    # Step 2: Optionally refine cap triangulation.
+    if max_cap_edge is not None and max_cap_edge > 0:
+        v, f = trimesh.remesh.subdivide_to_size(
+            top_outer.vertices, top_outer.faces, max_cap_edge
+        )
+        top_outer = trimesh.Trimesh(vertices=v, faces=f)
+        top_outer.fix_normals()
+
+        v, f = trimesh.remesh.subdivide_to_size(
+            bottom_outer.vertices, bottom_outer.faces, max_cap_edge
+        )
+        bottom_outer = trimesh.Trimesh(vertices=v, faces=f)
+        bottom_outer.fix_normals()
+
+    # Step 3: Boolean-subtract the inner mesh from each hemisphere.
+    bool_kwargs = {}
+    if engine is not None:
+        bool_kwargs['engine'] = engine
+
+    try:
+        top_hollow = trimesh.boolean.difference(
+            [top_outer, inner_mesh], **bool_kwargs
+        )
+    except Exception as e:
+        print(f"Error performing boolean subtraction on top hemisphere: {e}")
+        return None, None
+
+    try:
+        bottom_hollow = trimesh.boolean.difference(
+            [bottom_outer, inner_mesh], **bool_kwargs
+        )
+    except Exception as e:
+        print(f"Error performing boolean subtraction on bottom hemisphere: {e}")
+        return None, None
+
+    return top_hollow, bottom_hollow

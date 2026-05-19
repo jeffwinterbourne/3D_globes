@@ -18,7 +18,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Geographic grid loading (NetCDF & TIFF) | `grid.py` | `load_netcdf_grid`, `load_tiff_grid`, `list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` | `displace_vertices`, `calculate_displacement_scale` |
 | Vertex coloring (grid-based & image-based) | `displacement.py` | `assign_vertex_colors`, `assign_vertex_colors_image` |
-| Mesh hollowing & hemisphere splitting | `mesh.py` | `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
+| Mesh hollowing & hemisphere splitting | `mesh.py` | `create_hollow_hemispheres`, `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
 | Mesh utilities (resize, re-project, chirality) | `mesh.py` | `resize_globe`, `project_vertices_to_sphere`, `invert_chirality`, `compute_scale_factor` |
 | File export (STL & OBJ with vertex colors) | `io.py` | `write_stl_binary`, `write_obj_with_vertex_colors` |
 | Visual QA | `plot.py` | `plot_vertex_distribution` |
@@ -104,7 +104,10 @@ This is the largest module (~413 lines) and carries all geometry logic. It has *
 | `generate_sphere_points_fibonacci(n_points, radius, center)` | [Fibonacci lattice](https://en.wikipedia.org/wiki/Fibonacci_lattice) | Exact (`n_points`) | Near-uniform density; faces computed via `scipy.spatial.ConvexHull`. Preferred for production globes (e.g. 1 million points). |
 | `generate_sphere_points_icosahedron(subdivisions, radius, center)` | Recursive midpoint subdivision of an icosahedron | Grows as `10 × 4^s + 2` where `s` = subdivisions | Perfectly uniform triangle area; vertex count grows exponentially. |
 
-Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces` is `(F, 3)` int32.
+Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces` is `(F, 3)` int32. Both generators call `trimesh.fix_normals()` internally to guarantee outward-facing winding order.
+
+> [!NOTE]
+> `scipy.spatial.ConvexHull` (used by the Fibonacci generator) does **not** guarantee consistent face winding. Without the `fix_normals` post-processing, the resulting mesh can have negative volume (inward-facing normals), which causes slicer artefacts and boolean operation failures.
 
 **Internal helpers** (not exported through `__init__.py`):
 - `create_icosahedron(radius, center)` — creates the base 12-vertex / 20-face icosahedron.
@@ -122,17 +125,25 @@ Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces`
 
 #### Hollowing
 
-There are **two hollowing strategies**, suited to different use cases:
+There are **three hollowing strategies**, suited to different use cases:
 
-1. **Subtractive combination** (`combine_subtractive_globes`) — The recommended approach for colored globes. You generate *two* separate sphere meshes (outer and inner) with independent vertex counts, displace the outer, then combine them into a single mesh where the inner surface has inverted chirality. This produces a visually hollow globe that most slicers treat correctly. Vertex colors can be merged in the same call.
+1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces. Supports optional cap refinement via `max_cap_edge` (subdivides large cap triangles using `trimesh.remesh.subdivide_to_size`).
 
-2. **Boolean difference** (`hollow_mesh`) — Uses `trimesh.boolean.difference` to compute a watertight, true-CSG hollow shell. More geometrically correct but significantly slower and more fragile (depends on mesh quality). Accepts optional pre-built inner mesh data, or generates one automatically via `create_inner_mesh` by scaling the outer mesh down.
+2. **Subtractive combination** (`combine_subtractive_globes`) — A fast, deterministic approach that concatenates outer and inner face arrays with inverted chirality on the inner shell. Suitable for **whole-globe visualisation** (e.g. viewing in MeshLab) but **not for split-and-print workflows** — see warning below.
+
+3. **Boolean difference** (`hollow_mesh`) — Uses `trimesh.boolean.difference` on the whole globe. More geometrically correct than subtractive combination but significantly slower. Accepts optional pre-built inner mesh data, or generates one automatically via `create_inner_mesh`.
+
+> [!WARNING]
+> **Do not combine `combine_subtractive_globes` with `split_mesh_hemispheres` for 3D printing.** When `slice_plane(cap=True)` cuts a pre-hollowed mesh, the cap fills the entire cross-section (both outer and inner circles), sealing the inner cavity. The slicer then treats the hemisphere as solid. Use `create_hollow_hemispheres` instead, which splits *before* hollowing.
 
 `create_inner_mesh(outer_vertices, outer_faces, thickness)` scales the outer mesh down about its bounding-box centre so that the thinnest wall is `thickness` units.
 
 #### Hemisphere splitting
 
 `split_mesh_hemispheres(mesh, normal, origin)` uses `trimesh.Trimesh.slice_plane` to cut a mesh into two halves along a plane (default: the equator, `normal=(0,0,1)`). Both halves are **capped** so they can be printed flat-side-down.
+
+> [!NOTE]
+> For hollow globe printing, prefer `create_hollow_hemispheres` which handles splitting *and* hollowing in the correct order.
 
 ---
 
@@ -257,7 +268,7 @@ Converts vertex positions to `(lat, lon)` and plots them as a scatter plot. For 
 
 Re-exports all user-facing functions from the four core modules. The `__all__` list controls star-imports. Only the following are considered public API:
 
-From **mesh**: `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron`, `resize_globe`, `hollow_mesh`, `combine_subtractive_globes`, `compute_scale_factor`, `invert_chirality`, `split_mesh_hemispheres`
+From **mesh**: `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron`, `resize_globe`, `hollow_mesh`, `combine_subtractive_globes`, `compute_scale_factor`, `invert_chirality`, `split_mesh_hemispheres`, `create_hollow_hemispheres`
 
 From **grid**: `list_netcdf_variables`, `load_netcdf_grid`, `load_tiff_grid`
 
@@ -277,7 +288,7 @@ The following diagram shows the full data-flow for producing a 3D-printable, col
 
 ```mermaid
 flowchart TD
-    A["1. Generate base sphere<br/><code>generate_sphere_points_fibonacci(n, radius_mm)</code>"] --> B
+    A["1. Generate outer sphere<br/><code>generate_sphere_points_fibonacci(n, radius_mm)</code>"] --> B
     A2["Generate inner sphere<br/><code>generate_sphere_points_fibonacci(n_inner, radius_mm * inner_scale)</code>"] --> E
 
     B["2. Load geographic grid<br/><code>load_netcdf_grid(file)</code>"] --> C
@@ -286,13 +297,11 @@ flowchart TD
 
     D["4. Displace outer vertices<br/><code>displace_vertices(vertices, lats, lons, grid, scale)</code>"] --> E
 
-    E["5. Combine outer + inner (hollow)<br/><code>combine_subtractive_globes(...)</code>"] --> F
+    E["5. Split outer & boolean hollow<br/><code>create_hollow_hemispheres(outer_v, outer_f, inner_v, inner_f)</code>"] --> G
 
-    F["6. Create trimesh & split hemispheres<br/><code>trimesh.Trimesh(v, f)</code><br/><code>split_mesh_hemispheres(mesh)</code>"] --> G
+    G["6. Assign colors to each half<br/><code>assign_vertex_colors(half.vertices, ...)</code><br/>or <code>assign_vertex_colors_image(...)</code>"] --> H
 
-    G["7. Assign colors to each half<br/><code>assign_vertex_colors(half.vertices, ...)</code><br/>or <code>assign_vertex_colors_image(...)</code>"] --> H
-
-    H["8. Export<br/><code>write_obj_with_vertex_colors(file, v, f, colors)</code>"]
+    H["7. Export<br/><code>write_obj_with_vertex_colors(file, v, f, colors)</code>"]
 ```
 
 ### Step-by-step (with reference parameters)
@@ -340,35 +349,27 @@ outer_vertices = displace_vertices(
 
 Only the outer shell is displaced. The inner shell remains a smooth sphere.
 
-#### 5. Combine into a hollow mesh
+#### 5. Split and hollow into hemispheres
 
 ```python
-combined_vertices, combined_faces = combine_subtractive_globes(
-    outer_vertices, outer_faces,
-    inner_vertices, inner_faces
-)
-```
-
-If you need to carry colors through the combination step:
-
-```python
-combined_vertices, combined_faces, combined_colors = combine_subtractive_globes(
+top_half, bottom_half = create_hollow_hemispheres(
     outer_vertices, outer_faces,
     inner_vertices, inner_faces,
-    outer_colors=outer_colors, inner_colors=inner_colors
+    max_cap_edge=2.0,      # optional: refine cap triangles to ≤2mm edges
+    engine='manifold'       # recommended boolean engine
 )
 ```
 
-#### 6. Split into hemispheres
+This single call handles the correct order of operations internally:
+1. Splits the displaced outer shell at the equator with a capped plane cut.
+2. Optionally subdivides the large cap triangles (if `max_cap_edge` is set).
+3. Boolean-subtracts the smooth inner sphere from each half.
+4. Returns two watertight, manifold hollow hemispheres.
 
-```python
-mesh = trimesh.Trimesh(vertices=combined_vertices, faces=combined_faces)
-top_half, bottom_half = split_mesh_hemispheres(mesh)
-```
+> [!TIP]
+> For a 40mm-radius globe with 1M outer points, a `max_cap_edge` of 2.0 mm is a good default. Surface edges are already ~0.15mm, so only the cap triangles are affected.
 
-Both halves are capped by `slice_plane(cap=True)` so they are watertight and can be placed flat-side-down on a print bed.
-
-#### 7. Color each hemisphere
+#### 6. Color each hemisphere
 
 Colors should be applied **after** splitting because the split operation creates new vertices at the cut plane that weren't in the original mesh.
 
@@ -383,7 +384,7 @@ top_colors = assign_vertex_colors(
 top_colors = assign_vertex_colors_image(top_half.vertices, 'earth_texture.png')
 ```
 
-#### 8. Export
+#### 7. Export
 
 ```python
 write_obj_with_vertex_colors('globe_top.obj', top_half.vertices, top_half.faces, top_colors)
@@ -422,22 +423,21 @@ The library uses a **right-handed Cartesian** system centred at the origin, with
 
 The canonical working unit is **millimetres** for model space (radii, displacements) because 3D printers universally use mm. Real-world data is assumed to be in **metres** for elevation / depth (the standard for datasets like ETOPO). The `calculate_displacement_scale` function handles the km→m→mm conversion internally.
 
-### Why two hollowing approaches?
+### Why three hollowing approaches?
 
-**Subtractive combination** is fast and deterministic — it simply concatenates vertex and face arrays with inverted chirality on the inner shell. It produces a mesh that *looks* hollow and that most slicers will process correctly, even though it is not strictly a single closed manifold.
+**Boolean hemisphere pipeline** (`create_hollow_hemispheres`) is the recommended approach for 3D printing. It splits the outer mesh first, then boolean-subtracts the inner sphere from each half. This produces properly manifold, watertight hemispheres. The boolean operation is performed by the `manifold3d` engine (or Blender as a fallback).
 
-**Boolean difference** (via `trimesh` / Blender backend) produces a topologically correct watertight shell but is:
-- Much slower (minutes for a million-point mesh).
-- Fragile — non-manifold or self-intersecting input will cause failures.
-- Overkill for most 3D printing use cases.
+**Subtractive combination** (`combine_subtractive_globes`) is fast and deterministic — it simply concatenates vertex and face arrays with inverted chirality on the inner shell. It produces a mesh that *looks* hollow and is suitable for whole-globe visualisation. However, **it cannot be combined with `split_mesh_hemispheres`** for 3D printing because the equatorial cap seals the inner cavity.
 
-The subtractive approach is recommended for typical workflows.
+**Boolean difference** (`hollow_mesh`) performs a whole-globe boolean subtraction. Useful for exporting a complete hollow globe without splitting, but slower and more fragile than the subtractive approach.
 
 ### Face chirality
 
-In STL and OBJ, the **winding order** of a triangle's vertices determines the direction of its face normal (right-hand rule). Outward-pointing normals are essential for correct slicer behaviour. The library handles this in two places:
-1. `invert_chirality` — used by `combine_subtractive_globes` to flip the inner shell's normals inward.
-2. `fix_face_chirality` — used by `write_obj_with_vertex_colors` to post-process all faces, ensuring normals point away from the sphere centre.
+In STL and OBJ, the **winding order** of a triangle's vertices determines the direction of its face normal (right-hand rule). Outward-pointing normals are essential for correct slicer behaviour. The library handles this in several places:
+1. `generate_sphere_points_fibonacci` / `generate_sphere_points_icosahedron` — call `trimesh.fix_normals()` after face generation to guarantee outward normals.
+2. `invert_chirality` — used by `combine_subtractive_globes` to flip the inner shell's normals inward.
+3. `fix_face_chirality` — used by `write_obj_with_vertex_colors` to post-process all faces, ensuring normals point away from the sphere centre.
+4. `create_hollow_hemispheres` — calls `fix_normals()` on both input meshes before boolean operations.
 
 ### Vertex colors in OBJ
 
@@ -464,7 +464,7 @@ The test suite lives in `tests/` and uses `pytest`.
 
 | Test file | Module | Key tests |
 |---|---|---|
-| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds) |
+| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds), `create_hollow_hemispheres` (watertight, correct volume, z-bounds) |
 | `test_displacement.py` | `displacement.py` | `displace_vertices` (constant grid → predictable radius change), `assign_vertex_colors` (output shape & range), `assign_vertex_colors_image` (mocked image, coordinate mapping) |
 | `test_grid.py` | `grid.py` | `list_netcdf_variables` and `load_netcdf_grid` using mocked `netCDF4.Dataset` |
 

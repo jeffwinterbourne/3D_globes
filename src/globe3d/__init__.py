@@ -6,7 +6,8 @@ from .mesh import (
     combine_subtractive_globes,
     compute_scale_factor,
     invert_chirality,
-    split_mesh_hemispheres
+    split_mesh_hemispheres,
+    create_hollow_hemispheres
 )
 from .grid import (
     list_netcdf_variables,
@@ -36,6 +37,7 @@ __all__ = [
     "compute_scale_factor",
     "invert_chirality",
     "split_mesh_hemispheres",
+    "create_hollow_hemispheres",
     "list_netcdf_variables",
     "load_netcdf_grid",
     "load_tiff_grid",
