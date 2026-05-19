@@ -67,29 +67,41 @@ def fix_face_chirality(vertices, faces, center=(0.0, 0.0, 0.0)):
     return np.array(corrected_faces, dtype=np.int32)
 
 
-def write_obj_with_vertex_colors(filename, vertices, faces, colors, center=(0.0, 0.0, 0.0)):
+def write_obj_with_vertex_colors(filename, vertices, faces, colors,
+                                  center=(0.0, 0.0, 0.0), fix_normals=False):
     """
-    Writes a mesh with per-vertex colors to an OBJ file, ensuring that each face is oriented 
-    correctly (with outward pointing normals) using a common vertex-color extension.
-    The vertex lines are written as "v x y z r g b", and the triangle faces are adjusted 
-    to guarantee correct chirality with respect to the provided center.
+    Writes a mesh with per-vertex colors to an OBJ file using a common
+    vertex-color extension.  The vertex lines are written as
+    ``v x y z r g b``.
 
     Parameters:
       filename (str): Output OBJ file path.
-      vertices (numpy.ndarray): Array of shape (n_points, 3) with vertex coordinates.
-      faces (numpy.ndarray): Array of shape (n_faces, 3) with indices into vertices.
-      colors (numpy.ndarray): Array of shape (n_points, 3) with RGB values (in [0, 1]).
-      center (tuple): The center of the sphere (for determining correct face orientation).
+      vertices (numpy.ndarray): Array of shape (n_points, 3) with vertex
+          coordinates.
+      faces (numpy.ndarray): Array of shape (n_faces, 3) with indices into
+          vertices.
+      colors (numpy.ndarray): Array of shape (n_points, 3) with RGB values
+          (in [0, 1]).
+      center (tuple): The center of the sphere.  Only used when
+          *fix_normals* is True.
+      fix_normals (bool): If True, apply ``fix_face_chirality`` to force
+          all face normals to point away from *center*.  This is appropriate
+          for simple convex meshes (e.g. a solid outer shell) but **must
+          be False** for hollow/manifold meshes produced by boolean
+          operations, where inner faces legitimately point inward.
+          Defaults to False.
     """
-    # Correct the face orientation so that normals point outward.
-    faces_corrected = fix_face_chirality(vertices, faces, center)
+    if fix_normals:
+        faces_out = fix_face_chirality(vertices, faces, center)
+    else:
+        faces_out = faces
 
     with open(filename, 'w') as f:
-        f.write("# OBJ file with vertex colors (with corrected face chirality)\n")
+        f.write("# OBJ file with vertex colors\n")
         for v, c in zip(vertices, colors):
             f.write("v {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}\n".format(
                 v[0], v[1], v[2], c[0], c[1], c[2]
             ))
-        for face in faces_corrected:
+        for face in faces_out:
             # OBJ indices are 1-based.
             f.write("f {} {} {}\n".format(face[0] + 1, face[1] + 1, face[2] + 1))

@@ -2,6 +2,40 @@ import numpy as np
 from scipy.spatial import ConvexHull
 import trimesh
 
+
+def _fix_sphere_normals(vertices, faces, center=(0.0, 0.0, 0.0)):
+    """
+    Ensure outward-facing winding order for a convex sphere mesh.
+
+    For a mesh whose faces all belong to a convex surface centred at
+    *center*, this is a fast, fully vectorised alternative to
+    ``trimesh.fix_normals()`` (which performs an expensive BFS graph
+    traversal).  Each face's cross-product normal is compared to the
+    centroid-to-centre vector; faces that point inward are flipped by
+    swapping columns 1 and 2.
+
+    Parameters:
+      vertices (numpy.ndarray): (N, 3) vertex array.
+      faces (numpy.ndarray): (F, 3) face-index array.
+      center (tuple or numpy.ndarray): Centre of the sphere.
+
+    Returns:
+      numpy.ndarray: Copy of *faces* with corrected winding order.
+    """
+    c = np.asarray(center, dtype=np.float64)
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+    # Face normals via cross product.
+    normals = np.cross(v1 - v0, v2 - v0)
+    # Vector from centre to face centroid.
+    outward = (v0 + v1 + v2) / 3.0 - c
+    # Negative dot → normal points inward → flip.
+    flip = np.sum(normals * outward, axis=1) < 0
+    fixed = faces.copy()
+    fixed[flip, 1], fixed[flip, 2] = faces[flip, 2], faces[flip, 1]
+    return fixed
+
 def generate_sphere_points_fibonacci(n_points, radius=1.0, center=(0.0, 0.0, 0.0)):
     """
     Generates a set of vertices on a sphere using the Fibonacci lattice, 
@@ -34,10 +68,9 @@ def generate_sphere_points_fibonacci(n_points, radius=1.0, center=(0.0, 0.0, 0.0
 
     # ConvexHull does not guarantee consistent outward-facing winding order.
     # Fix normals so all faces point outward, which is required for correct
-    # STL/OBJ export and boolean operations.
-    temp_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    temp_mesh.fix_normals()
-    faces = temp_mesh.faces
+    # STL/OBJ export and boolean operations.  Uses a fast vectorised check
+    # rather than trimesh.fix_normals (which does BFS graph traversal).
+    faces = _fix_sphere_normals(vertices, faces, center)
 
     return vertices, faces
 
@@ -166,9 +199,7 @@ def generate_sphere_points_icosahedron(subdivisions, radius=1.0, center=(0.0, 0.
         vertices, faces = subdivide_icosahedron(vertices, faces, radius, center)
 
     # Ensure consistent outward-facing winding order.
-    temp_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    temp_mesh.fix_normals()
-    faces = temp_mesh.faces
+    faces = _fix_sphere_normals(vertices, faces, center)
 
     return vertices, faces
 
@@ -431,7 +462,6 @@ def create_hollow_hemispheres(
     inner_vertices, inner_faces,
     plane_normal=(0, 0, 1),
     plane_origin=(0, 0, 0),
-    max_cap_edge=None,
     engine=None,
 ):
     """
@@ -439,11 +469,14 @@ def create_hollow_hemispheres(
 
     Implements the recommended workflow:
       1. Split the outer mesh into two capped hemispheres along a plane.
-      2. Optionally refine the cap triangulation.
-      3. Boolean-subtract the inner mesh from each hemisphere.
+      2. Boolean-subtract the inner mesh from each hemisphere.
 
     This order of operations (split first, then hollow) avoids the issue
     where capping a pre-hollowed mesh seals the inner cavity.
+
+    The boolean engine (typically ``manifold``) creates its own triangulation
+    for the annular cap (the flat ring between the outer and inner shells),
+    so no additional cap refinement is needed.
 
     Parameters:
       outer_vertices (numpy.ndarray): (N, 3) array of displaced outer shell vertices.
@@ -454,11 +487,6 @@ def create_hollow_hemispheres(
       plane_normal (tuple): Normal vector of the cutting plane (default: z-axis,
           splitting into north/south hemispheres).
       plane_origin (tuple): A point on the cutting plane (default: origin).
-      max_cap_edge (float, optional): Maximum edge length for cap triangles.
-          If provided, the capped hemispheres are subdivided so that no edge
-          exceeds this length.  Since surface edges on a high-resolution globe
-          are already very short, only the large cap triangles are affected.
-          Recommended value: roughly 2-5% of the globe diameter.
       engine (str, optional): Boolean engine for trimesh ('manifold' or
           'blender'). If None, uses trimesh's default.
 
@@ -466,8 +494,6 @@ def create_hollow_hemispheres(
       tuple: (top_half, bottom_half) as trimesh.Trimesh objects.
           Returns (None, None) if splitting or boolean operations fail.
     """
-    import trimesh.remesh
-
     normal = np.array(plane_normal, dtype=np.float64)
     origin = np.array(plane_origin, dtype=np.float64)
 
@@ -493,21 +519,7 @@ def create_hollow_hemispheres(
         print("Error: slice_plane returned None.")
         return None, None
 
-    # Step 2: Optionally refine cap triangulation.
-    if max_cap_edge is not None and max_cap_edge > 0:
-        v, f = trimesh.remesh.subdivide_to_size(
-            top_outer.vertices, top_outer.faces, max_cap_edge
-        )
-        top_outer = trimesh.Trimesh(vertices=v, faces=f)
-        top_outer.fix_normals()
-
-        v, f = trimesh.remesh.subdivide_to_size(
-            bottom_outer.vertices, bottom_outer.faces, max_cap_edge
-        )
-        bottom_outer = trimesh.Trimesh(vertices=v, faces=f)
-        bottom_outer.fix_normals()
-
-    # Step 3: Boolean-subtract the inner mesh from each hemisphere.
+    # Step 2: Boolean-subtract the inner mesh from each hemisphere.
     bool_kwargs = {}
     if engine is not None:
         bool_kwargs['engine'] = engine
@@ -529,3 +541,5 @@ def create_hollow_hemispheres(
         return None, None
 
     return top_hollow, bottom_hollow
+
+

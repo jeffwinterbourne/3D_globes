@@ -163,3 +163,4 @@ def test_create_hollow_hemispheres():
     # Z-bounds: top should be above equator, bottom below.
     assert top.bounds[0][2] >= -0.01
     assert bottom.bounds[1][2] <= 0.01
+

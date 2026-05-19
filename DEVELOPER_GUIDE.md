@@ -127,7 +127,7 @@ Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces`
 
 There are **three hollowing strategies**, suited to different use cases:
 
-1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces. Supports optional cap refinement via `max_cap_edge` (subdivides large cap triangles using `trimesh.remesh.subdivide_to_size`).
+1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces. The boolean engine creates its own triangulation for the annular cap ring.
 
 2. **Subtractive combination** (`combine_subtractive_globes`) — A fast, deterministic approach that concatenates outer and inner face arrays with inverted chirality on the inner shell. Suitable for **whole-globe visualisation** (e.g. viewing in MeshLab) but **not for split-and-print workflows** — see warning below.
 
@@ -244,9 +244,12 @@ Two export formats (~96 lines), chosen based on whether vertex colors are needed
 
 Writes a standard binary STL. Each triangle is stored with its computed face normal (cross product of two edge vectors). No color support — suitable for single-material prints.
 
-#### `write_obj_with_vertex_colors(filename, vertices, faces, colors, center)`
+#### `write_obj_with_vertex_colors(filename, vertices, faces, colors, center, fix_normals)`
 
-Writes an OBJ file using the vertex-color extension (`v x y z r g b`). Before writing, it calls `fix_face_chirality` to ensure all face normals point outward relative to `center`. OBJ indices are 1-based.
+Writes an OBJ file using the vertex-color extension (`v x y z r g b`). OBJ indices are 1-based.
+
+> [!IMPORTANT]
+> The `fix_normals` parameter defaults to **False**.  For manifold meshes from boolean operations (e.g. `create_hollow_hemispheres`), normals are already correct and must **not** be overridden — `fix_face_chirality` would flip the inner shell's faces outward, destroying the manifold and causing slicers to fill the hollow.  Set `fix_normals=True` only for simple convex meshes.
 
 **Internal helper:**
 
@@ -355,19 +358,18 @@ Only the outer shell is displaced. The inner shell remains a smooth sphere.
 top_half, bottom_half = create_hollow_hemispheres(
     outer_vertices, outer_faces,
     inner_vertices, inner_faces,
-    max_cap_edge=2.0,      # optional: refine cap triangles to ≤2mm edges
     engine='manifold'       # recommended boolean engine
 )
 ```
 
 This single call handles the correct order of operations internally:
 1. Splits the displaced outer shell at the equator with a capped plane cut.
-2. Optionally subdivides the large cap triangles (if `max_cap_edge` is set).
-3. Boolean-subtracts the smooth inner sphere from each half.
-4. Returns two watertight, manifold hollow hemispheres.
+2. Boolean-subtracts the smooth inner sphere from each half.
+3. Returns two watertight, manifold hollow hemispheres.
 
-> [!TIP]
-> For a 40mm-radius globe with 1M outer points, a `max_cap_edge` of 2.0 mm is a good default. Surface edges are already ~0.15mm, so only the cap triangles are affected.
+The `manifold` boolean engine creates its own triangulation for the annular cap
+(the flat ring between the outer and inner shells), so no additional cap
+refinement is needed.
 
 #### 6. Color each hemisphere
 
@@ -434,10 +436,10 @@ The canonical working unit is **millimetres** for model space (radii, displaceme
 ### Face chirality
 
 In STL and OBJ, the **winding order** of a triangle's vertices determines the direction of its face normal (right-hand rule). Outward-pointing normals are essential for correct slicer behaviour. The library handles this in several places:
-1. `generate_sphere_points_fibonacci` / `generate_sphere_points_icosahedron` — call `trimesh.fix_normals()` after face generation to guarantee outward normals.
+1. `generate_sphere_points_fibonacci` / `generate_sphere_points_icosahedron` — use `_fix_sphere_normals()`, a fast vectorised dot-product check, to guarantee outward normals.
 2. `invert_chirality` — used by `combine_subtractive_globes` to flip the inner shell's normals inward.
-3. `fix_face_chirality` — used by `write_obj_with_vertex_colors` to post-process all faces, ensuring normals point away from the sphere centre.
-4. `create_hollow_hemispheres` — calls `fix_normals()` on both input meshes before boolean operations.
+3. `fix_face_chirality` — available via `write_obj_with_vertex_colors(fix_normals=True)` for simple convex meshes. **Not applied by default** to avoid destroying manifold geometry from boolean operations.
+4. `create_hollow_hemispheres` — calls `trimesh.fix_normals()` on both input meshes before boolean operations.
 
 ### Vertex colors in OBJ
 
