@@ -23,7 +23,7 @@ pip install -e .
 ```
 
 **Dependencies:**
-- `numpy`, `matplotlib`, `scipy`, `tqdm`, `trimesh`, `cmocean`
+- `numpy`, `matplotlib`, `scipy`, `tqdm`, `trimesh`, `cmocean`, `geopandas`
 - `netCDF4` (Best installed via Conda: `conda install -c conda-forge netcdf4`)
 - `rasterio` (Optional, for TIFF support)
 

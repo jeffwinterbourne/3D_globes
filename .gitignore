@@ -155,3 +155,7 @@ dmypy.json
 *.hdf
 *.hdf5
 *.dat
+
+# inputs and outputs
+inputs/
+outputs/

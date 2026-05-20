@@ -16,7 +16,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 |---|---|---|
 | Sphere mesh generation (Fibonacci & icosahedron) | `mesh.py` | `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron` |
 | Geographic grid loading (NetCDF & TIFF) | `grid.py` | `load_netcdf_grid`, `load_tiff_grid`, `list_netcdf_variables` |
-| Radial displacement of vertices | `displacement.py` | `displace_vertices`, `calculate_displacement_scale` |
+| Radial displacement of vertices | `displacement.py` | `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `calculate_displacement_scale` |
 | Vertex coloring (grid-based & image-based) | `displacement.py` | `assign_vertex_colors`, `assign_vertex_colors_image` |
 | Mesh hollowing & hemisphere splitting | `mesh.py` | `create_hollow_hemispheres`, `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
 | Mesh utilities (resize, re-project, chirality) | `mesh.py` | `resize_globe`, `project_vertices_to_sphere`, `invert_chirality`, `compute_scale_factor` |
@@ -48,7 +48,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 │   ├── test_mesh.py
 │   ├── test_displacement.py
 │   └── test_grid.py
-└── notebooks/
+└── examples/
     ├── tomo_globe_3d.ipynb          # Tomography globe (grid-colored)
     └── demo_split_globe_image.ipynb # Image-colored demo
 ```
@@ -275,7 +275,7 @@ From **mesh**: `generate_sphere_points_fibonacci`, `generate_sphere_points_icosa
 
 From **grid**: `list_netcdf_variables`, `load_netcdf_grid`, `load_tiff_grid`
 
-From **displacement**: `displace_vertices`, `assign_vertex_colors`, `assign_vertex_colors_image`, `calculate_displacement_scale`
+From **displacement**: `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `assign_vertex_colors`, `assign_vertex_colors_image`, `calculate_displacement_scale`
 
 From **io**: `write_stl_binary`, `write_obj_with_vertex_colors`
 
@@ -292,7 +292,7 @@ The following diagram shows the full data-flow for producing a 3D-printable, col
 ```mermaid
 flowchart TD
     A["1. Generate outer sphere<br/><code>generate_sphere_points_fibonacci(n, radius_mm)</code>"] --> B
-    A2["Generate inner sphere<br/><code>generate_sphere_points_fibonacci(n_inner, radius_mm * inner_scale)</code>"] --> E
+    A2["Generate inner sphere<br/><code>generate_sphere_points_fibonacci(n_inner, radius_mm * inner_scale)</code>"] --> F
 
     B["2. Load geographic grid<br/><code>load_netcdf_grid(file)</code>"] --> C
 
@@ -300,11 +300,13 @@ flowchart TD
 
     D["4. Displace outer vertices<br/><code>displace_vertices(vertices, lats, lons, grid, scale)</code>"] --> E
 
-    E["5. Split outer & boolean hollow<br/><code>create_hollow_hemispheres(outer_v, outer_f, inner_v, inner_f)</code>"] --> G
+    E["4.5. Displace near lines / polygons (optional)<br/><code>displace_near_lines(vertices, shp, displacement, width_degrees)</code>"] --> F
+
+    F["5. Split outer & boolean hollow<br/><code>create_hollow_hemispheres(outer_v, outer_f, inner_v, inner_f)</code>"] --> G
 
     G["6. Assign colors to each half<br/><code>assign_vertex_colors(half.vertices, ...)</code><br/>or <code>assign_vertex_colors_image(...)</code>"] --> H
 
-    H["7. Export<br/><code>write_obj_with_vertex_colors(file, v, f, colors)</code>"]
+    H["7. Export to outputs/ folder<br/><code>write_obj_with_vertex_colors(file, v, f, colors)</code>"]
 ```
 
 ### Step-by-step (with reference parameters)
@@ -352,6 +354,46 @@ outer_vertices = displace_vertices(
 
 Only the outer shell is displaced. The inner shell remains a smooth sphere.
 
+> [!IMPORTANT]
+> **Displacement Validation**: All displacement functions (`displace_vertices`, `displace_by_points`, `displace_near_lines`, and `displace_by_polygons`) validate that no vertex is translated deeper than or to the origin. If a negative displacement exceeds the vertex's current distance from the origin (new radius <= 0), a `ValueError` is raised to prevent invalid mesh topologies.
+
+#### 4.5. Specialized Shapefile & Coordinate Displacement (optional)
+
+Depending on the geometry type, you can use one of three tailored functions:
+
+##### A. Points & Coordinate Lists (`displace_by_points`)
+Displaces vertices close to discrete points (either a shapefile containing Point/MultiPoint geometries or an `(N, 2)` array/list of `(lon, lat)`):
+```python
+outer_vertices = displace_by_points(
+    outer_vertices,
+    points_data="../inputs/my_points.shp",  # or numpy array [[lon1, lat1], ...]
+    displacement=1.5,
+    radius_degrees=1.0
+)
+```
+
+##### B. Lines & Borders (`displace_near_lines`)
+Displaces vertices close to (within a specified ribbon width of) line or polygon boundaries:
+```python
+outer_vertices = displace_near_lines(
+    outer_vertices,
+    shapefile_path="../inputs/coastlines/ne_110m_coastline.shp",
+    displacement=1.0,
+    width_degrees=0.5
+)
+```
+
+##### C. Closed Polygons (`displace_by_polygons`)
+Displaces vertices inside or outside closed polygons (Polygons/MultiPolygons):
+```python
+outer_vertices = displace_by_polygons(
+    outer_vertices,
+    shapefile_path="../inputs/land/ne_110m_land.shp",
+    displacement=1.0,
+    displace_inside=True  # True to displace inside land, False for oceans
+)
+```
+
 #### 5. Split and hollow into hemispheres
 
 ```python
@@ -383,25 +425,25 @@ top_colors = assign_vertex_colors(
 )
 
 # OR image-based coloring
-top_colors = assign_vertex_colors_image(top_half.vertices, 'earth_texture.png')
+top_colors = assign_vertex_colors_image(top_half.vertices, '../outputs/demo_texture.png')
 ```
 
 #### 7. Export
 
 ```python
-write_obj_with_vertex_colors('globe_top.obj', top_half.vertices, top_half.faces, top_colors)
-write_obj_with_vertex_colors('globe_bottom.obj', bottom_half.vertices, bottom_half.faces, bottom_colors)
+write_obj_with_vertex_colors('../outputs/globe_top.obj', top_half.vertices, top_half.faces, top_colors)
+write_obj_with_vertex_colors('../outputs/globe_bottom.obj', bottom_half.vertices, bottom_half.faces, bottom_colors)
 ```
 
 ---
 
 ## 📓 Notebook Workflows
 
-Two example notebooks live in `notebooks/`:
+Two example notebooks live in `examples/`:
 
 ### `tomo_globe_3d.ipynb`
 
-Demonstrates the **tomography globe** workflow — a globe with ETOPO topography displacement and vertex colors derived from a seismic tomography depth slice (e.g. S40RTS at 2850 km depth). This notebook uses `assign_vertex_colors` with:
+Demonstrates the **tomography globe** workflow — a globe with ETOPO topography displacement, a 1mm step at the coastlines, and vertex colors derived from a seismic tomography depth slice (e.g. S40RTS at 2850 km depth). This notebook uses `assign_vertex_colors` with:
 - A `BoundaryNorm` for discrete classification (`blue / white / red`), or
 - A discretised continuous colormap (`plt.get_cmap('RdBu_r', 7)`).
 
@@ -409,7 +451,7 @@ The notebook includes a 2D preview (`pcolormesh`) of the color grid before apply
 
 ### `demo_split_globe_image.ipynb`
 
-Demonstrates **image-based coloring** using `assign_vertex_colors_image`. It programmatically generates a test equirectangular gradient image, generates a displaced sphere, hollows it using the subtractive approach with `resize_globe` and `combine_subtractive_globes`, splits it, and exports as OBJ.
+Demonstrates **image-based coloring** using `assign_vertex_colors_image`. It programmatically generates a test equirectangular gradient image, generates a displaced sphere, hollows it using the subtractive approach with `resize_globe` and `combine_subtractive_globes`, splits it, and exports as OBJ to the `outputs/` directory.
 
 Both notebooks use `%autoreload 2` for iterative development.
 
@@ -482,6 +524,15 @@ pytest
 - External data dependencies (NetCDF files, images) are **mocked** so tests run without large data files.
 - Geometry tests verify invariants (e.g. all vertices lie on the sphere, bounding box shrinks after inner mesh creation) rather than comparing exact floating-point coordinates.
 - The `io.py` module currently has **no dedicated tests** — this is a known coverage gap.
+
+---
+
+## ⚓ Git Hook: Notebook Output Stripping
+
+To keep the repository size small and avoid diff conflicts, a pre-commit hook automatically strips all outputs and execution counts from Jupyter notebooks (`.ipynb` files) staged for commit.
+
+- **Hook location**: `.git/hooks/pre-commit` (which calls `.git/hooks/strip_notebooks.py`).
+- **Behavior**: Detects staged `.ipynb` files, sets `"outputs"` to `[]` and `"execution_count"` to `null` for all code cells, and automatically re-stages the cleaned notebooks before the commit finishes.
 
 ---
 

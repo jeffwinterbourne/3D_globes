@@ -116,6 +116,10 @@ def displace_vertices(vertices, lats, lons, grid, scale, show_progress=False, ch
             displacement = interpolator(pts)
             displacement = np.nan_to_num(displacement)
             new_r = r + scale * displacement
+            if np.any(new_r <= 0):
+                raise ValueError(
+                    "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+                )
             new_vertices[i:i+chunk_size] = (chunk / r[:, None]) * new_r[:, None]
     else:
         r = np.linalg.norm(vertices, axis=1)
@@ -125,6 +129,10 @@ def displace_vertices(vertices, lats, lons, grid, scale, show_progress=False, ch
         displacement = interpolator(pts)
         displacement = np.nan_to_num(displacement)
         new_r = r + scale * displacement
+        if np.any(new_r <= 0):
+            raise ValueError(
+                "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+            )
         new_vertices = (vertices / r[:, None]) * new_r[:, None]
     return new_vertices
 
@@ -253,3 +261,209 @@ def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_
         colors = get_colors_from_chunk(vertices)
         
     return colors
+
+
+def displace_by_points(
+    vertices: np.ndarray,
+    points_data: object,
+    displacement: float = 1.0,
+    radius_degrees: float = 1.0,
+) -> np.ndarray:
+    """
+    Displaces vertices radially if they are within a search radius (in degrees)
+    of Point/MultiPoint geometries.
+
+    Parameters:
+      vertices (np.ndarray): (n_points x 3) vertex coordinates in millimeters.
+      points_data (str or array-like): Path to a shapefile containing Point/MultiPoint
+        geometries, or an (N, 2) array/list of (lon, lat) coordinates.
+      displacement (float): Radial displacement to apply to vertices within radius (in mm).
+      radius_degrees (float): Search radius in decimal degrees.
+
+    Returns:
+      np.ndarray: Displaced (n_points x 3) vertex coordinates.
+
+    Raises:
+      TypeError: If points_data is a shapefile containing non-Point/MultiPoint geometries.
+      ValueError: If points_data has invalid shape, radius_degrees < 0, or if displacement
+        translates any point deeper than the origin (new radius <= 0).
+    """
+    import geopandas as gpd
+    import warnings
+
+    if isinstance(points_data, str):
+        gdf = gpd.read_file(points_data)
+        invalid_types = set(gdf.geometry.geom_type.unique()) - {"Point", "MultiPoint"}
+        if invalid_types:
+            raise TypeError(
+                f"Geometries must be Points or MultiPoints. Found types: {invalid_types}"
+            )
+    else:
+        pts = np.asarray(points_data)
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError("points_data array must have shape (N, 2) representing (lon, lat).")
+        gdf = gpd.GeoDataFrame(
+            geometry=gpd.points_from_xy(pts[:, 0], pts[:, 1]),
+            crs="EPSG:4326"
+        )
+
+    if radius_degrees < 0:
+        raise ValueError("radius_degrees must be non-negative.")
+
+    if radius_degrees > 0:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+            gdf.geometry = gdf.geometry.buffer(radius_degrees)
+
+    r = np.linalg.norm(vertices, axis=1)
+    r_safe = np.where(r == 0.0, 1.0, r)
+
+    lats = np.degrees(np.arcsin(vertices[:, 2] / r_safe))
+    lons = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+
+    points_gdf = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(lons, lats),
+        crs=gdf.crs
+    )
+
+    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    matched_indices = joined.index[joined['index_right'].notna()].unique()
+    inside_mask = np.zeros(len(vertices), dtype=bool)
+    inside_mask[matched_indices] = True
+
+    new_r = r + np.where(inside_mask, displacement, 0.0)
+
+    if np.any(new_r <= 0):
+        raise ValueError(
+            "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+        )
+
+    new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
+    return new_vertices
+
+
+def displace_near_lines(
+    vertices: np.ndarray,
+    shapefile_path: str,
+    displacement: float = 1.0,
+    width_degrees: float = 0.5,
+) -> np.ndarray:
+    """
+    Displaces vertices radially if they are close to (within width_degrees of)
+    line or polygon geometries.
+
+    Parameters:
+      vertices (np.ndarray): (n_points x 3) vertex coordinates in millimeters.
+      shapefile_path (str): Path to the shapefile.
+      displacement (float): Radial displacement to apply (in mm).
+      width_degrees (float): Distance (in degrees) to buffer the geometries.
+
+    Returns:
+      np.ndarray: Displaced (n_points x 3) vertex coordinates.
+
+    Raises:
+      ValueError: If width_degrees < 0, or if displacement translates any point
+        deeper than the origin (new radius <= 0).
+    """
+    import geopandas as gpd
+    import warnings
+
+    gdf = gpd.read_file(shapefile_path)
+
+    if width_degrees < 0:
+        raise ValueError("width_degrees must be non-negative.")
+
+    if width_degrees > 0:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+            gdf.geometry = gdf.geometry.buffer(width_degrees)
+
+    r = np.linalg.norm(vertices, axis=1)
+    r_safe = np.where(r == 0.0, 1.0, r)
+
+    lats = np.degrees(np.arcsin(vertices[:, 2] / r_safe))
+    lons = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+
+    points_gdf = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(lons, lats),
+        crs=gdf.crs
+    )
+
+    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    matched_indices = joined.index[joined['index_right'].notna()].unique()
+    inside_mask = np.zeros(len(vertices), dtype=bool)
+    inside_mask[matched_indices] = True
+
+    new_r = r + np.where(inside_mask, displacement, 0.0)
+
+    if np.any(new_r <= 0):
+        raise ValueError(
+            "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+        )
+
+    new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
+    return new_vertices
+
+
+def displace_by_polygons(
+    vertices: np.ndarray,
+    shapefile_path: str,
+    displacement: float = 1.0,
+    displace_inside: bool = True,
+) -> np.ndarray:
+    """
+    Displaces vertices radially depending on whether they are inside or outside closed polygons.
+
+    Parameters:
+      vertices (np.ndarray): (n_points x 3) vertex coordinates in millimeters.
+      shapefile_path (str): Path to the shapefile containing Polygon/MultiPolygon geometries.
+      displacement (float): Radial displacement to apply (in mm).
+      displace_inside (bool): If True, displace points inside polygons. If False,
+        displace points outside polygons.
+
+    Returns:
+      np.ndarray: Displaced (n_points x 3) vertex coordinates.
+
+    Raises:
+      TypeError: If shapefile contains non-Polygon/MultiPolygon geometries.
+      ValueError: If displacement translates any point deeper than the origin (new radius <= 0).
+    """
+    import geopandas as gpd
+
+    gdf = gpd.read_file(shapefile_path)
+    invalid_types = set(gdf.geometry.geom_type.unique()) - {"Polygon", "MultiPolygon"}
+    if invalid_types:
+        raise TypeError(
+            f"Geometries must be Polygons or MultiPolygons. Found types: {invalid_types}"
+        )
+
+    r = np.linalg.norm(vertices, axis=1)
+    r_safe = np.where(r == 0.0, 1.0, r)
+
+    lats = np.degrees(np.arcsin(vertices[:, 2] / r_safe))
+    lons = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+
+    points_gdf = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(lons, lats),
+        crs=gdf.crs
+    )
+
+    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    matched_indices = joined.index[joined['index_right'].notna()].unique()
+    inside_mask = np.zeros(len(vertices), dtype=bool)
+    inside_mask[matched_indices] = True
+
+    if displace_inside:
+        apply_mask = inside_mask
+    else:
+        apply_mask = ~inside_mask
+
+    new_r = r + np.where(apply_mask, displacement, 0.0)
+
+    if np.any(new_r <= 0):
+        raise ValueError(
+            "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+        )
+
+    new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
+    return new_vertices

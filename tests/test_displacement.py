@@ -105,3 +105,176 @@ def test_dateline_nan_column():
     assert np.allclose(colors[0], colors[1], atol=0.05), (
         f"Dateline vertex colour {colors[0]} differs from control {colors[1]}"
     )
+
+
+def test_displace_vertices_deeper_than_origin_error():
+    """Check that ValueError is raised when new radius <= 0."""
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 5)
+    grid = np.ones((5, 5))  # constant displacement of 1
+    
+    # Vertices on a sphere of radius 1
+    vertices = np.array([[1.0, 0.0, 0.0]])
+    
+    # A negative scale such that 1.0 + (-1.5 * 1.0) = -0.5 <= 0
+    with pytest.raises(ValueError, match="Vertex displacement translates point"):
+        displace_vertices(vertices, lats, lons, grid, scale=-1.5)
+
+
+
+
+def test_displace_by_points_numpy():
+    """Test displace_by_points using an (N, 2) numpy array of (lon, lat)."""
+    from globe3d.displacement import displace_by_points
+    
+    # Vertices corresponding to:
+    # 1. lon=10, lat=10 (close to point [10, 10])
+    # 2. lon=20, lat=20 (far from point [10, 10])
+    lat_1, lon_1 = np.radians(10.0), np.radians(10.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+    lat_2, lon_2 = np.radians(20.0), np.radians(20.0)
+    v2 = np.array([
+        10.0 * np.cos(lat_2) * np.cos(lon_2),
+        10.0 * np.cos(lat_2) * np.sin(lon_2),
+        10.0 * np.sin(lat_2)
+    ])
+    vertices = np.vstack([v1, v2])
+
+    # Points data: [10, 10]
+    points = np.array([[10.0, 10.0]])
+    
+    displaced = displace_by_points(
+        vertices,
+        points,
+        displacement=1.5,
+        radius_degrees=1.0
+    )
+    
+    radii = np.linalg.norm(displaced, axis=1)
+    assert np.allclose(radii[0], 11.5)
+    assert np.allclose(radii[1], 10.0)
+
+    # Test ValueError for invalid array shape
+    with pytest.raises(ValueError, match="points_data array must have shape"):
+        displace_by_points(vertices, np.array([10.0, 10.0]), displacement=1.5)
+
+
+def test_displace_by_points_shapefile(tmp_path):
+    """Test displace_by_points using a shapefile input, raising TypeError for non-points."""
+    import geopandas as gpd
+    from shapely.geometry import Point, LineString
+    from globe3d.displacement import displace_by_points
+
+    # 1. Valid Point shapefile
+    gdf_ok = gpd.GeoDataFrame(geometry=[Point(10, 10)], crs="EPSG:4326")
+    shp_ok = tmp_path / "pts_ok.shp"
+    gdf_ok.to_file(shp_ok)
+
+    lat_1, lon_1 = np.radians(10.0), np.radians(10.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+    
+    displaced = displace_by_points(v1.reshape(1, -1), str(shp_ok), displacement=2.0, radius_degrees=1.0)
+    assert np.allclose(np.linalg.norm(displaced, axis=1), 12.0)
+
+    # 2. Invalid LineString shapefile (should raise TypeError)
+    gdf_err = gpd.GeoDataFrame(geometry=[LineString([(0, 0), (5, 5)])], crs="EPSG:4326")
+    shp_err = tmp_path / "pts_err.shp"
+    gdf_err.to_file(shp_err)
+
+    with pytest.raises(TypeError, match="Geometries must be Points or MultiPoints"):
+        displace_by_points(v1.reshape(1, -1), str(shp_err), displacement=2.0)
+
+
+def test_displace_near_lines(tmp_path):
+    """Test displace_near_lines buffers geometries correctly."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    from globe3d.displacement import displace_near_lines
+
+    gdf = gpd.GeoDataFrame(geometry=[LineString([(0, 0), (10, 0)])], crs="EPSG:4326")
+    shp_path = tmp_path / "line.shp"
+    gdf.to_file(shp_path)
+
+    # Vertex 1: (lon=5, lat=0.1) -> within 0.5 degrees of the line
+    lat_1, lon_1 = np.radians(0.1), np.radians(5.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+
+    # Vertex 2: (lon=5, lat=2.0) -> outside 0.5 degrees of the line
+    lat_2, lon_2 = np.radians(2.0), np.radians(5.0)
+    v2 = np.array([
+        10.0 * np.cos(lat_2) * np.cos(lon_2),
+        10.0 * np.cos(lat_2) * np.sin(lon_2),
+        10.0 * np.sin(lat_2)
+    ])
+
+    vertices = np.vstack([v1, v2])
+
+    displaced = displace_near_lines(vertices, str(shp_path), displacement=3.0, width_degrees=0.5)
+    radii = np.linalg.norm(displaced, axis=1)
+    assert np.allclose(radii[0], 13.0)
+    assert np.allclose(radii[1], 10.0)
+
+
+def test_displace_by_polygons(tmp_path):
+    """Test displace_by_polygons and TypeError for non-polygon geometries."""
+    import geopandas as gpd
+    from shapely.geometry import Polygon, Point
+    from globe3d.displacement import displace_by_polygons
+
+    # 1. Valid Polygon shapefile
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    gdf_ok = gpd.GeoDataFrame(geometry=[poly], crs="EPSG:4326")
+    shp_ok = tmp_path / "poly_ok.shp"
+    gdf_ok.to_file(shp_ok)
+
+    # Point 1: (lon=5, lat=5) -> inside
+    lat_1, lon_1 = np.radians(5.0), np.radians(5.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+
+    # Point 2: (lon=20, lat=20) -> outside
+    lat_2, lon_2 = np.radians(20.0), np.radians(20.0)
+    v2 = np.array([
+        10.0 * np.cos(lat_2) * np.cos(lon_2),
+        10.0 * np.cos(lat_2) * np.sin(lon_2),
+        10.0 * np.sin(lat_2)
+    ])
+
+    vertices = np.vstack([v1, v2])
+
+    # Case A: displace inside
+    disp_in = displace_by_polygons(vertices, str(shp_ok), displacement=4.0, displace_inside=True)
+    radii_in = np.linalg.norm(disp_in, axis=1)
+    assert np.allclose(radii_in[0], 14.0)
+    assert np.allclose(radii_in[1], 10.0)
+
+    # Case B: displace outside
+    disp_out = displace_by_polygons(vertices, str(shp_ok), displacement=4.0, displace_inside=False)
+    radii_out = np.linalg.norm(disp_out, axis=1)
+    assert np.allclose(radii_out[0], 10.0)
+    assert np.allclose(radii_out[1], 14.0)
+
+    # 2. Invalid Point shapefile (should raise TypeError)
+    gdf_err = gpd.GeoDataFrame(geometry=[Point(5, 5)], crs="EPSG:4326")
+    shp_err = tmp_path / "poly_err.shp"
+    gdf_err.to_file(shp_err)
+
+    with pytest.raises(TypeError, match="Geometries must be Polygons or MultiPolygons"):
+        displace_by_polygons(vertices, str(shp_err), displacement=4.0)
+
+

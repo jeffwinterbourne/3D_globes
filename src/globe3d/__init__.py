@@ -16,6 +16,9 @@ from .grid import (
 )
 from .displacement import (
     displace_vertices,
+    displace_by_points,
+    displace_near_lines,
+    displace_by_polygons,
     assign_vertex_colors,
     assign_vertex_colors_image,
     calculate_displacement_scale
@@ -42,6 +45,9 @@ __all__ = [
     "load_netcdf_grid",
     "load_tiff_grid",
     "displace_vertices",
+    "displace_by_points",
+    "displace_near_lines",
+    "displace_by_polygons",
     "assign_vertex_colors",
     "assign_vertex_colors_image",
     "write_stl_binary",
