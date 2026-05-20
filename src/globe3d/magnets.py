@@ -8,8 +8,7 @@ It also includes a function to generate a cylinder test piece for calibration.
 
 import numpy as np
 import trimesh
-from scipy.interpolate import RegularGridInterpolator
-from globe3d.displacement import _wrap_longitude
+from scipy.spatial import cKDTree
 
 
 def _generate_cylinder_check_points(radius, height, num_angles=16, num_heights=5, num_radii=4):
@@ -48,11 +47,7 @@ def _generate_cylinder_check_points(radius, height, num_angles=16, num_heights=5
 
 def optimize_magnet_positions(
     longitudes,
-    lats,
-    lons,
-    grid,
-    scale,
-    radius,
+    outer_mesh,
     r_enc,
     h_boss,
     bisection_iters=20,
@@ -67,11 +62,7 @@ def optimize_magnet_positions(
 
     Parameters:
       longitudes (list of float): Longitudes (in degrees) to place magnets at.
-      lats (numpy.ndarray): 1D array of latitude coordinates from the grid.
-      lons (numpy.ndarray): 1D array of longitude coordinates from the grid.
-      grid (numpy.ndarray): 2D array of grid displacement values.
-      scale (float): Scale factor for vertex displacement.
-      radius (float): Base radius of the un-displaced globe (in mm).
+      outer_mesh (trimesh.Trimesh): Watertight outer globe mesh.
       r_enc (float): Enclosing radius of the plastic boss around the magnet (in mm).
       h_boss (float): Height of the boss from the cut plane (in mm).
       bisection_iters (int): Number of iterations for the binary search.
@@ -80,25 +71,23 @@ def optimize_magnet_positions(
     Returns:
       list of tuple: A list of (x, y) coordinates for the optimized magnet centers.
     """
-    # Wrap longitude to handle periodic boundary conditions
-    lats_wrapped, lons_wrapped, grid_wrapped = _wrap_longitude(lats, lons, grid)
-
-    # Set up the interpolator for outer globe radius
-    interpolator = RegularGridInterpolator(
-        (lats_wrapped, lons_wrapped),
-        grid_wrapped,
-        bounds_error=False,
-        fill_value=None,
-        method="linear",
-    )
+    # Extract vertices and compute their radial distances (displaced radii)
+    vertices = outer_mesh.vertices
+    norms = np.linalg.norm(vertices, axis=1)
+    
+    # Avoid division by zero
+    norms_safe = np.where(norms == 0.0, 1.0, norms)
+    unit_vertices = vertices / norms_safe[:, None]
+    
+    # Build cKDTree on the unit vertices for direction-based querying
+    kdtree = cKDTree(unit_vertices)
 
     # Generate local points for containment check
     local_pts = _generate_cylinder_check_points(r_enc, h_boss, num_angles=num_angles)
 
-    # Compute a safe upper bound for distance search
-    max_displacement = np.nanmax(grid_wrapped)
-    max_globe_radius = radius + scale * max_displacement
-    high_limit = max_globe_radius - r_enc
+    # Compute a safe upper bound for distance search based on max vertex distance from origin
+    max_radius = np.max(norms)
+    high_limit = max_radius - r_enc
 
     centers = []
 
@@ -114,19 +103,24 @@ def optimize_magnet_positions(
         def check_containment(d):
             # Shift check points to global coordinates at candidate center
             global_pts = local_pts + np.array([d * cos_t, d * sin_t, 0.0])
+            
+            # Compute radial distances of global points
             r_pts = np.linalg.norm(global_pts, axis=1)
             r_safe = np.where(r_pts == 0.0, 1.0, r_pts)
-
-            # Convert to spherical coordinates
-            lat_pts = np.degrees(np.arcsin(global_pts[:, 2] / r_safe))
-            lon_pts = np.degrees(np.arctan2(global_pts[:, 1], global_pts[:, 0]))
-
-            # Interpolate outer displacement
-            disp = interpolator(np.stack((lat_pts, lon_pts), axis=-1))
-            disp = np.nan_to_num(disp)
-            r_outer = radius + scale * disp
-
-            # All points must be within the outer surface
+            
+            # Normalize global points to unit vectors
+            unit_pts = global_pts / r_safe[:, None]
+            
+            # Query the 3 nearest unit vertices
+            dists, idxs = kdtree.query(unit_pts, k=3)
+            
+            # Compute inverse distance weighting (IDW) to interpolate displaced radius
+            w = 1.0 / np.maximum(dists, 1e-6)
+            w /= np.sum(w, axis=1, keepdims=True)
+            
+            r_outer = np.sum(norms[idxs] * w, axis=1)
+            
+            # All check points must be inside the displaced boundary
             return np.all(r_pts <= r_outer)
 
         # Binary search for optimal distance d
@@ -146,11 +140,8 @@ def optimize_magnet_positions(
 def insert_magnets_into_hemispheres(
     top_mesh,
     bottom_mesh,
-    lats,
-    lons,
-    grid,
-    scale,
-    radius,
+    outer_vertices,
+    outer_faces,
     diameter,
     height,
     n_magnets=3,
@@ -159,6 +150,7 @@ def insert_magnets_into_hemispheres(
     vertical_tolerance=0.1,
     vertical_offset=0.2,
     min_thickness=1.5,
+    engine=None,
 ):
     """
     Inserts magnet voids and enclosing material into the top and bottom hemispheres.
@@ -169,11 +161,9 @@ def insert_magnets_into_hemispheres(
     Parameters:
       top_mesh (trimesh.Trimesh): Capped, hollow top hemisphere mesh.
       bottom_mesh (trimesh.Trimesh): Capped, hollow bottom hemisphere mesh.
-      lats (numpy.ndarray): 1D array of latitude coordinates.
-      lons (numpy.ndarray): 1D array of longitude coordinates.
-      grid (numpy.ndarray): 2D array of grid displacement values.
-      scale (float): Scale factor for vertex displacement.
-      radius (float): Base radius of the un-displaced globe (in mm).
+      outer_vertices (numpy.ndarray or trimesh.Trimesh): Displaced outer shell vertices
+        or the pre-built outer trimesh.Trimesh.
+      outer_faces (numpy.ndarray or None): Outer shell face indices (None if outer_vertices is a Trimesh).
       diameter (float): Diameter of the cylindrical magnets (in mm).
       height (float): Height/thickness of the cylindrical magnets (in mm).
       n_magnets (int): Number of magnets per hemisphere (evenly spaced).
@@ -183,6 +173,7 @@ def insert_magnets_into_hemispheres(
       vertical_tolerance (float): Vertical tolerance to add to the magnet height (in mm).
       vertical_offset (float): Minimum distance between the magnet void and the hemisphere cut (in mm).
       min_thickness (float): Minimum wall thickness of plastic surrounding the magnet (in mm).
+      engine (str, optional): Boolean engine for trimesh.
 
     Returns:
       tuple of trimesh.Trimesh: (top_mesh_with_magnets, bottom_mesh_with_magnets)
@@ -203,14 +194,17 @@ def insert_magnets_into_hemispheres(
     r_enc = r_void + min_thickness
     h_boss = vertical_offset + h_void + min_thickness
 
-    # 3. Find optimal XY positions
+    # 3. Build/use outer mesh to check containment
+    if isinstance(outer_vertices, trimesh.Trimesh):
+        outer_mesh = outer_vertices
+    else:
+        outer_mesh = trimesh.Trimesh(vertices=outer_vertices, faces=outer_faces)
+        outer_mesh.fix_normals()
+
+    # 4. Find optimal XY positions
     centers = optimize_magnet_positions(
         longitudes=longitudes,
-        lats=lats,
-        lons=lons,
-        grid=grid,
-        scale=scale,
-        radius=radius,
+        outer_mesh=outer_mesh,
         r_enc=r_enc,
         h_boss=h_boss,
     )
@@ -220,7 +214,7 @@ def insert_magnets_into_hemispheres(
     bottom_bosses = []
     bottom_voids = []
 
-    # 4. Construct meshes for bosses and voids
+    # 5. Construct meshes for bosses and voids
     for x, y in centers:
         # --- Top Hemisphere ---
         # Boss cylinder goes from Z=0 to Z=h_boss
@@ -244,21 +238,24 @@ def insert_magnets_into_hemispheres(
         bv.apply_translation([x, y, -(vertical_offset + h_void / 2.0)])
         bottom_voids.append(bv)
 
-    # 5. Perform boolean operations
-    # We use trimesh's default boolean engine
-    top_with_bosses = trimesh.boolean.union([top_mesh] + top_bosses)
+    # 6. Perform boolean operations
+    bool_kwargs = {}
+    if engine is not None:
+        bool_kwargs['engine'] = engine
+
+    top_with_bosses = trimesh.boolean.union([top_mesh] + top_bosses, **bool_kwargs)
     if top_with_bosses is None:
         raise ValueError("Boolean union of top hemisphere and magnet bosses failed.")
 
-    top_final = trimesh.boolean.difference([top_with_bosses] + top_voids)
+    top_final = trimesh.boolean.difference([top_with_bosses] + top_voids, **bool_kwargs)
     if top_final is None:
         raise ValueError("Boolean subtraction of top magnet voids failed.")
 
-    bottom_with_bosses = trimesh.boolean.union([bottom_mesh] + bottom_bosses)
+    bottom_with_bosses = trimesh.boolean.union([bottom_mesh] + bottom_bosses, **bool_kwargs)
     if bottom_with_bosses is None:
         raise ValueError("Boolean union of bottom hemisphere and magnet bosses failed.")
 
-    bottom_final = trimesh.boolean.difference([bottom_with_bosses] + bottom_voids)
+    bottom_final = trimesh.boolean.difference([bottom_with_bosses] + bottom_voids, **bool_kwargs)
     if bottom_final is None:
         raise ValueError("Boolean subtraction of bottom magnet voids failed.")
 

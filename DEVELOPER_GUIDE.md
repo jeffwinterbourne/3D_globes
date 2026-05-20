@@ -76,8 +76,7 @@ graph TD
     MESH -->|"combined / split meshes"| IO
     DISP -->|"colors"| IO
     MESH -->|"vertices"| PLOT
-    DISP -->|"_wrap_longitude"| MAGN
-    MESH -->|"hollow meshes"| MAGN
+    MESH -->|"hollow meshes & outer geometry"| MAGN
     MAGN -->|"meshes with magnets / test pieces"| IO
 
     NP["numpy"] --> MESH
@@ -138,7 +137,7 @@ Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces`
 
 There are **three hollowing strategies**, suited to different use cases:
 
-1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces. The boolean engine creates its own triangulation for the annular cap ring.
+1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. If `magnet_params` (a dictionary) is supplied, it automatically calls `insert_magnets_into_hemispheres` to place and insert magnets on the flat mating surface. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces and magnet slots. The boolean engine creates its own triangulation for the annular cap ring.
 
 2. **Subtractive combination** (`combine_subtractive_globes`) — A fast, deterministic approach that concatenates outer and inner face arrays with inverted chirality on the inner shell. Suitable for **whole-globe visualisation** (e.g. viewing in MeshLab) but **not for split-and-print workflows** — see warning below.
 
@@ -249,24 +248,24 @@ Handles uint8, float, grayscale, and RGBA inputs automatically. Returns `(N, 3)`
 
 ### `magnets.py` — Magnet Insertion & Position Optimization
 
-This module manages the placement and insertion of magnets into globe hemispheres so they can be magnetically assembled. It uses bisection search to find the optimal magnet positions and generates the required boss and void geometry.
+This module manages the placement and insertion of magnets into globe hemispheres so they can be magnetically assembled. It uses bisection search to find the optimal magnet positions directly from the outer 3D geometry of the globe, with no dependency on raw grids or scale parameters.
 
 #### Position Optimization
 
-**`optimize_magnet_positions(longitudes, lats, lons, grid, scale, radius, r_enc, h_boss, bisection_iters)`**
+**`optimize_magnet_positions(longitudes, outer_mesh, r_enc, h_boss, bisection_iters)`**
 
 For each target longitude on the equatorial cut plane, this function uses a bisection search (binary search) to find the maximum distance $d$ from the origin where a boss cylinder of radius `r_enc` and height `h_boss` is completely contained within the outer sphere's displaced surface.
 - Checks containment at multiple check-points on the top and bottom caps of the boss cylinder.
-- Uses `scipy.interpolate.RegularGridInterpolator` with dateline wrapping to evaluate the displaced radius at check-point coordinates.
+- Uses `outer_mesh.contains(global_pts)` to perform fast and precise geometric containment checks directly on the watertight displaced outer mesh.
 - Returns a list of optimized `(x, y)` center coordinates.
 
 #### Magnet Insertion
 
-**`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, lats, lons, grid, scale, radius, diameter, height, n_magnets, position, ...)`**
+**`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, outer_vertices, outer_faces, diameter, height, n_magnets, position, ...)`**
 
 Orchestrates the boolean modification of the top and bottom hollow hemispheres:
 1. Determines longitudes for the magnets (either a single start longitude with `n_magnets` spaced evenly, or a custom list of positions).
-2. Optimizes the magnet centers on the XY cut plane.
+2. Optimizes the magnet centers on the XY cut plane using the outer mesh geometry.
 3. Generates the boss cylinders and void cylinders for each position:
    - For the top hemisphere, bosses are unioned and voids are subtracted from the solid shell.
    - For the bottom hemisphere, the same coordinate bosses are unioned and corresponding voids are subtracted.

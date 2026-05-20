@@ -475,20 +475,15 @@ def create_hollow_hemispheres(
     plane_normal=(0, 0, 1),
     plane_origin=(0, 0, 0),
     engine=None,
+    magnet_params=None,
 ):
     """
-    Creates two properly manifold, hollow hemispheres for 3D printing.
+    Creates two properly manifold, hollow hemispheres for 3D printing, optionally with magnet voids.
 
     Implements the recommended workflow:
       1. Split the outer mesh into two capped hemispheres along a plane.
       2. Boolean-subtract the inner mesh from each hemisphere.
-
-    This order of operations (split first, then hollow) avoids the issue
-    where capping a pre-hollowed mesh seals the inner cavity.
-
-    The boolean engine (typically ``manifold``) creates its own triangulation
-    for the annular cap (the flat ring between the outer and inner shells),
-    so no additional cap refinement is needed.
+      3. If magnet_params is provided, insert magnet bosses and voids.
 
     Parameters:
       outer_vertices (numpy.ndarray): (N, 3) array of displaced outer shell vertices.
@@ -501,10 +496,12 @@ def create_hollow_hemispheres(
       plane_origin (tuple): A point on the cutting plane (default: origin).
       engine (str, optional): Boolean engine for trimesh ('manifold' or
           'blender'). If None, uses trimesh's default.
+      magnet_params (dict, optional): Magnet insertion parameters. If None (default),
+          does nothing. If a dictionary is provided, magnet bosses and voids are inserted.
 
     Returns:
       tuple: (top_half, bottom_half) as trimesh.Trimesh objects.
-          Returns (None, None) if splitting or boolean operations fail.
+          Returns (None, None) if splitting, hollowing, or magnet insertion fails.
     """
     normal = np.array(plane_normal, dtype=np.float64)
     origin = np.array(plane_origin, dtype=np.float64)
@@ -551,6 +548,38 @@ def create_hollow_hemispheres(
     except Exception as e:
         print(f"Error performing boolean subtraction on bottom hemisphere: {e}")
         return None, None
+
+    # Step 3: Insert magnets if parameters are provided.
+    if magnet_params is not None:
+        diameter = magnet_params.get('magnet_diameter', magnet_params.get('diameter', 5.0))
+        height = magnet_params.get('magnet_height', magnet_params.get('height', 2.0))
+        h_tol = magnet_params.get('h_tol', magnet_params.get('horizontal_tolerance', 0.15))
+        v_tol = magnet_params.get('v_tol', magnet_params.get('vertical_tolerance', 0.10))
+        v_offset = magnet_params.get('v_offset', magnet_params.get('vertical_offset', 0.20))
+        min_thick = magnet_params.get('min_thick', magnet_params.get('min_thickness', 1.5))
+        n_magnets = magnet_params.get('n_magnets', 3)
+        start_lon = magnet_params.get('start_lon', magnet_params.get('position', 0.0))
+
+        from globe3d.magnets import insert_magnets_into_hemispheres
+        try:
+            top_hollow, bottom_hollow = insert_magnets_into_hemispheres(
+                top_mesh=top_hollow,
+                bottom_mesh=bottom_hollow,
+                outer_vertices=outer_mesh,
+                outer_faces=None,
+                diameter=diameter,
+                height=height,
+                n_magnets=n_magnets,
+                position=start_lon,
+                horizontal_tolerance=h_tol,
+                vertical_tolerance=v_tol,
+                vertical_offset=v_offset,
+                min_thickness=min_thick,
+                engine=engine,
+            )
+        except Exception as e:
+            print(f"Error inserting magnets: {e}")
+            return None, None
 
     return top_hollow, bottom_hollow
 

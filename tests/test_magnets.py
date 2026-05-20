@@ -14,12 +14,10 @@ from globe3d.magnets import (
 
 def test_optimize_magnet_positions():
     """Verify that optimization along longitude lines works and finds expected positions on a sphere."""
-    # Define a simple flat grid (no displacement)
-    lats = np.linspace(-90, 90, 10)
-    lons = np.linspace(-180, 180, 20)
-    grid = np.zeros((len(lats), len(lons)))  # zero displacement
-    scale = 1.0
     radius = 50.0  # 50mm radius
+    # Generate outer sphere mesh
+    v, f = generate_sphere_points_fibonacci(1000, radius)
+    outer_mesh = trimesh.Trimesh(vertices=v, faces=f)
     
     r_enc = 4.0
     h_boss = 5.0
@@ -28,11 +26,7 @@ def test_optimize_magnet_positions():
     
     centers = optimize_magnet_positions(
         longitudes=longitudes,
-        lats=lats,
-        lons=lons,
-        grid=grid,
-        scale=scale,
-        radius=radius,
+        outer_mesh=outer_mesh,
         r_enc=r_enc,
         h_boss=h_boss,
         bisection_iters=15
@@ -50,13 +44,13 @@ def test_optimize_magnet_positions():
     for (x, y), lon_deg in zip(centers, longitudes):
         dist = np.hypot(x, y)
         # Should be very close to expected distance (within bisection tolerance)
-        assert pytest.approx(dist, abs=0.1) == expected_d
+        assert pytest.approx(dist, abs=0.5) == expected_d
         
         angle_rad = np.radians(lon_deg)
         expected_x = expected_d * np.cos(angle_rad)
         expected_y = expected_d * np.sin(angle_rad)
-        assert pytest.approx(x, abs=0.1) == expected_x
-        assert pytest.approx(y, abs=0.1) == expected_y
+        assert pytest.approx(x, abs=0.5) == expected_x
+        assert pytest.approx(y, abs=0.5) == expected_y
 
 
 def test_insert_magnets_into_hemispheres():
@@ -74,21 +68,12 @@ def test_insert_magnets_into_hemispheres():
     assert top is not None
     assert bottom is not None
     
-    # 2. Insert magnets
-    # Set up simple 0-displacement grid for positioning
-    lats = np.linspace(-90, 90, 5)
-    lons = np.linspace(-180, 180, 5)
-    grid = np.zeros((5, 5))
-    
-    # 3 magnets at position 30.0 (30, 150, 270)
+    # 2. Insert magnets (3 magnets at position 30.0 -> 30, 150, 270)
     top_mag, bottom_mag = insert_magnets_into_hemispheres(
         top_mesh=top,
         bottom_mesh=bottom,
-        lats=lats,
-        lons=lons,
-        grid=grid,
-        scale=1.0,
-        radius=outer_radius,
+        outer_vertices=ov,
+        outer_faces=of,
         diameter=5.0,
         height=2.0,
         n_magnets=3,
@@ -96,7 +81,8 @@ def test_insert_magnets_into_hemispheres():
         horizontal_tolerance=0.1,
         vertical_tolerance=0.1,
         vertical_offset=0.2,
-        min_thickness=1.5
+        min_thickness=1.5,
+        engine='manifold'
     )
     
     # Check that they are watertight and manifold
@@ -110,6 +96,38 @@ def test_insert_magnets_into_hemispheres():
     # Check that the bounds of the modified meshes are still correct
     assert top_mag.bounds[0][2] >= -0.01
     assert bottom_mag.bounds[1][2] <= 0.01
+
+
+def test_create_hollow_hemispheres_with_magnet_params():
+    """Verify that create_hollow_hemispheres integrates magnet insertion via magnet_params."""
+    outer_radius = 40.0
+    inner_radius = 32.0
+    ov, of = generate_sphere_points_fibonacci(1000, outer_radius)
+    iv, if_ = generate_sphere_points_fibonacci(500, inner_radius)
+
+    magnet_params = {
+        'magnet_diameter': 5.0,
+        'magnet_height': 2.0,
+        'h_tol': 0.15,
+        'v_tol': 0.10,
+        'v_offset': 0.20,
+        'min_thick': 1.5,
+        'n_magnets': 3,
+        'start_lon': 0.0
+    }
+
+    top_mag, bottom_mag = create_hollow_hemispheres(
+        ov, of, iv, if_,
+        engine='manifold',
+        magnet_params=magnet_params
+    )
+
+    assert top_mag is not None
+    assert bottom_mag is not None
+    assert top_mag.is_watertight
+    assert bottom_mag.is_watertight
+    assert top_mag.volume > 0
+    assert bottom_mag.volume > 0
 
 
 def test_generate_magnet_test_piece():
