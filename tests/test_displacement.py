@@ -82,3 +82,26 @@ def test_assign_vertex_colors_image(mock_imread):
     # Let's check if it picked a valid color from the image
     assert np.any(np.all(colors[0] == img.reshape(-1, 3), axis=1))
 
+
+def test_dateline_nan_column():
+    """Grids with NaN at -180° (common in GMT) must still colour correctly."""
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 9)
+    grid = np.ones((5, 9)) * 2.0  # uniform non-zero value
+    grid[:, 0] = np.nan            # NaN at -180° (GMT convention)
+
+    # Vertex at lon = -180 (negative x-axis on equator)
+    vertices = np.array([
+        [-1.0, 0.0, 0.0],  # lon = 180° (or -180° via atan2)
+        [1.0, 0.0, 0.0],   # lon = 0° (control)
+    ])
+
+    colors = assign_vertex_colors(vertices, lats, lons, grid,
+                                  colormap='viridis', vmin=0, vmax=4)
+
+    # Both vertices should get the same colour since grid is uniform (2.0)
+    # except for the NaN column which should be repaired.
+    assert not np.any(np.isnan(colors)), "NaN in colours at dateline"
+    assert np.allclose(colors[0], colors[1], atol=0.05), (
+        f"Dateline vertex colour {colors[0]} differs from control {colors[1]}"
+    )

@@ -5,32 +5,59 @@ from tqdm import tqdm
 
 def _wrap_longitude(lats, lons, grid):
     """
-    Pad the longitude array and grid for harmonic boundary conditions.
-    This ensures interpolation works across the dateline.
+    Pad the longitude array and grid for periodic (dateline) boundary
+    conditions so that ``RegularGridInterpolator`` returns valid values
+    at every longitude in [-180, 180].
+
+    The function always ensures that the longitude axis extends *beyond*
+    both -180° and +180° by copying data from the opposite edge.  This
+    handles grids that already span [-180, 180] (where the first and
+    last columns represent the same meridian), grids that span
+    [0, 360], and grids with arbitrary start/end longitudes.
+
+    It also repairs NaN edge columns that arise when ±180° are the
+    same meridian and only one side has data (common in GMT grids).
     """
     if len(lons) < 2:
         return lats, lons, grid
-        
+
+    lons = np.asarray(lons, dtype=np.float64)
+    grid = np.array(grid, copy=True)  # avoid mutating caller's array
+    step = abs(lons[1] - lons[0])
+
+    # --- Repair NaN edge columns ----------------------------------------
+    # Some grids store NaN at -180° because ±180° are physically the same
+    # meridian and data is only stored at +180° (or vice-versa).  Fill
+    # any fully-NaN edge column from the opposite edge before padding.
+    first_all_nan = np.all(np.isnan(grid[:, 0]))
+    last_all_nan = np.all(np.isnan(grid[:, -1]))
+    if first_all_nan and not last_all_nan:
+        grid[:, 0] = grid[:, -1]
+    elif last_all_nan and not first_all_nan:
+        grid[:, -1] = grid[:, 0]
+
+    # --- Pad beyond ±180° for interpolation -----------------------------
     new_lons = list(lons)
     grid_parts = [grid]
-    
-    # Pad right side if missing the +180 boundary
-    if lons[-1] < 180.0:
-        # Wrap the first longitude to the right
-        new_lons.append(lons[0] + 360.0)
-        grid_parts.append(grid[:, 0:1])
-        
-    # Pad left side if missing the -180 boundary
-    if lons[0] > -180.0:
-        # Wrap the last longitude to the left
-        new_lons.insert(0, lons[-1] - 360.0)
-        grid_parts.insert(0, grid[:, -1:])
-        
-    if len(grid_parts) > 1:
+    padded = False
+
+    # Pad right side: ensure coverage beyond +180.
+    if lons[-1] <= 180.0:
+        new_lons.append(lons[-1] + step)
+        grid_parts.append(grid[:, 1:2])
+        padded = True
+
+    # Pad left side: ensure coverage beyond -180.
+    if lons[0] >= -180.0:
+        new_lons.insert(0, lons[0] - step)
+        grid_parts.insert(0, grid[:, -2:-1])
+        padded = True
+
+    if padded:
         new_lons = np.array(new_lons)
         new_grid = np.concatenate(grid_parts, axis=1)
         return lats, new_lons, new_grid
-        
+
     return lats, lons, grid
 
 def calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertical_exagg=1.0):
