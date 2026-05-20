@@ -77,7 +77,11 @@ def calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertic
     return (model_radius_mm / earth_radius_m) * vertical_exagg
 
 
-def displace_vertices(vertices, lats, lons, grid, scale, show_progress=False, chunk_size=10000, interp_method='linear'):
+def displace_vertices(
+    vertices, lats, lons, grid, scale,
+    show_progress=False, chunk_size=10000,
+    interp_method='linear', num_threads=-1
+):
     """
     Displaces each vertex radially using an interpolated displacement from a geographic grid.
 
@@ -95,36 +99,33 @@ def displace_vertices(vertices, lats, lons, grid, scale, show_progress=False, ch
       show_progress (bool): If True, process in chunks with a progress bar.
       chunk_size (int): Number of vertices per chunk if progress is enabled.
       interp_method (str): Interpolation method for RegularGridInterpolator (default is 'linear').
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
     
     Returns:
       new_vertices: numpy array with displaced vertices.
     """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     lats, lons, grid = _wrap_longitude(lats, lons, grid)
     
     # Set up the interpolator (axes: (lat, lon))
     interpolator = RegularGridInterpolator((lats, lons), grid, bounds_error=False, fill_value=None, method=interp_method)
     n = vertices.shape[0]
     new_vertices = np.empty_like(vertices)
-    
-    if show_progress and n > chunk_size:
-        for i in tqdm(range(0, n, chunk_size), desc="Displacing vertices"):
-            chunk = vertices[i:i+chunk_size]
-            r = np.linalg.norm(chunk, axis=1)
-            lat = np.degrees(np.arcsin(chunk[:, 2] / r))
-            lon = np.degrees(np.arctan2(chunk[:, 1], chunk[:, 0]))
-            pts = np.stack((lat, lon), axis=-1)
-            displacement = interpolator(pts)
-            displacement = np.nan_to_num(displacement)
-            new_r = r + scale * displacement
-            if np.any(new_r <= 0):
-                raise ValueError(
-                    "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
-                )
-            new_vertices[i:i+chunk_size] = (chunk / r[:, None]) * new_r[:, None]
-    else:
-        r = np.linalg.norm(vertices, axis=1)
-        lat = np.degrees(np.arcsin(vertices[:, 2] / r))
-        lon = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+
+    if num_threads == -1:
+        num_threads = os.cpu_count() or 1
+    elif num_threads <= 0:
+        num_threads = 1
+
+    def process_chunk(start_idx):
+        end_idx = min(start_idx + chunk_size, n)
+        chunk = vertices[start_idx:end_idx]
+        r = np.linalg.norm(chunk, axis=1)
+        r_safe = np.where(r == 0.0, 1.0, r)
+        lat = np.degrees(np.arcsin(chunk[:, 2] / r_safe))
+        lon = np.degrees(np.arctan2(chunk[:, 1], chunk[:, 0]))
         pts = np.stack((lat, lon), axis=-1)
         displacement = interpolator(pts)
         displacement = np.nan_to_num(displacement)
@@ -133,11 +134,50 @@ def displace_vertices(vertices, lats, lons, grid, scale, show_progress=False, ch
             raise ValueError(
                 "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
             )
-        new_vertices = (vertices / r[:, None]) * new_r[:, None]
+        chunk_displaced = (chunk / r_safe[:, None]) * new_r[:, None]
+        return start_idx, end_idx, chunk_displaced
+
+    chunk_starts = list(range(0, n, chunk_size))
+
+    if num_threads > 1 and len(chunk_starts) > 1:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(process_chunk, start) for start in chunk_starts]
+            if show_progress:
+                for fut in tqdm(as_completed(futures), total=len(futures), desc="Displacing vertices (parallel)"):
+                    start, end, result = fut.result()
+                    new_vertices[start:end] = result
+            else:
+                for fut in futures:
+                    start, end, result = fut.result()
+                    new_vertices[start:end] = result
+    else:
+        if show_progress and n > chunk_size:
+            for start in tqdm(chunk_starts, desc="Displacing vertices"):
+                _, _, result = process_chunk(start)
+                new_vertices[start:start+chunk_size] = result
+        else:
+            r = np.linalg.norm(vertices, axis=1)
+            r_safe = np.where(r == 0.0, 1.0, r)
+            lat = np.degrees(np.arcsin(vertices[:, 2] / r_safe))
+            lon = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+            pts = np.stack((lat, lon), axis=-1)
+            displacement = interpolator(pts)
+            displacement = np.nan_to_num(displacement)
+            new_r = r + scale * displacement
+            if np.any(new_r <= 0):
+                raise ValueError(
+                    "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+                )
+            new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
+
     return new_vertices
 
 
-def assign_vertex_colors(vertices, lats, lons, grid, colormap='viridis', norm=None, vmin=None, vmax=None, show_progress=False, chunk_size=10000, interp_method='linear'):
+def assign_vertex_colors(
+    vertices, lats, lons, grid, colormap='viridis', norm=None,
+    vmin=None, vmax=None, show_progress=False, chunk_size=10000,
+    interp_method='linear', num_threads=-1
+):
     """
     Assigns an RGB color to each vertex by interpolating grid values (e.g., for surface properties)
     and then mapping normalized values to a matplotlib colormap.
@@ -151,10 +191,13 @@ def assign_vertex_colors(vertices, lats, lons, grid, colormap='viridis', norm=No
       show_progress (bool): Whether to process in chunks with a progress bar.
       chunk_size (int): Chunk size for progress bar processing.
       interp_method (str): Interpolation method for RegularGridInterpolator (default is 'linear').
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
 
     Returns:
       colors: (n_points x 3) numpy array of RGB colors in [0,1].
     """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     if isinstance(colormap, str):
         cmap = plt.get_cmap(colormap)
@@ -177,30 +220,58 @@ def assign_vertex_colors(vertices, lats, lons, grid, colormap='viridis', norm=No
     
     n = vertices.shape[0]
     colors = np.empty((n, 3), dtype=np.float64)
-    if show_progress and n > chunk_size:
-        for i in tqdm(range(0, n, chunk_size), desc="Assigning colors"):
-            chunk = vertices[i:i+chunk_size]
-            r = np.linalg.norm(chunk, axis=1)
-            lat = np.degrees(np.arcsin(chunk[:, 2] / r))
-            lon = np.degrees(np.arctan2(chunk[:, 1], chunk[:, 0]))
-            pts = np.stack((lat, lon), axis=-1)
-            values = interpolator(pts)
-            values = np.nan_to_num(values)
-            norm_vals = norm(values)
-            colors[i:i+chunk_size] = cmap(norm_vals)[:, :3]  # extract RGB only
-    else:
-        r = np.linalg.norm(vertices, axis=1)
-        lat = np.degrees(np.arcsin(vertices[:, 2] / r))
-        lon = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+
+    if num_threads == -1:
+        num_threads = os.cpu_count() or 1
+    elif num_threads <= 0:
+        num_threads = 1
+
+    def process_chunk(start_idx):
+        end_idx = min(start_idx + chunk_size, n)
+        chunk = vertices[start_idx:end_idx]
+        r = np.linalg.norm(chunk, axis=1)
+        r_safe = np.where(r == 0.0, 1.0, r)
+        lat = np.degrees(np.arcsin(chunk[:, 2] / r_safe))
+        lon = np.degrees(np.arctan2(chunk[:, 1], chunk[:, 0]))
         pts = np.stack((lat, lon), axis=-1)
         values = interpolator(pts)
         values = np.nan_to_num(values)
         norm_vals = norm(values)
-        colors = cmap(norm_vals)[:, :3]
+        chunk_colors = cmap(norm_vals)[:, :3]  # extract RGB only
+        return start_idx, end_idx, chunk_colors
+
+    chunk_starts = list(range(0, n, chunk_size))
+
+    if num_threads > 1 and len(chunk_starts) > 1:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(process_chunk, start) for start in chunk_starts]
+            if show_progress:
+                for fut in tqdm(as_completed(futures), total=len(futures), desc="Assigning colors (parallel)"):
+                    start, end, result = fut.result()
+                    colors[start:end] = result
+            else:
+                for fut in futures:
+                    start, end, result = fut.result()
+                    colors[start:end] = result
+    else:
+        if show_progress and n > chunk_size:
+            for start in tqdm(chunk_starts, desc="Assigning colors"):
+                _, _, result = process_chunk(start)
+                colors[start:start+chunk_size] = result
+        else:
+            r = np.linalg.norm(vertices, axis=1)
+            r_safe = np.where(r == 0.0, 1.0, r)
+            lat = np.degrees(np.arcsin(vertices[:, 2] / r_safe))
+            lon = np.degrees(np.arctan2(vertices[:, 1], vertices[:, 0]))
+            pts = np.stack((lat, lon), axis=-1)
+            values = interpolator(pts)
+            values = np.nan_to_num(values)
+            norm_vals = norm(values)
+            colors = cmap(norm_vals)[:, :3]
     return colors
 
 
-def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_size=10000):
+def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_size=10000, num_threads=-1):
     """
     Assigns an RGB color to each vertex by sampling from an equirectangular image.
 
@@ -209,10 +280,14 @@ def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_
       image_path (str): Path to the image file.
       show_progress (bool): Whether to process in chunks with a progress bar.
       chunk_size (int): Chunk size for progress bar processing.
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
 
     Returns:
       colors: (n_points x 3) numpy array of RGB colors in [0,1].
     """
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     # Load image
     img = plt.imread(image_path)
     
@@ -233,11 +308,10 @@ def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_
     
     def get_colors_from_chunk(chunk):
         r = np.linalg.norm(chunk, axis=1)
-        # Avoid division by zero
-        r[r == 0] = 1.0
+        r_safe = np.where(r == 0.0, 1.0, r)
         
         # Calculate lat/lon
-        lat = np.degrees(np.arcsin(chunk[:, 2] / r))
+        lat = np.degrees(np.arcsin(chunk[:, 2] / r_safe))
         lon = np.degrees(np.arctan2(chunk[:, 1], chunk[:, 0]))
         
         # Map to image coordinates
@@ -253,14 +327,68 @@ def assign_vertex_colors_image(vertices, image_path, show_progress=False, chunk_
         
         return img[v_idx, u_idx]
 
-    if show_progress and n > chunk_size:
-        for i in tqdm(range(0, n, chunk_size), desc="Assigning image colors"):
-            chunk = vertices[i:i+chunk_size]
-            colors[i:i+chunk_size] = get_colors_from_chunk(chunk)
+    if num_threads == -1:
+        num_threads = os.cpu_count() or 1
+    elif num_threads <= 0:
+        num_threads = 1
+
+    def process_chunk(start_idx):
+        end_idx = min(start_idx + chunk_size, n)
+        chunk = vertices[start_idx:end_idx]
+        chunk_colors = get_colors_from_chunk(chunk)
+        return start_idx, end_idx, chunk_colors
+
+    chunk_starts = list(range(0, n, chunk_size))
+
+    if num_threads > 1 and len(chunk_starts) > 1:
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(process_chunk, start) for start in chunk_starts]
+            if show_progress:
+                for fut in tqdm(as_completed(futures), total=len(futures), desc="Assigning image colors (parallel)"):
+                    start, end, result = fut.result()
+                    colors[start:end] = result
+            else:
+                for fut in futures:
+                    start, end, result = fut.result()
+                    colors[start:end] = result
     else:
-        colors = get_colors_from_chunk(vertices)
+        if show_progress and n > chunk_size:
+            for start in tqdm(chunk_starts, desc="Assigning image colors"):
+                _, _, result = process_chunk(start)
+                colors[start:start+chunk_size] = result
+        else:
+            colors = get_colors_from_chunk(vertices)
         
     return colors
+
+
+def _parallel_sjoin(points_gdf, gdf, num_threads=-1):
+    import os
+    import pandas as pd
+    import geopandas as gpd
+    from concurrent.futures import ThreadPoolExecutor
+
+    if num_threads == -1:
+        num_threads = os.cpu_count() or 1
+    elif num_threads <= 0:
+        num_threads = 1
+
+    num_points = len(points_gdf)
+    if num_threads <= 1 or num_points < 10000:
+        return gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+
+    chunk_size = (num_points + num_threads - 1) // num_threads
+    
+    def run_sjoin(chunk_start):
+        chunk_end = min(chunk_start + chunk_size, num_points)
+        chunk_gdf = points_gdf.iloc[chunk_start:chunk_end]
+        return gpd.sjoin(chunk_gdf, gdf, predicate='intersects', how='left')
+
+    chunk_starts = list(range(0, num_points, chunk_size))
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        results = list(executor.map(run_sjoin, chunk_starts))
+    
+    return pd.concat(results)
 
 
 def displace_by_points(
@@ -268,6 +396,7 @@ def displace_by_points(
     points_data: object,
     displacement: float = 1.0,
     radius_degrees: float = 1.0,
+    num_threads: int = -1,
 ) -> np.ndarray:
     """
     Displaces vertices radially if they are within a search radius (in degrees)
@@ -279,6 +408,7 @@ def displace_by_points(
         geometries, or an (N, 2) array/list of (lon, lat) coordinates.
       displacement (float): Radial displacement to apply to vertices within radius (in mm).
       radius_degrees (float): Search radius in decimal degrees.
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
 
     Returns:
       np.ndarray: Displaced (n_points x 3) vertex coordinates.
@@ -326,7 +456,7 @@ def displace_by_points(
         crs=gdf.crs
     )
 
-    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    joined = _parallel_sjoin(points_gdf, gdf, num_threads=num_threads)
     matched_indices = joined.index[joined['index_right'].notna()].unique()
     inside_mask = np.zeros(len(vertices), dtype=bool)
     inside_mask[matched_indices] = True
@@ -347,6 +477,7 @@ def displace_near_lines(
     shapefile_path: str,
     displacement: float = 1.0,
     width_degrees: float = 0.5,
+    num_threads: int = -1,
 ) -> np.ndarray:
     """
     Displaces vertices radially if they are close to (within width_degrees of)
@@ -357,6 +488,7 @@ def displace_near_lines(
       shapefile_path (str): Path to the shapefile.
       displacement (float): Radial displacement to apply (in mm).
       width_degrees (float): Distance (in degrees) to buffer the geometries.
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
 
     Returns:
       np.ndarray: Displaced (n_points x 3) vertex coordinates.
@@ -389,7 +521,7 @@ def displace_near_lines(
         crs=gdf.crs
     )
 
-    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    joined = _parallel_sjoin(points_gdf, gdf, num_threads=num_threads)
     matched_indices = joined.index[joined['index_right'].notna()].unique()
     inside_mask = np.zeros(len(vertices), dtype=bool)
     inside_mask[matched_indices] = True
@@ -410,6 +542,7 @@ def displace_by_polygons(
     shapefile_path: str,
     displacement: float = 1.0,
     displace_inside: bool = True,
+    num_threads: int = -1,
 ) -> np.ndarray:
     """
     Displaces vertices radially depending on whether they are inside or outside closed polygons.
@@ -420,6 +553,7 @@ def displace_by_polygons(
       displacement (float): Radial displacement to apply (in mm).
       displace_inside (bool): If True, displace points inside polygons. If False,
         displace points outside polygons.
+      num_threads (int): Number of threads for parallel processing (default is -1, which uses all cores).
 
     Returns:
       np.ndarray: Displaced (n_points x 3) vertex coordinates.
@@ -448,7 +582,7 @@ def displace_by_polygons(
         crs=gdf.crs
     )
 
-    joined = gpd.sjoin(points_gdf, gdf, predicate='intersects', how='left')
+    joined = _parallel_sjoin(points_gdf, gdf, num_threads=num_threads)
     matched_indices = joined.index[joined['index_right'].notna()].unique()
     inside_mask = np.zeros(len(vertices), dtype=bool)
     inside_mask[matched_indices] = True

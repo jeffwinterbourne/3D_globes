@@ -134,50 +134,62 @@ def midpoint(v1, v2):
 def subdivide_icosahedron(vertices, faces, radius=1.0, center=(0.0, 0.0, 0.0)):
     """
     Subdivides each triangular face into four smaller triangles, projecting new vertices
-    back onto the sphere. Uses caching to avoid duplicating midpoint vertices.
+    back onto the sphere. Uses vectorised NumPy operations for maximum efficiency.
 
     Parameters:
-      vertices: current list (numpy array) of vertices.
-      faces: current list (numpy array) of faces (indices).
-      radius: sphere radius.
-      center: sphere center.
+      vertices (numpy.ndarray): (V x 3) array of vertices.
+      faces (numpy.ndarray): (F x 3) array of faces.
+      radius (float): Sphere radius.
+      center (tuple or numpy.ndarray): Sphere center.
 
     Returns:
-      new_vertices: numpy array of vertices after subdivision.
-      new_faces: numpy array of faces (indices).
+      new_vertices: (V_new x 3) array of vertices after subdivision.
+      new_faces: (F_new x 3) array of faces.
     """
-    center = np.array(center, dtype=np.float64)
-    midpoint_cache = {}
+    center = np.asarray(center, dtype=np.float64)
+    V = vertices.shape[0]
+    F = faces.shape[0]
 
-    def get_midpoint(i, j):
-        # Return the index of the midpoint vertex between vertices[i] and vertices[j]
-        if (i, j) in midpoint_cache:
-            return midpoint_cache[(i, j)]
-        if (j, i) in midpoint_cache:
-            return midpoint_cache[(j, i)]
-        v_mid = midpoint(vertices[i], vertices[j])
-        # Project onto sphere surface
-        v_mid = v_mid - center
-        v_mid = v_mid / np.linalg.norm(v_mid) * radius + center
-        nonlocal vertices_list
-        index = len(vertices_list)
-        vertices_list.append(v_mid)
-        midpoint_cache[(i, j)] = index
-        return index
+    # Extract all edges (3 per triangle)
+    # Stack edges in a fixed order so we can easily map them back
+    edges = np.vstack([
+        faces[:, [0, 1]],  # Edge 0-1
+        faces[:, [1, 2]],  # Edge 1-2
+        faces[:, [2, 0]]   # Edge 2-0
+    ])
 
-    vertices_list = list(vertices)
-    new_faces = []
-    for tri in faces:
-        i0, i1, i2 = tri
-        a = get_midpoint(i0, i1)
-        b = get_midpoint(i1, i2)
-        c = get_midpoint(i2, i0)
-        new_faces.append([i0, a, c])
-        new_faces.append([i1, b, a])
-        new_faces.append([i2, c, b])
-        new_faces.append([a, b, c])
-    new_vertices = np.array(vertices_list, dtype=np.float64)
-    new_faces = np.array(new_faces, dtype=np.int32)
+    # Sort indices along the second axis to ensure direction invariance, e.g. (i, j) == (j, i)
+    edges_sorted = np.sort(edges, axis=1)
+
+    # Find unique edges and get their inverse mapping indices
+    unique_edges, inverse_indices = np.unique(edges_sorted, axis=0, return_inverse=True)
+    E = unique_edges.shape[0]
+
+    # Compute midpoints for unique edges
+    midpoints = (vertices[unique_edges[:, 0]] + vertices[unique_edges[:, 1]]) / 2.0
+
+    # Project midpoints onto sphere surface relative to center
+    centered = midpoints - center
+    norms = np.linalg.norm(centered, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    midpoints_projected = (centered / norms) * radius + center
+
+    # New vertices are old vertices concatenated with new unique midpoints
+    new_vertices = np.vstack([vertices, midpoints_projected])
+
+    # Extract the unique midpoint indices for each edge of each face
+    # Midpoints are indexed starting from V
+    a = V + inverse_indices[0:F]        # Midpoint of edge 0-1
+    b = V + inverse_indices[F:2*F]      # Midpoint of edge 1-2
+    c = V + inverse_indices[2*F:3*F]    # Midpoint of edge 2-0
+
+    # Form the four sub-triangles for each original triangle
+    f1 = np.column_stack([faces[:, 0], a, c])
+    f2 = np.column_stack([faces[:, 1], b, a])
+    f3 = np.column_stack([faces[:, 2], c, b])
+    f4 = np.column_stack([a, b, c])
+
+    new_faces = np.vstack([f1, f2, f3, f4]).astype(np.int32)
     return new_vertices, new_faces
     
     

@@ -278,3 +278,58 @@ def test_displace_by_polygons(tmp_path):
         displace_by_polygons(vertices, str(shp_err), displacement=4.0)
 
 
+def test_parallel_displacement(tmp_path):
+    """Test that all displacement functions yield identical results with num_threads > 1."""
+    import geopandas as gpd
+    from shapely.geometry import Point, LineString, Polygon
+    from globe3d.displacement import (
+        displace_vertices,
+        assign_vertex_colors,
+        displace_by_points,
+        displace_near_lines,
+        displace_by_polygons
+    )
+
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 5)
+    grid = np.ones((5, 5))
+    vertices = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ])
+
+    # 1. displace_vertices
+    disp_seq = displace_vertices(vertices, lats, lons, grid, 0.1, num_threads=1)
+    disp_par = displace_vertices(vertices, lats, lons, grid, 0.1, num_threads=2)
+    assert np.allclose(disp_seq, disp_par)
+
+    # 2. assign_vertex_colors
+    col_seq = assign_vertex_colors(vertices, lats, lons, grid, num_threads=1)
+    col_par = assign_vertex_colors(vertices, lats, lons, grid, num_threads=2)
+    assert np.allclose(col_seq, col_par)
+
+    # 3. displace_by_points
+    pts_data = np.array([[0.0, 0.0], [90.0, 0.0]])
+    disp_pts_seq = displace_by_points(vertices, pts_data, displacement=1.0, radius_degrees=1.0, num_threads=1)
+    disp_pts_par = displace_by_points(vertices, pts_data, displacement=1.0, radius_degrees=1.0, num_threads=2)
+    assert np.allclose(disp_pts_seq, disp_pts_par)
+
+    # 4. displace_near_lines
+    gdf_line = gpd.GeoDataFrame(geometry=[LineString([(0, 0), (10, 0)])], crs="EPSG:4326")
+    shp_line = tmp_path / "line_par.shp"
+    gdf_line.to_file(shp_line)
+    disp_line_seq = displace_near_lines(vertices, str(shp_line), displacement=1.0, width_degrees=1.0, num_threads=1)
+    disp_line_par = displace_near_lines(vertices, str(shp_line), displacement=1.0, width_degrees=1.0, num_threads=2)
+    assert np.allclose(disp_line_seq, disp_line_par)
+
+    # 5. displace_by_polygons
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    gdf_poly = gpd.GeoDataFrame(geometry=[poly], crs="EPSG:4326")
+    shp_poly = tmp_path / "poly_par.shp"
+    gdf_poly.to_file(shp_poly)
+    disp_poly_seq = displace_by_polygons(vertices, str(shp_poly), displacement=1.0, displace_inside=True, num_threads=1)
+    disp_poly_par = displace_by_polygons(vertices, str(shp_poly), displacement=1.0, displace_inside=True, num_threads=2)
+    assert np.allclose(disp_poly_seq, disp_poly_par)
+
+

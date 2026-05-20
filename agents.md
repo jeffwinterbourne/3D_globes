@@ -33,10 +33,12 @@ pip install -e .
     - `mesh.py`: Geometry generation and manipulation.
     - `grid.py`: Data loading.
     - `displacement.py`: Topography application.
+    - `magnets.py`: Optimization and insertion of magnet voids and bosses.
     - `io.py`: File export.
     - `plot.py`: Visualization.
 - **Docstrings**: All functions and classes MUST have complete and up-to-date docstrings (Google or NumPy style) explaining all parameters (including kwargs) and return values. When updating a function's signature, you MUST update its docstring concurrently to ensure documentation standards are met.
 - **Type Hinting**: Use type hints where helpful for clarity.
+- **Performance & Parallelism**: Write vectorized NumPy operations rather than Python loops for geometric calculations and file exporters. Use CPU-based parallelism (with the `num_threads` parameter, default `-1` for all cores) for intensive interpolation operations.
 
 ## Quality & Testing
 - **Expectation**: We expect high code quality and reliability. Running tests is an expectation with each iteration to ensure no regression.

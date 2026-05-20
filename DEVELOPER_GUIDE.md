@@ -21,6 +21,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Mesh hollowing & hemisphere splitting | `mesh.py` | `create_hollow_hemispheres`, `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
 | Mesh utilities (resize, re-project, chirality) | `mesh.py` | `resize_globe`, `project_vertices_to_sphere`, `invert_chirality`, `compute_scale_factor` |
 | File export (STL & OBJ with vertex colors) | `io.py` | `write_stl_binary`, `write_obj_with_vertex_colors` |
+| Magnet insertion and test piece generation | `magnets.py` | `insert_magnets_into_hemispheres`, `generate_magnet_test_piece` |
 | Visual QA | `plot.py` | `plot_vertex_distribution` |
 
 ---
@@ -35,22 +36,25 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 ├── DEVELOPER_GUIDE.md         # ← you are here
 ├── README.md
 ├── pyproject.toml             # Build config (setuptools)
-├── setup.py                   # Shim for editable installs
+├── setup.py
 ├── src/
 │   └── globe3d/
 │       ├── __init__.py        # Public API re-exports
 │       ├── mesh.py            # Sphere generation, hollowing, splitting
 │       ├── grid.py            # NetCDF / TIFF data loading
 │       ├── displacement.py    # Vertex displacement & coloring
+│       ├── magnets.py         # Optimization & insertion of magnets
 │       ├── io.py              # STL & OBJ export
 │       └── plot.py            # Matplotlib visual checks
 ├── tests/
 │   ├── test_mesh.py
 │   ├── test_displacement.py
-│   └── test_grid.py
+│   ├── test_grid.py
+│   └── test_magnets.py
 └── examples/
     ├── tomo_globe_3d.ipynb          # Tomography globe (grid-colored)
-    └── demo_split_globe_image.ipynb # Image-colored demo
+    ├── demo_split_globe_image.ipynb # Image-colored demo
+    └── demo_magnets.ipynb           # Magnet insertion demo
 ```
 
 ### Dependency graph
@@ -61,6 +65,7 @@ graph TD
         MESH["mesh.py"]
         GRID["grid.py"]
         DISP["displacement.py"]
+        MAGN["magnets.py"]
         IO["io.py"]
         PLOT["plot.py"]
     end
@@ -71,20 +76,26 @@ graph TD
     MESH -->|"combined / split meshes"| IO
     DISP -->|"colors"| IO
     MESH -->|"vertices"| PLOT
+    DISP -->|"_wrap_longitude"| MAGN
+    MESH -->|"hollow meshes"| MAGN
+    MAGN -->|"meshes with magnets / test pieces"| IO
 
     NP["numpy"] --> MESH
     NP --> GRID
     NP --> DISP
+    NP --> MAGN
     NP --> IO
     NP --> PLOT
     SCIPY["scipy"] --> MESH
     SCIPY --> DISP
+    SCIPY --> MAGN
     NETCDF4["netCDF4"] --> GRID
     RASTERIO["rasterio (optional)"] --> GRID
     MPL["matplotlib"] --> DISP
     MPL --> PLOT
     TQDM["tqdm"] --> DISP
     TRIMESH["trimesh"] --> MESH
+    TRIMESH --> MAGN
 ```
 
 Modules are intentionally loosely coupled: `grid.py` knows nothing about meshes, `displacement.py` knows nothing about file formats, and `io.py` knows nothing about grids. Communication happens through numpy arrays passed by the caller (typically a notebook).
@@ -236,6 +247,40 @@ Handles uint8, float, grayscale, and RGBA inputs automatically. Returns `(N, 3)`
 
 ---
 
+### `magnets.py` — Magnet Insertion & Position Optimization
+
+This module manages the placement and insertion of magnets into globe hemispheres so they can be magnetically assembled. It uses bisection search to find the optimal magnet positions and generates the required boss and void geometry.
+
+#### Position Optimization
+
+**`optimize_magnet_positions(longitudes, lats, lons, grid, scale, radius, r_enc, h_boss, bisection_iters)`**
+
+For each target longitude on the equatorial cut plane, this function uses a bisection search (binary search) to find the maximum distance $d$ from the origin where a boss cylinder of radius `r_enc` and height `h_boss` is completely contained within the outer sphere's displaced surface.
+- Checks containment at multiple check-points on the top and bottom caps of the boss cylinder.
+- Uses `scipy.interpolate.RegularGridInterpolator` with dateline wrapping to evaluate the displaced radius at check-point coordinates.
+- Returns a list of optimized `(x, y)` center coordinates.
+
+#### Magnet Insertion
+
+**`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, lats, lons, grid, scale, radius, diameter, height, n_magnets, position, ...)`**
+
+Orchestrates the boolean modification of the top and bottom hollow hemispheres:
+1. Determines longitudes for the magnets (either a single start longitude with `n_magnets` spaced evenly, or a custom list of positions).
+2. Optimizes the magnet centers on the XY cut plane.
+3. Generates the boss cylinders and void cylinders for each position:
+   - For the top hemisphere, bosses are unioned and voids are subtracted from the solid shell.
+   - For the bottom hemisphere, the same coordinate bosses are unioned and corresponding voids are subtracted.
+4. Performs these boolean operations using the `trimesh` boolean module.
+5. Returns a tuple of `(top_mesh_with_magnets, bottom_mesh_with_magnets)`.
+
+#### Calibration Test Piece
+
+**`generate_magnet_test_piece(diameter, height, horizontal_tolerance, vertical_tolerance, vertical_offset, min_thickness, output_path)`**
+
+Generates a simple cylinder containing a single magnet void. Useful for test-printing to verify tolerances before printing a large globe.
+
+---
+
 ### `io.py` — File Export
 
 Two export formats (~96 lines), chosen based on whether vertex colors are needed:
@@ -281,7 +326,9 @@ From **io**: `write_stl_binary`, `write_obj_with_vertex_colors`
 
 From **plot**: `plot_vertex_distribution`
 
-Internal helpers (`create_icosahedron`, `subdivide_icosahedron`, `midpoint`, `project_vertices_to_sphere`, `create_inner_mesh`, `fix_face_chirality`, `_wrap_longitude`) are **not** exported and should not be imported directly by users.
+From **magnets**: `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`
+
+Internal helpers (`create_icosahedron`, `subdivide_icosahedron`, `midpoint`, `project_vertices_to_sphere`, `create_inner_mesh`, `fix_face_chirality`, `_wrap_longitude`, `optimize_magnet_positions`) are **not** exported and should not be imported directly by users.
 
 ---
 
@@ -511,6 +558,8 @@ The test suite lives in `tests/` and uses `pytest`.
 | `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds), `create_hollow_hemispheres` (watertight, correct volume, z-bounds) |
 | `test_displacement.py` | `displacement.py` | `displace_vertices` (constant grid → predictable radius change), `assign_vertex_colors` (output shape & range), `assign_vertex_colors_image` (mocked image, coordinate mapping) |
 | `test_grid.py` | `grid.py` | `list_netcdf_variables` and `load_netcdf_grid` using mocked `netCDF4.Dataset` |
+| `test_io.py` | `io.py` | `write_stl_binary` (binary validation, size check, normals), `fix_face_chirality` (vectorized chirality checking), `write_obj_with_vertex_colors` (correct format, lines count) |
+| `test_magnets.py` | `magnets.py` | `optimize_magnet_positions` (bisection distance check), `insert_magnets_into_hemispheres` (watertightness, volume bounds), `generate_magnet_test_piece` (height/radius bounds, watertightness) |
 
 ### Running tests
 
@@ -523,7 +572,26 @@ pytest
 
 - External data dependencies (NetCDF files, images) are **mocked** so tests run without large data files.
 - Geometry tests verify invariants (e.g. all vertices lie on the sphere, bounding box shrinks after inner mesh creation) rather than comparing exact floating-point coordinates.
-- The `io.py` module currently has **no dedicated tests** — this is a known coverage gap.
+
+---
+
+## ⚡ Performance Optimization (Vectorization & Parallelization)
+
+To support high-resolution meshes (e.g., millions of vertices/faces) and rapid generation cycles, `globe3d` uses high-performance CPU optimizations:
+
+### 1. Vectorized Geometry Generation
+- Recursive subdivision (`subdivide_icosahedron`) and face normal alignment (`_fix_sphere_normals`, `fix_face_chirality`) are implemented using vectorized NumPy matrix operations. This avoids slow Python loops, reducing generation times for level 6/7 spheres to milliseconds.
+
+### 2. Parallelized Grid Interpolation
+- Geographic grid lookup and interpolation (`displace_vertices`, `assign_vertex_colors`, shapefile-based functions) are parallelized on the CPU using a `ThreadPoolExecutor` or `_parallel_sjoin`.
+- All displacement functions accept a `num_threads` argument:
+  - `num_threads=-1` (default): Uses all available CPU cores.
+  - `num_threads=1`: Synchronous single-threaded execution.
+  - `num_threads=N`: Restricts execution to `N` worker threads.
+
+### 3. Vectorized File Writers
+- `write_stl_binary`: Uses a structured NumPy array (`np.dtype`) to serialize and write binary STL facets in a single call to `file.write()`, accelerating disk I/O.
+- `write_obj_with_vertex_colors`: Replaces slow loop-based file writing with `np.savetxt`, formatting and flushing coordinates, colors, and faces in bulk.
 
 ---
 

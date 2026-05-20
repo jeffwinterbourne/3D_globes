@@ -30,6 +30,10 @@ from .io import (
 from .plot import (
     plot_vertex_distribution
 )
+from .magnets import (
+    insert_magnets_into_hemispheres,
+    generate_magnet_test_piece
+)
 
 __all__ = [
     "generate_sphere_points_fibonacci",
@@ -53,4 +57,6 @@ __all__ = [
     "write_stl_binary",
     "write_obj_with_vertex_colors",
     "plot_vertex_distribution",
+    "insert_magnets_into_hemispheres",
+    "generate_magnet_test_piece",
 ]
