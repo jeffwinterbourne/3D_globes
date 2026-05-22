@@ -6,6 +6,7 @@ from globe3d.mesh import (
     create_hollow_hemispheres
 )
 from globe3d.magnets import (
+    MagnetSettings,
     optimize_magnet_positions,
     insert_magnets_into_hemispheres,
     generate_magnet_test_piece,
@@ -107,16 +108,16 @@ def test_create_hollow_hemispheres_with_magnet_params():
     ov, of = generate_sphere_points_fibonacci(1000, outer_radius)
     iv, if_ = generate_sphere_points_fibonacci(500, inner_radius)
 
-    magnet_params = {
-        'magnet_diameter': 5.0,
-        'magnet_height': 2.0,
-        'h_tol': 0.15,
-        'v_tol': 0.10,
-        'v_offset': 0.20,
-        'min_thick': 1.5,
-        'n_magnets': 3,
-        'start_lon': 0.0
-    }
+    magnet_params = MagnetSettings(
+        diameter=5.0,
+        height=2.0,
+        horizontal_tolerance=0.15,
+        vertical_tolerance=0.10,
+        vertical_offset=0.20,
+        min_thickness=1.5,
+        n_magnets=3,
+        position=0.0
+    )
 
     top_mag, bottom_mag = create_hollow_hemispheres(
         ov, of, iv, if_,
@@ -240,19 +241,19 @@ def test_insert_magnets_no_bosses_end_to_end():
     ov, of = generate_sphere_points_fibonacci(500, outer_radius)
     iv, if_ = generate_sphere_points_fibonacci(200, inner_radius)
 
-    magnet_params = {
-        'magnet_diameter': 4.0,
-        'magnet_height': 1.5,
-        'h_tol': 0.1,
-        'v_tol': 0.1,
-        'v_offset': 0.2,
-        'min_thick': 1.2,
-        'n_magnets': 3,
-        'min_magnets': 2,
-        'min_angular_spacing': 60.0,
-        'step_degrees': 10.0,
-        'add_bosses': False
-    }
+    magnet_params = MagnetSettings(
+        diameter=4.0,
+        height=1.5,
+        horizontal_tolerance=0.1,
+        vertical_tolerance=0.1,
+        vertical_offset=0.2,
+        min_thickness=1.2,
+        n_magnets=3,
+        min_magnets=2,
+        min_angular_spacing=60.0,
+        step_degrees=10.0,
+        add_bosses=False
+    )
 
     top_mag, bottom_mag = create_hollow_hemispheres(
         ov, of, iv, if_,

@@ -12,16 +12,14 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 
 ### Key capabilities
 
-| Capability | Module | Entry Point(s) |
+| Capability | Module / Class | Entry Point(s) / Methods |
 |---|---|---|
-| Sphere mesh generation (Fibonacci & icosahedron) | `mesh.py` | `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron` |
-| Geographic grid loading (NetCDF & TIFF) | `grid.py` | `load_netcdf_grid`, `load_tiff_grid`, `list_netcdf_variables` |
-| Radial displacement of vertices | `displacement.py` | `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `calculate_displacement_scale` |
-| Vertex coloring (grid, image & modifiers) | `displacement.py` | `assign_vertex_colors`, `assign_vertex_colors_image`, `modify_vertex_colors`, `modify_vertex_colours` |
-| Mesh hollowing & hemisphere splitting | `mesh.py` | `create_hollow_hemispheres`, `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
-| Mesh utilities (resize, re-project, chirality) | `mesh.py` | `resize_globe`, `project_vertices_to_sphere`, `invert_chirality`, `compute_scale_factor` |
-| File export (STL & OBJ with vertex colors) | `io.py` | `write_stl_binary`, `write_obj_with_vertex_colors` |
-| Magnet insertion and test piece generation | `magnets.py` | `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`, `find_valid_magnet_positions_no_bosses` |
+| Globe model state & orchestration | `mesh.py` / `GlobeModel` | `GlobeModel.from_fibonacci`, `GlobeModel.from_icosahedron`, `GlobeModel.displace`, `GlobeModel.colour`, `GlobeModel.generate_hemispheres` |
+| Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
+| Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
+| Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer`, `ConstantColourer` |
+| Magnet settings & placement options | `magnets.py` / `MagnetSettings` | `MagnetSettings` |
+| File export (STL & OBJ with vertex colors) | `mesh.py` / `GlobeModel` | `GlobeModel.write_stl`, `GlobeModel.write_obj` |
 | Visual QA | `plot.py` | `plot_vertex_distribution` |
 
 ---
@@ -105,72 +103,44 @@ Modules are intentionally loosely coupled: `grid.py` knows nothing about meshes,
 
 ### `mesh.py` — Geometry Generation & Processing
 
-This is the largest module (~413 lines) and carries all geometry logic. It has **no dependency on geographic data** — it operates purely on 3D vertex arrays and face index arrays.
+This module defines the central **`GlobeModel`** class, which encapsulates the outer/inner geometry, styling, recipe, and export orchestration of the globe.
 
-#### Sphere generation strategies
+#### `GlobeModel` Initialization & Creators
 
-| Function | Algorithm | Vertex count control | Notes |
-|---|---|---|---|
-| `generate_sphere_points_fibonacci(n_points, radius, center)` | [Fibonacci lattice](https://en.wikipedia.org/wiki/Fibonacci_lattice) | Exact (`n_points`) | Near-uniform density; faces computed via `scipy.spatial.ConvexHull`. Preferred for production globes (e.g. 1 million points). |
-| `generate_sphere_points_icosahedron(subdivisions, radius, center)` | Recursive midpoint subdivision of an icosahedron | Grows as `10 × 4^s + 2` where `s` = subdivisions | Perfectly uniform triangle area; vertex count grows exponentially. |
+- `GlobeModel(vertices=None, faces=None)`: Creates a new model instance.
+- `GlobeModel.from_fibonacci(n_points, radius=1.0, center=(0.0, 0.0, 0.0))`: Generates a base sphere mesh using a Fibonacci lattice.
+- `GlobeModel.from_icosahedron(subdivisions, radius=1.0, center=(0.0, 0.0, 0.0))`: Generates a base sphere mesh by recursively subdividing an icosahedron.
 
-Both return `(vertices, faces)` where `vertices` is `(N, 3)` float64 and `faces` is `(F, 3)` int32. Both generators call `trimesh.fix_normals()` internally to guarantee outward-facing winding order.
+Both generators call `trimesh.fix_normals()` internally to guarantee outward-facing winding order.
 
-> [!NOTE]
-> `scipy.spatial.ConvexHull` (used by the Fibonacci generator) does **not** guarantee consistent face winding. Without the `fix_normals` post-processing, the resulting mesh can have negative volume (inward-facing normals), which causes slicer artefacts and boolean operation failures.
+#### `GlobeModel` Workflow Methods
 
-**Internal helpers** (not exported through `__init__.py`):
-- `create_icosahedron(radius, center)` — creates the base 12-vertex / 20-face icosahedron.
-- `subdivide_icosahedron(vertices, faces, radius, center)` — one level of Loop-style subdivision with a midpoint cache to prevent duplicate vertices.
-- `midpoint(v1, v2)` — simple vector average.
-- `project_vertices_to_sphere(vertices, radius, center)` — re-normalises a set of vertices back onto an ideal sphere. Useful after operations that may have perturbed exact radii.
+- `model.displace(displacer, scale=1.0)`: Applies a `Displacer` object to the outer vertices.
+- `model.colour(colourer, target='outer', selection=None, selection_kwargs=None)`: Applies a `Colourer` object to the model's vertices (optionally to a subset via a selection function).
+- `model.create_inner_mesh(thickness)`: Scales down the outer mesh to create an inner cavity.
+- `model.generate_hemispheres(plane_normal=(0,0,1), plane_origin=(0,0,0), hollow=True, thickness=1.5, engine=None)`: Splits and hollows the model, returning two `trimesh.Trimesh` halves. Re-applies the coloring recipe to the split hemispheres.
+- `model.write_stl(filename, part='outer')`: Exports the specified part to a binary STL file.
+- `model.write_obj(filename, part='outer', center=(0.0, 0.0, 0.0), fix_normals=False)`: Exports the specified part (with vertex colors) to an OBJ file.
 
-#### Mesh manipulation utilities
+#### Hollowing & Splitting Helpers (Internal)
 
-| Function | Purpose |
-|---|---|
-| `resize_globe(vertices, scale, origin)` | Scales vertices relative to a given origin point. |
-| `invert_chirality(faces)` | Reverses the winding order (columns 1 and 2 swapped) of every triangle. This flips all face normals. |
-| `compute_scale_factor(vertices, desired_cube_size)` | Calculates a uniform scale factor to fit a vertex cloud inside a bounding cube of a desired side length. |
-
-#### Hollowing
-
-There are **three hollowing strategies**, suited to different use cases:
-
-1. **Boolean hemisphere pipeline** (`create_hollow_hemispheres`) — **The recommended approach for 3D printing.** Splits the displaced outer mesh into two capped hemispheres *first*, then boolean-subtracts the inner sphere from each half using `trimesh.boolean.difference`. If `magnet_params` (a dictionary) is supplied, it automatically calls `insert_magnets_into_hemispheres` to place and insert magnets on the flat mating surface. This produces properly manifold, watertight hollow hemispheres with correct annular cap faces and magnet slots. The boolean engine creates its own triangulation for the annular cap ring.
-
-2. **Subtractive combination** (`combine_subtractive_globes`) — A fast, deterministic approach that concatenates outer and inner face arrays with inverted chirality on the inner shell. Suitable for **whole-globe visualisation** (e.g. viewing in MeshLab) but **not for split-and-print workflows** — see warning below.
-
-3. **Boolean difference** (`hollow_mesh`) — Uses `trimesh.boolean.difference` on the whole globe. More geometrically correct than subtractive combination but significantly slower. Accepts optional pre-built inner mesh data, or generates one automatically via `create_inner_mesh`.
-
-> [!WARNING]
-> **Do not combine `combine_subtractive_globes` with `split_mesh_hemispheres` for 3D printing.** When `slice_plane(cap=True)` cuts a pre-hollowed mesh, the cap fills the entire cross-section (both outer and inner circles), sealing the inner cavity. The slicer then treats the hemisphere as solid. Use `create_hollow_hemispheres` instead, which splits *before* hollowing.
-
-`create_inner_mesh(outer_vertices, outer_faces, thickness)` scales the outer mesh down about its bounding-box centre so that the thinnest wall is `thickness` units.
-
-#### Hemisphere splitting
-
-`split_mesh_hemispheres(mesh, normal, origin)` uses `trimesh.Trimesh.slice_plane` to cut a mesh into two halves along a plane (default: the equator, `normal=(0,0,1)`). Both halves are **capped** so they can be printed flat-side-down.
-
-> [!NOTE]
-> For hollow globe printing, prefer `create_hollow_hemispheres` which handles splitting *and* hollowing in the correct order.
+- `create_hollow_hemispheres(...)`: Recommended split-first, hollow-second boolean engine pipeline.
+- `combine_subtractive_globes(...)`: Fast and deterministic subtraction by concatenation and inverted chirality of inner shell.
+- `hollow_mesh(...)`: Whole-globe boolean difference.
+- `split_mesh_hemispheres(...)`: Splits and caps a mesh.
 
 ---
 
-### `grid.py` — Data Loading
+### `grid.py` — Geographic Grid Loading
 
-A thin, focused module (~63 lines) responsible for reading geographic grids into the `(lats, lons, grid)` triple that the rest of the library consumes.
+This module defines the **`GeographicGrid`** class, representing geographic coordinates (`lats`, `lons`) and a 2D scalar grid of data. Coordinates are validated and automatically sorted in ascending order upon creation.
 
-| Function | Format | Notes |
-|---|---|---|
-| `list_netcdf_variables(filename)` | NetCDF4 | Convenience helper: returns a list of variable name strings in the file. |
-| `load_netcdf_grid(filename, lat_var, lon_var, data_var)` | NetCDF4 | Default variable names are `lat`, `lon`, `z` (matching ETOPO conventions). Caller must supply the correct names for other datasets (e.g. `y`, `x`, `z` for GMT grids). |
-| `load_tiff_grid(filename)` | GeoTIFF | Reads the first band. Assumes an equirectangular projection spanning -180°→180° longitude, 90°→-90° latitude. Requires `rasterio`. |
+#### `GeographicGrid` Creators & Utilities
 
-All loaders return:
-- `lats`: 1-D array, **must be sorted** (ascending) for `RegularGridInterpolator`.
-- `lons`: 1-D array, sorted ascending.
-- `grid`: 2-D array of shape `(len(lats), len(lons))`.
+- `GeographicGrid(lats, lons, grid)`: Initializes a `GeographicGrid` and validates dimensions, uniqueness, and shape consistency.
+- `GeographicGrid.from_netcdf(filename, lat_var='lat', lon_var='lon', data_var='z')`: Loads grid data from a NetCDF4 file.
+- `GeographicGrid.from_tiff(filename)`: Loads grid data from a GeoTIFF file using `rasterio`.
+- `GeographicGrid.list_netcdf_variables(filename)`: Static helper to list available variables in a NetCDF4 file.
 
 ---
 
@@ -197,62 +167,41 @@ This convention is consistent across `displace_vertices`, `assign_vertex_colors`
 #### Dateline wrapping (`_wrap_longitude`)
 
 An internal helper that pads the longitude axis and grid to handle interpolation across the ±180° dateline. It replicates the first/last column of the grid at the opposite boundary with appropriate longitude offsets so that `RegularGridInterpolator` has continuous data across the seam.
+### `displacement.py` — Radial Displacement & Vertex Coloring
 
-#### Displacement pipeline
+This module handles radial vertex displacement and vertex coloring using an object-oriented class hierarchy.
 
-```python
-scale = calculate_displacement_scale(model_radius_mm, earth_radius_km, vertical_exagg)
-vertices = displace_vertices(vertices, lats, lons, grid, scale)
-```
+#### Displacer Hierarchy
 
-**`calculate_displacement_scale(model_radius_mm, earth_radius_km, vertical_exagg)`**
+All displacement classes inherit from the base `Displacer` class and are callable with `__call__(vertices, scale=1.0)`.
 
-Computes: `(model_radius_mm / (earth_radius_km × 1000)) × vertical_exagg`
+- **`GridDisplacer(grid, num_threads=-1, interp_method='linear')`**
+  Displaces vertices radially based on a `GeographicGrid` interpolation.
+- **`PointDisplacer(points_data, displacement, radius_degrees=1.0, num_threads=-1)`**
+  Displaces vertices close to discrete points. `points_data` can be a shapefile path or an `(N, 2)` array of `(lon, lat)`.
+- **`LineDisplacer(shapefile_path, displacement, width_degrees=1.0, num_threads=-1)`**
+  Displaces vertices within a ribbon width of line features.
+- **`PolygonDisplacer(shapefile_path, displacement, displace_inside=True, num_threads=-1)`**
+  Displaces vertices that fall inside (or outside) closed polygons.
 
-This converts real-world elevation values (in metres, relative to the reference radius) into millimetre-scale displacements on the model, multiplied by the vertical exaggeration factor. Typical exaggeration values for a printable globe are 20–50×.
+All displacement classes validate that no vertex is translated deeper than or to the origin (i.e. new radius <= 0), raising a `ValueError` if a displacement is invalid.
 
-**`displace_vertices(vertices, lats, lons, grid, scale, ...)`**
+#### Colourer Hierarchy
 
-For each vertex:
-1. Compute current radius `r` and geographic coordinates `(lat, lon)`.
-2. Interpolate the grid value at `(lat, lon)` using `scipy.interpolate.RegularGridInterpolator`.
-3. Compute new radius: `r_new = r + scale × grid_value`.
-4. Rescale the vertex: `vertex_new = unit_vector × r_new`.
+All coloring classes inherit from the base `Colourer` class and are callable with `__call__(vertices)`. They return an `(N, 3)` RGB float64 array in range `[0, 1]`.
 
-Supports chunked processing with a `tqdm` progress bar (controlled by `show_progress` and `chunk_size` parameters). The interpolation method can be changed via `interp_method` (default: `'linear'`).
+- **`GridColourer(grid, colormap='viridis', norm=None, vmin=None, vmax=None, num_threads=-1, interp_method='linear')`**
+  Samples a geographic grid and maps the values through a Matplotlib colormap.
+- **`ImageColourer(image_path)`**
+  Maps an equirectangular image to the sphere vertices using nearest-neighbor lookup.
+- **`ConstantColourer(color=[1.0, 1.0, 1.0])`**
+  Applies a solid, single RGB color.
 
-#### Vertex coloring
+#### Selection Functions & Registry
 
-Two independent coloring strategies:
-
-**`assign_vertex_colors(vertices, lats, lons, grid, colormap, norm, vmin, vmax, ...)`**
-
-Samples a *different* grid (e.g. seismic velocity anomaly) at each vertex's geographic location via `RegularGridInterpolator`, normalises the value, and maps it through a `matplotlib` colormap. Supports:
-- Custom `Normalize` objects (e.g. `BoundaryNorm` for discrete classes).
-- Custom `vmin`/`vmax` for linear normalisation.
-- Both named colormaps (`'viridis'`) and `Colormap` objects (including discretised ones via `plt.get_cmap('RdBu_r', 7)`).
-
-Returns `(N, 3)` RGB float64 array in [0, 1].
-
-**`assign_vertex_colors_image(vertices, image_path, ...)`**
-
-Samples an **equirectangular image file** at each vertex using nearest-neighbour lookup. The image coordinate mapping is:
-```
-v = (90 - lat) / 180 × (height - 1)    (row index, north→south)
-u = (lon + 180) / 360 × (width - 1)    (column index, west→east)
-```
-
-Handles uint8, float, grayscale, and RGBA inputs automatically. Returns `(N, 3)` RGB float64 in [0, 1].
-
-**`modify_vertex_colors(vertices, colors, selection_function, faces=None, selection_function_kwargs=None, ...)`**
-*(Alias: `modify_vertex_colours`)*
-
-Modifies vertex colors selectively. Accepts a selection function or a registered name (e.g. `'inward_facing'`, `'outward_facing'`) to obtain indices of vertices that should be affected, then applies either a grid, an image, or a constant color to those vertices, returning the fully modified color array.
-
-**Selection Functions & Registry:**
-- `select_inward_facing(vertices, faces, **kwargs)`: Vectorized function returning indices of vertices belonging to inward-facing faces ($\mathbf{n} \cdot \mathbf{c} < 0$).
-- `select_outward_facing(vertices, faces, **kwargs)`: Vectorized function returning indices of vertices belonging to outward-facing faces ($\mathbf{n} \cdot \mathbf{c} > 0$).
-- `register_selection_function(name, func)`: Registers a custom selection callable to the global `SELECTION_REGISTRY`.
+- `select_inward_facing(vertices, faces)`: Identifies vertices belonging to inward-facing faces.
+- `select_outward_facing(vertices, faces)`: Identifies vertices belonging to outward-facing faces.
+- `register_selection_function(name, func)`: Registers a custom selection callable to the global `SELECTION_REGISTRY`. Registered names can be passed directly as strings to `model.colour()`.
 
 ---
 
@@ -329,63 +278,50 @@ Converts vertex positions to `(lat, lon)` and plots them as a scatter plot. For 
 
 ### `__init__.py` — Public API
 
-Re-exports all user-facing functions from the four core modules. The `__all__` list controls star-imports. Only the following are considered public API:
+Re-exports the core OOP interface classes and helpers:
 
-From **mesh**: `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron`, `resize_globe`, `hollow_mesh`, `combine_subtractive_globes`, `compute_scale_factor`, `invert_chirality`, `split_mesh_hemispheres`, `create_hollow_hemispheres`
+- **Classes**: `GeographicGrid`, `GlobeModel`, `MagnetSettings`, `Displacer`, `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `Colourer`, `GridColourer`, `ImageColourer`, `ConstantColourer`
+- **Helpers & Registries**: `select_inward_facing`, `select_outward_facing`, `register_selection_function`, `cartesian_to_spherical`, `plot_vertex_distribution`
 
-From **grid**: `list_netcdf_variables`, `load_netcdf_grid`, `load_tiff_grid`
-
-From **displacement**: `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `assign_vertex_colors`, `assign_vertex_colors_image`, `calculate_displacement_scale`, `modify_vertex_colors`, `modify_vertex_colours`, `select_inward_facing`, `select_outward_facing`, `register_selection_function`
-
-From **io**: `write_stl_binary`, `write_obj_with_vertex_colors`
-
-From **plot**: `plot_vertex_distribution`
-
-From **magnets**: `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`, `find_valid_magnet_positions_no_bosses`
-
-Internal helpers (`create_icosahedron`, `subdivide_icosahedron`, `midpoint`, `project_vertices_to_sphere`, `create_inner_mesh`, `fix_face_chirality`, `_wrap_longitude`, `optimize_magnet_positions`) are **not** exported and should not be imported directly by users.
+Internal helpers are not exported and should not be imported directly by users.
 
 ---
 
 ## 🔄 End-to-End Pipeline
 
-The following diagram shows the full data-flow for producing a 3D-printable, colored, hollow, split globe:
+The following diagram shows the full data-flow in v3.0 for producing a 3D-printable, colored, hollow, split globe using the new OOP interface:
 
 ```mermaid
 flowchart TD
-    A["1. Generate outer sphere<br/><code>generate_sphere_points_fibonacci(n, radius_mm)</code>"] --> B
-    A2["Generate inner sphere<br/><code>generate_sphere_points_fibonacci(n_inner, radius_mm * inner_scale)</code>"] --> F
-
-    B["2. Load geographic grid<br/><code>load_netcdf_grid(file)</code>"] --> C
-
-    C["3. Calculate displacement scale<br/><code>calculate_displacement_scale(radius_mm, earth_r_km, exagg)</code>"] --> D
-
-    D["4. Displace outer vertices<br/><code>displace_vertices(vertices, lats, lons, grid, scale)</code>"] --> E
-
-    E["4.5. Displace near lines / polygons (optional)<br/><code>displace_near_lines(vertices, shp, displacement, width_degrees)</code>"] --> F
-
-    F["5. Split outer & boolean hollow<br/><code>create_hollow_hemispheres(outer_v, outer_f, inner_v, inner_f)</code>"] --> G
-
-    G["6. Assign colors to each half<br/><code>assign_vertex_colors(half.vertices, ...)</code><br/>or <code>assign_vertex_colors_image(...)</code>"] --> H
-
-    H["7. Export to outputs/ folder<br/><code>write_obj_with_vertex_colors(file, v, f, colors)</code>"]
+    A["1. Create GlobeModel<br/><code>model = GlobeModel.from_fibonacci(n, radius_mm)</code>"] --> B
+    B["2. Load GeographicGrid<br/><code>grid = GeographicGrid.from_netcdf(file)</code>"] --> C
+    C["3. Displace GlobeModel<br/><code>model.displace(GridDisplacer(grid), scale)</code>"] --> D
+    D["4. Color GlobeModel<br/><code>model.colour(GridColourer(color_grid))</code>"] --> E
+    E["5. Configure Magnets<br/><code>model.magnet_settings = MagnetSettings(...)</code>"] --> F
+    F["6. Generate Hemispheres<br/><code>top, bottom = model.generate_hemispheres()</code>"] --> G
+    G["7. Export Files<br/><code>model.write_obj(file_top)</code>"]
 ```
 
 ### Step-by-step (with reference parameters)
 
-#### 1. Generate base spheres
+#### 1. Generate base model
 
 ```python
-outer_vertices, outer_faces = generate_sphere_points_fibonacci(1_000_000, model_radius_mm)
-inner_vertices, inner_faces = generate_sphere_points_fibonacci(20_000, model_radius_mm * 0.8)
+from globe3d import GlobeModel, GeographicGrid, MagnetSettings
+from globe3d import GridDisplacer, PointDisplacer, LineDisplacer, PolygonDisplacer
+from globe3d import GridColourer, ImageColourer, ConstantColourer
+import matplotlib.pyplot as plt
+
+model_radius_mm = 50.0
+model = GlobeModel.from_fibonacci(n_points=1_000_000, radius=model_radius_mm)
 ```
 
-The outer sphere uses a high vertex count for surface detail; the inner sphere can be much coarser since it only defines the void boundary. `inner_scale` (0.8 here) controls wall thickness as a fraction of the radius.
+The outer sphere uses a high vertex count for surface detail. An inner mesh is generated automatically during hollowing.
 
 #### 2. Load the geographic grid
 
 ```python
-topo_lats, topo_lons, topo_grid = load_netcdf_grid(
+topo_grid = GeographicGrid.from_netcdf(
     "ETOPO_2022_v1_60s_N90W180_surface.nc",
     lat_var='lat', lon_var='lon', data_var='z'
 )
@@ -394,112 +330,58 @@ topo_lats, topo_lons, topo_grid = load_netcdf_grid(
 For the coloring grid (if separate from the displacement grid):
 
 ```python
-c_lats, c_lons, c_grid = load_netcdf_grid(
+color_grid = GeographicGrid.from_netcdf(
     "s40_depth_slice_2850.grd",
     lat_var='y', lon_var='x', data_var='z'
 )
 ```
 
-#### 3. Calculate displacement scale
+#### 3. Displace outer vertices
 
 ```python
-scale = calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertical_exagg=30)
-```
+# Compute scale factor converts meters in ETOPO to mm on model:
+vertical_exagg = 30.0
+scale = (model_radius_mm / (6371.0 * 1000)) * vertical_exagg
 
-#### 4. Displace outer vertices
-
-```python
-outer_vertices = displace_vertices(
-    outer_vertices, topo_lats, topo_lons, topo_grid, scale, show_progress=True
-)
+# Apply GridDisplacer to the model
+model.displace(GridDisplacer(topo_grid), scale=scale)
 ```
 
 Only the outer shell is displaced. The inner shell remains a smooth sphere.
 
 > [!IMPORTANT]
-> **Displacement Validation**: All displacement functions (`displace_vertices`, `displace_by_points`, `displace_near_lines`, and `displace_by_polygons`) validate that no vertex is translated deeper than or to the origin. If a negative displacement exceeds the vertex's current distance from the origin (new radius <= 0), a `ValueError` is raised to prevent invalid mesh topologies.
+> **Displacement Validation**: All displacement classes validate that no vertex is translated deeper than or to the origin. If a negative displacement exceeds the vertex's current distance from the origin (new radius <= 0), a `ValueError` is raised.
 
-#### 4.5. Specialized Shapefile & Coordinate Displacement (optional)
+#### 3.5. Specialized Shapefile & Coordinate Displacement (optional)
 
-Depending on the geometry type, you can use one of three tailored functions:
+Depending on the geometry type, you can apply one of the specialized displacers:
 
-##### A. Points & Coordinate Lists (`displace_by_points`)
+##### A. Points & Coordinate Lists (`PointDisplacer`)
 Displaces vertices close to discrete points (either a shapefile containing Point/MultiPoint geometries or an `(N, 2)` array/list of `(lon, lat)`):
 ```python
-outer_vertices = displace_by_points(
-    outer_vertices,
-    points_data="../inputs/my_points.shp",  # or numpy array [[lon1, lat1], ...]
-    displacement=1.5,
-    radius_degrees=1.0
-)
+model.displace(PointDisplacer("../inputs/my_points.shp", displacement=1.5, radius_degrees=1.0))
 ```
 
-##### B. Lines & Borders (`displace_near_lines`)
-Displaces vertices close to (within a specified ribbon width of) line or polygon boundaries:
+##### B. Lines & Borders (`LineDisplacer`)
+Displaces vertices close to line or polygon boundaries:
 ```python
-outer_vertices = displace_near_lines(
-    outer_vertices,
-    shapefile_path="../inputs/coastlines/ne_110m_coastline.shp",
-    displacement=1.0,
-    width_degrees=0.5
-)
+model.displace(LineDisplacer("../inputs/coastlines/ne_110m_coastline.shp", displacement=1.0, width_degrees=0.5))
 ```
 
-##### C. Closed Polygons (`displace_by_polygons`)
+##### C. Closed Polygons (`PolygonDisplacer`)
 Displaces vertices inside or outside closed polygons (Polygons/MultiPolygons):
 ```python
-outer_vertices = displace_by_polygons(
-    outer_vertices,
-    shapefile_path="../inputs/land/ne_110m_land.shp",
-    displacement=1.0,
-    displace_inside=True  # True to displace inside land, False for oceans
-)
+model.displace(PolygonDisplacer("../inputs/land/ne_110m_land.shp", displacement=1.0, displace_inside=True))
 ```
 
-#### 5. Split and hollow into hemispheres
-
-```python
-top_half, bottom_half = create_hollow_hemispheres(
-    outer_vertices, outer_faces,
-    inner_vertices, inner_faces,
-    engine='manifold'       # recommended boolean engine
-)
-```
-
-This single call handles the correct order of operations internally:
-1. Splits the displaced outer shell at the equator with a capped plane cut.
-2. Boolean-subtracts the smooth inner sphere from each half.
-3. Returns two watertight, manifold hollow hemispheres.
-
-The `manifold` boolean engine creates its own triangulation for the annular cap
-(the flat ring between the outer and inner shells), so no additional cap
-refinement is needed.
-
-#### 6. Color each hemisphere
-
-Colors should be applied **after** splitting because the split operation creates new vertices at the cut plane that weren't in the original mesh.
+#### 4. Color the model
 
 ```python
 # Grid-based coloring
-top_colors = assign_vertex_colors(
-    top_half.vertices, c_lats, c_lons, c_grid,
-    colormap=plt.get_cmap('RdBu_r', 7), vmin=-2, vmax=2
-)
+colourer = GridColourer(color_grid, colormap=plt.get_cmap('RdBu_r', 7), vmin=-2, vmax=2)
+model.colour(colourer)
 
 # OR image-based coloring
-top_colors = assign_vertex_colors_image(top_half.vertices, '../outputs/demo_texture.png')
-```
-
-#### 7. Export
-
-```python
-write_obj_with_vertex_colors('../outputs/globe_top.obj', top_half.vertices, top_half.faces, top_colors)
-write_obj_with_vertex_colors('../outputs/globe_bottom.obj', bottom_half.vertices, bottom_half.faces, bottom_colors)
-```
-
----
-
-## 📓 Notebook Workflows
 
 Two example notebooks live in `examples/`:
 

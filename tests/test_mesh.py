@@ -164,3 +164,77 @@ def test_create_hollow_hemispheres():
     assert top.bounds[0][2] >= -0.01
     assert bottom.bounds[1][2] <= 0.01
 
+
+def test_globe_model_lifecycle(tmp_path):
+    """Verify the entire life cycle of a GlobeModel object."""
+    from globe3d.mesh import GlobeModel
+    from globe3d.grid import GeographicGrid
+    from globe3d.displacement import GridDisplacer, ConstantColourer
+    from globe3d.magnets import MagnetSettings
+
+    # 1. Creation
+    model = GlobeModel.from_fibonacci(100, radius=20.0)
+    assert model.outer_vertices.shape == (100, 3)
+    assert model.outer_faces.shape[1] == 3
+    assert model.outer_colors is None
+    assert model.inner_vertices is None
+    assert len(model.recipe) == 0
+
+    # 2. Displace
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 5)
+    grid = np.ones((5, 5)) * 1.5  # Constant displacement
+    geo_grid = GeographicGrid(lats, lons, grid)
+    displacer = GridDisplacer(geo_grid)
+
+    model.displace(displacer, scale=2.0)
+    assert len(model.recipe) == 1
+    assert model.recipe[0]["type"] == "displacement"
+    
+    # Check that vertices were actually displaced (radius should be 20.0 + 1.5 * 2.0 = 23.0)
+    radii = np.linalg.norm(model.outer_vertices, axis=1)
+    assert np.allclose(radii, 23.0)
+
+    # 3. Colour
+    colourer = ConstantColourer([0.0, 1.0, 0.0])  # Solid green
+    model.colour(colourer)
+    assert len(model.recipe) == 2
+    assert model.recipe[1]["type"] == "colouring"
+    assert model.outer_colors.shape == (100, 3)
+    assert np.allclose(model.outer_colors, [0.0, 1.0, 0.0])
+
+    # 4. Create inner mesh
+    model.create_inner_mesh(thickness=3.0)
+    assert model.inner_vertices is not None
+    assert model.inner_faces is not None
+    assert model.inner_colors.shape == (len(model.inner_vertices), 3)
+
+    # 5. Convert to trimesh
+    outer_mesh = model.to_trimesh(part="outer")
+    inner_mesh = model.to_trimesh(part="inner")
+    combined_mesh = model.to_trimesh(part="combined")
+    assert isinstance(outer_mesh, trimesh.Trimesh)
+    assert isinstance(inner_mesh, trimesh.Trimesh)
+    assert isinstance(combined_mesh, trimesh.Trimesh)
+
+    # 6. Magnet Settings
+    model.magnet_settings = MagnetSettings(n_magnets=3, diameter=3.0, height=1.5, add_bosses=True)
+
+    # 7. Generate hemispheres (hollowed, with magnets)
+    # Using small vertex count so boolean is fast
+    top_half, bottom_half = model.generate_hemispheres(thickness=3.0, engine='manifold')
+    assert top_half is not None
+    assert bottom_half is not None
+    assert top_half.is_watertight
+    assert bottom_half.is_watertight
+
+    # 8. Exporting STL and OBJ
+    stl_path = tmp_path / "model.stl"
+    obj_path = tmp_path / "model.obj"
+    model.write_stl(str(stl_path), part="combined")
+    model.write_obj(str(obj_path), part="outer")
+    
+    assert stl_path.exists()
+    assert obj_path.exists()
+
+

@@ -1,13 +1,62 @@
 """Magnet insertion module for the globe3d package.
 
-This module provides functions to optimize magnet placement on globe hemispheres
-and perform boolean operations to insert magnet voids and enclosing material (bosses).
-It also includes a function to generate a cylinder test piece for calibration.
+This module provides the MagnetSettings class and helper functions to optimize
+magnet placement on globe hemispheres and perform boolean operations to insert
+magnet voids and enclosing material (bosses). It also includes a function to
+generate a cylinder test piece for calibration.
 """
 
 import numpy as np
 import trimesh
 from scipy.spatial import cKDTree
+
+
+class MagnetSettings:
+    """Configuration settings for magnet void and boss insertion in globe hemispheres."""
+
+    def __init__(
+        self,
+        diameter: float = 5.0,
+        height: float = 2.0,
+        n_magnets: int = 3,
+        position: object = 0.0,
+        horizontal_tolerance: float = 0.15,
+        vertical_tolerance: float = 0.10,
+        vertical_offset: float = 0.20,
+        min_thickness: float = 1.5,
+        add_bosses: bool = True,
+        min_magnets: int = 2,
+        min_angular_spacing: float = 60.0,
+        step_degrees: float = 2,
+    ):
+        """Initializes a MagnetSettings instance.
+
+        Args:
+            diameter (float, optional): Diameter of the cylindrical magnets in mm. Defaults to 5.0.
+            height (float, optional): Height of the cylindrical magnets in mm. Defaults to 2.0.
+            n_magnets (int, optional): Number of magnets to insert. Defaults to 3.
+            position (float or list of float, optional): Initial angle or list of longitude angles. Defaults to 0.0.
+            horizontal_tolerance (float, optional): Tolerance added to magnet radius. Defaults to 0.15.
+            vertical_tolerance (float, optional): Tolerance added to magnet height. Defaults to 0.10.
+            vertical_offset (float, optional): Distance between void and cut plane. Defaults to 0.20.
+            min_thickness (float, optional): Minimum surrounding material thickness. Defaults to 1.5.
+            add_bosses (bool, optional): If True, add bosses. If False, place inside solid shell. Defaults to True.
+            min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
+            min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
+            step_degrees (float, optional): Longitude step size for searching positions. Defaults to 2.
+        """
+        self.diameter = float(diameter)
+        self.height = float(height)
+        self.n_magnets = int(n_magnets)
+        self.position = position
+        self.horizontal_tolerance = float(horizontal_tolerance)
+        self.vertical_tolerance = float(vertical_tolerance)
+        self.vertical_offset = float(vertical_offset)
+        self.min_thickness = float(min_thickness)
+        self.add_bosses = bool(add_bosses)
+        self.min_magnets = int(min_magnets)
+        self.min_angular_spacing = float(min_angular_spacing)
+        self.step_degrees = float(step_degrees)
 
 
 def _generate_cylinder_check_points(radius, height, num_angles=16, num_heights=5, num_radii=4):
@@ -119,16 +168,7 @@ def optimize_magnet_positions(
 
 
 def _find_optimal_spacing(valid_angles, k, min_spacing):
-    """Finds the subset of k angles from valid_angles that maximizes spacing uniformity.
-
-    Args:
-        valid_angles (list of float): Available angles in degrees.
-        k (int): Number of angles to choose.
-        min_spacing (float): Minimum angular spacing between any two chosen angles.
-
-    Returns:
-        list of float or None: The optimal subset of angles, or None if no valid subset exists.
-    """
+    """Finds the subset of k angles from valid_angles that maximizes spacing uniformity."""
     if len(valid_angles) < k:
         return None
 
@@ -305,13 +345,13 @@ def insert_magnets_into_hemispheres(
     bottom_mesh,
     outer_vertices,
     outer_faces,
-    diameter,
-    height,
+    diameter=5.0,
+    height=2.0,
     n_magnets=3,
     position=0.0,
-    horizontal_tolerance=0.1,
-    vertical_tolerance=0.1,
-    vertical_offset=0.2,
+    horizontal_tolerance=0.15,
+    vertical_tolerance=0.10,
+    vertical_offset=0.20,
     min_thickness=1.5,
     engine=None,
     add_bosses=True,
@@ -320,35 +360,51 @@ def insert_magnets_into_hemispheres(
     step_degrees=2,
     inner_vertices=None,
     inner_faces=None,
+    settings=None,
 ):
     """Inserts magnet voids and optionally enclosing material (bosses) into the hemispheres.
+
+    Can be configured either via keyword parameters or by passing a MagnetSettings object.
 
     Args:
         top_mesh (trimesh.Trimesh): Capped, hollow top hemisphere mesh.
         bottom_mesh (trimesh.Trimesh): Capped, hollow bottom hemisphere mesh.
         outer_vertices (numpy.ndarray or trimesh.Trimesh): Outer shell vertices or pre-built outer Trimesh.
         outer_faces (numpy.ndarray or None): Outer shell face indices.
-        diameter (float): Diameter of the cylindrical magnets in mm.
-        height (float): Height of the cylindrical magnets in mm.
-        n_magnets (int, optional): Number of magnets per hemisphere. Defaults to 3.
+        diameter (float, optional): Diameter of the cylindrical magnets in mm.
+        height (float, optional): Height of the cylindrical magnets in mm.
+        n_magnets (int, optional): Number of magnets per hemisphere.
         position (float or list of float, optional): Initial angle or list of longitudes to place magnets at.
-            Defaults to 0.0.
-        horizontal_tolerance (float, optional): Radial tolerance to add to the magnet radius. Defaults to 0.1.
-        vertical_tolerance (float, optional): Vertical tolerance to add to the magnet height. Defaults to 0.1.
-        vertical_offset (float, optional): Distance between magnet void and cut plane. Defaults to 0.2.
-        min_thickness (float, optional): Minimum surrounding plastic thickness in mm. Defaults to 1.5.
+        horizontal_tolerance (float, optional): Radial tolerance to add to the magnet radius.
+        vertical_tolerance (float, optional): Vertical tolerance to add to the magnet height.
+        vertical_offset (float, optional): Distance between magnet void and cut plane.
+        min_thickness (float, optional): Minimum surrounding plastic thickness in mm.
         engine (str, optional): Boolean engine for trimesh.
         add_bosses (bool, optional): If True, add surrounding plastic bosses. If False, only subtract voids.
-            Defaults to True.
-        min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
-        min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
-        step_degrees (float, optional): Longitude step size for search. Defaults to 2.
+        min_magnets (int, optional): Minimum required magnet pairs.
+        min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs.
+        step_degrees (float, optional): Longitude step size for search.
         inner_vertices (numpy.ndarray or trimesh.Trimesh, optional): Inner shell vertices or pre-built inner Trimesh.
         inner_faces (numpy.ndarray, optional): Inner shell face indices.
+        settings (MagnetSettings, optional): A MagnetSettings instance containing configuration values.
 
     Returns:
         tuple: (top_mesh_with_magnets, bottom_mesh_with_magnets) as trimesh.Trimesh objects.
     """
+    if settings is not None:
+        diameter = settings.diameter
+        height = settings.height
+        n_magnets = settings.n_magnets
+        position = settings.position
+        horizontal_tolerance = settings.horizontal_tolerance
+        vertical_tolerance = settings.vertical_tolerance
+        vertical_offset = settings.vertical_offset
+        min_thickness = settings.min_thickness
+        add_bosses = settings.add_bosses
+        min_magnets = settings.min_magnets
+        min_angular_spacing = settings.min_angular_spacing
+        step_degrees = settings.step_degrees
+
     r_void = diameter / 2.0 + horizontal_tolerance
     h_void = height + vertical_tolerance
 
