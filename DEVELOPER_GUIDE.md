@@ -17,11 +17,11 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Sphere mesh generation (Fibonacci & icosahedron) | `mesh.py` | `generate_sphere_points_fibonacci`, `generate_sphere_points_icosahedron` |
 | Geographic grid loading (NetCDF & TIFF) | `grid.py` | `load_netcdf_grid`, `load_tiff_grid`, `list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` | `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `calculate_displacement_scale` |
-| Vertex coloring (grid-based & image-based) | `displacement.py` | `assign_vertex_colors`, `assign_vertex_colors_image` |
+| Vertex coloring (grid, image & modifiers) | `displacement.py` | `assign_vertex_colors`, `assign_vertex_colors_image`, `modify_vertex_colors`, `modify_vertex_colours` |
 | Mesh hollowing & hemisphere splitting | `mesh.py` | `create_hollow_hemispheres`, `combine_subtractive_globes`, `hollow_mesh`, `split_mesh_hemispheres` |
 | Mesh utilities (resize, re-project, chirality) | `mesh.py` | `resize_globe`, `project_vertices_to_sphere`, `invert_chirality`, `compute_scale_factor` |
 | File export (STL & OBJ with vertex colors) | `io.py` | `write_stl_binary`, `write_obj_with_vertex_colors` |
-| Magnet insertion and test piece generation | `magnets.py` | `insert_magnets_into_hemispheres`, `generate_magnet_test_piece` |
+| Magnet insertion and test piece generation | `magnets.py` | `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`, `find_valid_magnet_positions_no_bosses` |
 | Visual QA | `plot.py` | `plot_vertex_distribution` |
 
 ---
@@ -244,6 +244,16 @@ u = (lon + 180) / 360 × (width - 1)    (column index, west→east)
 
 Handles uint8, float, grayscale, and RGBA inputs automatically. Returns `(N, 3)` RGB float64 in [0, 1].
 
+**`modify_vertex_colors(vertices, colors, selection_function, faces=None, selection_function_kwargs=None, ...)`**
+*(Alias: `modify_vertex_colours`)*
+
+Modifies vertex colors selectively. Accepts a selection function or a registered name (e.g. `'inward_facing'`, `'outward_facing'`) to obtain indices of vertices that should be affected, then applies either a grid, an image, or a constant color to those vertices, returning the fully modified color array.
+
+**Selection Functions & Registry:**
+- `select_inward_facing(vertices, faces, **kwargs)`: Vectorized function returning indices of vertices belonging to inward-facing faces ($\mathbf{n} \cdot \mathbf{c} < 0$).
+- `select_outward_facing(vertices, faces, **kwargs)`: Vectorized function returning indices of vertices belonging to outward-facing faces ($\mathbf{n} \cdot \mathbf{c} > 0$).
+- `register_selection_function(name, func)`: Registers a custom selection callable to the global `SELECTION_REGISTRY`.
+
 ---
 
 ### `magnets.py` — Magnet Insertion & Position Optimization
@@ -259,16 +269,22 @@ For each target longitude on the equatorial cut plane, this function uses a bise
 - Uses `outer_mesh.contains(global_pts)` to perform fast and precise geometric containment checks directly on the watertight displaced outer mesh.
 - Returns a list of optimized `(x, y)` center coordinates.
 
+**`find_valid_magnet_positions_no_bosses(outer_mesh, inner_mesh, r_enc, h_boss, step_degrees=2, n_magnets=3, min_magnets=2, min_angular_spacing=60.0, ...)`**
+
+Steps around the model cut-plane in `step_degrees` increments and checks containment of a candidate magnet void completely within the solid shell of the hollowed globe (inside `outer_mesh` and outside `inner_mesh`). It then uses a backtracking optimization algorithm to find a subset of candidate angles that maximizes spacing uniformity while respecting `min_angular_spacing`. Raises `ValueError` if fewer than `min_magnets` can be placed.
+
 #### Magnet Insertion
 
 **`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, outer_vertices, outer_faces, diameter, height, n_magnets, position, ...)`**
 
 Orchestrates the boolean modification of the top and bottom hollow hemispheres:
 1. Determines longitudes for the magnets (either a single start longitude with `n_magnets` spaced evenly, or a custom list of positions).
-2. Optimizes the magnet centers on the XY cut plane using the outer mesh geometry.
-3. Generates the boss cylinders and void cylinders for each position:
-   - For the top hemisphere, bosses are unioned and voids are subtracted from the solid shell.
-   - For the bottom hemisphere, the same coordinate bosses are unioned and corresponding voids are subtracted.
+2. Optimizes the magnet centers on the XY cut plane:
+   - If `add_bosses=True`, utilizes `optimize_magnet_positions`.
+   - If `add_bosses=False` (magnet placement without adding material/bosses), utilizes `find_valid_magnet_positions_no_bosses` to find positions directly in the solid shell.
+3. Generates the boss cylinders (if `add_bosses=True`) and void cylinders for each position:
+   - For the top hemisphere, bosses are unioned (if added) and voids are subtracted from the solid shell.
+   - For the bottom hemisphere, the same coordinate bosses are unioned (if added) and corresponding voids are subtracted.
 4. Performs these boolean operations using the `trimesh` boolean module.
 5. Returns a tuple of `(top_mesh_with_magnets, bottom_mesh_with_magnets)`.
 
@@ -319,13 +335,13 @@ From **mesh**: `generate_sphere_points_fibonacci`, `generate_sphere_points_icosa
 
 From **grid**: `list_netcdf_variables`, `load_netcdf_grid`, `load_tiff_grid`
 
-From **displacement**: `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `assign_vertex_colors`, `assign_vertex_colors_image`, `calculate_displacement_scale`
+From **displacement**: `displace_vertices`, `displace_by_points`, `displace_near_lines`, `displace_by_polygons`, `assign_vertex_colors`, `assign_vertex_colors_image`, `calculate_displacement_scale`, `modify_vertex_colors`, `modify_vertex_colours`, `select_inward_facing`, `select_outward_facing`, `register_selection_function`
 
 From **io**: `write_stl_binary`, `write_obj_with_vertex_colors`
 
 From **plot**: `plot_vertex_distribution`
 
-From **magnets**: `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`
+From **magnets**: `insert_magnets_into_hemispheres`, `generate_magnet_test_piece`, `find_valid_magnet_positions_no_bosses`
 
 Internal helpers (`create_icosahedron`, `subdivide_icosahedron`, `midpoint`, `project_vertices_to_sphere`, `create_inner_mesh`, `fix_face_chirality`, `_wrap_longitude`, `optimize_magnet_positions`) are **not** exported and should not be imported directly by users.
 

@@ -601,3 +601,196 @@ def displace_by_polygons(
 
     new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
     return new_vertices
+
+
+def select_inward_facing(vertices, faces, **kwargs):
+    """
+    Select vertices that are part of inward-facing faces.
+
+    Parameters:
+      vertices (numpy.ndarray): (N, 3) vertex array.
+      faces (numpy.ndarray): (F, 3) face-index array.
+      **kwargs: Additional keyword arguments, including 'center' (default: (0,0,0)).
+
+    Returns:
+      numpy.ndarray: 1D array of unique vertex indices.
+    """
+    if faces is None:
+        raise ValueError("faces must be provided for selecting inward-facing vertices.")
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+
+    # Face normals (cross product)
+    normals = np.cross(v1 - v0, v2 - v0)
+
+    # Vector from center to face centroid
+    center = np.asarray(kwargs.get('center', (0.0, 0.0, 0.0)), dtype=np.float64)
+    centroids = (v0 + v1 + v2) / 3.0 - center
+
+    # Dot product
+    dot_products = np.sum(normals * centroids, axis=1)
+
+    # Inward-facing faces have dot product < 0
+    inward_faces = faces[dot_products < 0]
+
+    return np.unique(inward_faces)
+
+
+def select_outward_facing(vertices, faces, **kwargs):
+    """
+    Select vertices that are part of outward-facing faces.
+
+    Parameters:
+      vertices (numpy.ndarray): (N, 3) vertex array.
+      faces (numpy.ndarray): (F, 3) face-index array.
+      **kwargs: Additional keyword arguments, including 'center' (default: (0,0,0)).
+
+    Returns:
+      numpy.ndarray: 1D array of unique vertex indices.
+    """
+    if faces is None:
+        raise ValueError("faces must be provided for selecting outward-facing vertices.")
+    v0 = vertices[faces[:, 0]]
+    v1 = vertices[faces[:, 1]]
+    v2 = vertices[faces[:, 2]]
+
+    # Face normals (cross product)
+    normals = np.cross(v1 - v0, v2 - v0)
+
+    # Vector from center to face centroid
+    center = np.asarray(kwargs.get('center', (0.0, 0.0, 0.0)), dtype=np.float64)
+    centroids = (v0 + v1 + v2) / 3.0 - center
+
+    # Dot product
+    dot_products = np.sum(normals * centroids, axis=1)
+
+    # Outward-facing faces have dot product > 0
+    outward_faces = faces[dot_products > 0]
+
+    return np.unique(outward_faces)
+
+
+SELECTION_REGISTRY = {
+    'inward_facing': select_inward_facing,
+    'outward_facing': select_outward_facing,
+}
+
+
+def register_selection_function(name, func):
+    """
+    Register a custom vertex selection function.
+
+    Parameters:
+      name (str): Name of the selection function.
+      func (callable): The selection function itself.
+    """
+    SELECTION_REGISTRY[name] = func
+
+
+def modify_vertex_colors(
+    vertices,
+    colors,
+    selection_function,
+    faces=None,
+    selection_function_kwargs=None,
+    lats=None,
+    lons=None,
+    grid=None,
+    colormap='viridis',
+    norm=None,
+    vmin=None,
+    vmax=None,
+    image_path=None,
+    constant_color=None,
+    show_progress=False,
+    chunk_size=10000,
+    interp_method='linear',
+    num_threads=-1,
+):
+    """
+    Modify a subset of vertex colors based on a selection function.
+
+    Allows different colorings to be assigned to selected vertices using geographic grid,
+    an equirectangular image, or a constant color.
+
+    Parameters:
+      vertices (numpy.ndarray): (N, 3) vertex array.
+      colors (numpy.ndarray): (N, 3) original RGB color array.
+      selection_function (str or callable): The selection function (or its registered name)
+        that returns a list/array of vertex indices to be modified.
+      faces (numpy.ndarray, optional): (F, 3) face-index array. Required for normal-based selections.
+      selection_function_kwargs (dict, optional): Extra keyword arguments passed to the selection function.
+      lats, lons, grid: Geographic grid data (for grid-based coloring).
+      colormap (str or Colormap): matplotlib colormap (for grid-based coloring).
+      norm (Normalize, optional): Normalization (for grid-based coloring).
+      vmin, vmax: Normalization bounds (for grid-based coloring).
+      image_path (str, optional): Path to the image file (for image-based coloring).
+      constant_color (array-like, optional): Constant RGB values in [0, 1] to assign.
+      show_progress (bool): If True, show progress bar.
+      chunk_size (int): Chunk size for parallel processing.
+      interp_method (str): Interpolation method ('linear' or 'nearest').
+      num_threads (int): Number of parallel threads.
+
+    Returns:
+      numpy.ndarray: (N, 3) modified RGB colors array.
+    """
+    if isinstance(selection_function, str):
+        if selection_function not in SELECTION_REGISTRY:
+            raise ValueError(
+                f"Selection function '{selection_function}' not found in registry. "
+                f"Available functions: {list(SELECTION_REGISTRY.keys())}"
+            )
+        select_func = SELECTION_REGISTRY[selection_function]
+    elif callable(selection_function):
+        select_func = selection_function
+    else:
+        raise TypeError("selection_function must be a string or a callable.")
+
+    kwargs = selection_function_kwargs or {}
+    selected_indices = select_func(vertices, faces, **kwargs)
+
+    if len(selected_indices) == 0:
+        return colors.copy()
+
+    # Calculate new colors for the selected vertices
+    if constant_color is not None:
+        c_val = np.asarray(constant_color, dtype=np.float64)
+        if c_val.shape != (3,):
+            raise ValueError("constant_color must be a 3-element RGB array-like.")
+        new_colors = np.tile(c_val, (len(selected_indices), 1))
+    elif image_path is not None:
+        new_colors = assign_vertex_colors_image(
+            vertices=vertices[selected_indices],
+            image_path=image_path,
+            show_progress=show_progress,
+            chunk_size=chunk_size,
+            num_threads=num_threads,
+        )
+    elif grid is not None:
+        new_colors = assign_vertex_colors(
+            vertices=vertices[selected_indices],
+            lats=lats,
+            lons=lons,
+            grid=grid,
+            colormap=colormap,
+            norm=norm,
+            vmin=vmin,
+            vmax=vmax,
+            show_progress=show_progress,
+            chunk_size=chunk_size,
+            interp_method=interp_method,
+            num_threads=num_threads,
+        )
+    else:
+        raise ValueError(
+            "Must provide one of constant_color, image_path, or grid parameters to recolor vertices."
+        )
+
+    modified_colors = colors.copy()
+    modified_colors[selected_indices] = new_colors
+    return modified_colors
+
+
+# Alias for British English spelling support
+modify_vertex_colours = modify_vertex_colors

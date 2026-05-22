@@ -560,6 +560,11 @@ def create_hollow_hemispheres(
         n_magnets = magnet_params.get('n_magnets', 3)
         start_lon = magnet_params.get('start_lon', magnet_params.get('position', 0.0))
 
+        add_bosses = magnet_params.get('add_bosses', magnet_params.get('add_material', True))
+        min_magnets = magnet_params.get('min_magnets', 2)
+        min_angular_spacing = magnet_params.get('min_angular_spacing', 60.0)
+        step_degrees = magnet_params.get('step_degrees', 2)
+
         from globe3d.magnets import insert_magnets_into_hemispheres
         try:
             top_hollow, bottom_hollow = insert_magnets_into_hemispheres(
@@ -576,6 +581,12 @@ def create_hollow_hemispheres(
                 vertical_offset=v_offset,
                 min_thickness=min_thick,
                 engine=engine,
+                add_bosses=add_bosses,
+                min_magnets=min_magnets,
+                min_angular_spacing=min_angular_spacing,
+                step_degrees=step_degrees,
+                inner_vertices=inner_mesh,
+                inner_faces=None,
             )
         except Exception as e:
             print(f"Error inserting magnets: {e}")
