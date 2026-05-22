@@ -1,15 +1,17 @@
 import numpy as np
 import struct
+from .mesh import fix_face_chirality
+
 
 def write_stl_binary(filename, vertices, faces):
-    """
-    Writes a triangulated mesh (vertices and faces) to a binary STL file.
-    Uses vectorised NumPy operations for maximum speed.
-    
-    Parameters:
-      filename (str): Output file path.
-      vertices (numpy.ndarray): (n_points x 3) array.
-      faces (numpy.ndarray): (n_faces x 3) array of indices.
+    """Writes a triangulated mesh (vertices and faces) to a binary STL file.
+
+    Uses vectorized NumPy operations for maximum speed.
+
+    Args:
+        filename (str): Output file path.
+        vertices (numpy.ndarray): Array of shape (n_points, 3) containing vertex coordinates.
+        faces (numpy.ndarray): Array of shape (n_faces, 3) containing face indices.
     """
     vertices = np.asarray(vertices, dtype=np.float32)
     faces = np.asarray(faces, dtype=np.int32)
@@ -54,73 +56,22 @@ def write_stl_binary(filename, vertices, faces):
         f.write(facet_data.tobytes())
 
 
-def fix_face_chirality(vertices, faces, center=(0.0, 0.0, 0.0)):
-    """
-    Ensures that each face (triangle) of the mesh has its normal vector pointing outward 
-    (away from the given center). For each face the function computes the face normal 
-    via the cross product and then compares it with the vector from the center to the face centroid.
-    If the face appears to be inverted (dot product < 0), the ordering of the last two vertices is swapped.
-    Uses vectorised NumPy operations for maximum speed.
-
-    Parameters:
-      vertices (numpy.ndarray): Array of shape (n_points, 3) representing vertices.
-      faces (numpy.ndarray): Array of shape (n_faces, 3) with indices into vertices.
-      center (tuple, list, or numpy.ndarray): The center point of the sphere (defaults to (0,0,0)).
-
-    Returns:
-      numpy.ndarray: New array of faces with corrected chirality.
-    """
-    vertices = np.asarray(vertices, dtype=np.float64)
-    faces = np.asarray(faces, dtype=np.int32)
-    center = np.asarray(center, dtype=np.float64)
-
-    v0 = vertices[faces[:, 0]]
-    v1 = vertices[faces[:, 1]]
-    v2 = vertices[faces[:, 2]]
-
-    # Compute normal using cross product
-    normals = np.cross(v1 - v0, v2 - v0)
-    # Compute centroid of each triangle
-    centroids = (v0 + v1 + v2) / 3.0
-    # Vector from center to centroid
-    vecs = centroids - center
-
-    # Dot product of normal and center-to-centroid vector
-    dots = np.sum(normals * vecs, axis=1)
-
-    # For faces where dot < 0, swap the second and third vertices (indices 1 and 2)
-    corrected_faces = faces.copy()
-    flip_mask = dots < 0.0
-    corrected_faces[flip_mask, 1] = faces[flip_mask, 2]
-    corrected_faces[flip_mask, 2] = faces[flip_mask, 1]
-
-    return corrected_faces
-
-
 def write_obj_with_vertex_colors(filename, vertices, faces, colors,
-                                  center=(0.0, 0.0, 0.0), fix_normals=False):
-    """
-    Writes a mesh with per-vertex colors to an OBJ file using a common
-    vertex-color extension.  The vertex lines are written as
-    ``v x y z r g b``.
-    Uses vectorised NumPy text formatting for maximum speed.
+                                 center=(0.0, 0.0, 0.0), fix_normals=False):
+    """Writes a mesh with per-vertex colors to an OBJ file.
 
-    Parameters:
-      filename (str): Output OBJ file path.
-      vertices (numpy.ndarray): Array of shape (n_points, 3) with vertex
-          coordinates.
-      faces (numpy.ndarray): Array of shape (n_faces, 3) with indices into
-          vertices.
-      colors (numpy.ndarray): Array of shape (n_points, 3) with RGB values
-          (in [0, 1]).
-      center (tuple): The center of the sphere.  Only used when
-          *fix_normals* is True.
-      fix_normals (bool): If True, apply ``fix_face_chirality`` to force
-          all face normals to point away from *center*.  This is appropriate
-          for simple convex meshes (e.g. a solid outer shell) but **must
-          be False** for hollow/manifold meshes produced by boolean
-          operations, where inner faces legitimately point inward.
-          Defaults to False.
+    Vertex lines are written using the common vertex-color format: `v x y z r g b`.
+    Uses vectorized NumPy formatting for high speed.
+
+    Args:
+        filename (str): Output OBJ file path.
+        vertices (numpy.ndarray): Array of shape (n_points, 3) representing coordinates.
+        faces (numpy.ndarray): Array of shape (n_faces, 3) representing face indices.
+        colors (numpy.ndarray): Array of shape (n_points, 3) with RGB values in [0, 1].
+        center (array-like, optional): Center of the sphere mesh. Only used if `fix_normals` is True.
+            Defaults to (0.0, 0.0, 0.0).
+        fix_normals (bool, optional): If True, applies `fix_face_chirality` to force face normals
+            to point away from `center`. Defaults to False.
     """
     if fix_normals:
         faces_out = fix_face_chirality(vertices, faces, center)

@@ -1,3 +1,10 @@
+"""globe3d: A library for generating 3D printable globes with exaggerated topography.
+
+This library processes geographic grid data (NetCDF, TIFF) and applies it to
+spherical meshes, handling displacement, vertex coloring, and hollowing for
+3D printing.
+"""
+
 from .mesh import (
     generate_sphere_points_fibonacci,
     generate_sphere_points_icosahedron,
@@ -22,6 +29,7 @@ from .displacement import (
     assign_vertex_colors,
     assign_vertex_colors_image,
     calculate_displacement_scale,
+    cartesian_to_spherical,
     modify_vertex_colors,
     modify_vertex_colours,
     select_inward_facing,
@@ -60,6 +68,7 @@ __all__ = [
     "displace_by_polygons",
     "assign_vertex_colors",
     "assign_vertex_colors_image",
+    "cartesian_to_spherical",
     "modify_vertex_colors",
     "modify_vertex_colours",
     "select_inward_facing",

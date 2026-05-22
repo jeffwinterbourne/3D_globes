@@ -1,7 +1,17 @@
 import numpy as np
 import pytest
-from globe3d.displacement import displace_vertices, assign_vertex_colors, assign_vertex_colors_image
 from unittest.mock import patch
+
+from globe3d.displacement import (
+    displace_vertices,
+    assign_vertex_colors,
+    assign_vertex_colors_image,
+    select_inward_facing,
+    select_outward_facing,
+    modify_vertex_colors,
+    modify_vertex_colours
+)
+from globe3d.mesh import generate_sphere_points_fibonacci
 
 def test_displace_vertices():
     # Create a simple grid
@@ -332,4 +342,114 @@ def test_parallel_displacement(tmp_path):
     disp_poly_par = displace_by_polygons(vertices, str(shp_poly), displacement=1.0, displace_inside=True, num_threads=2)
     assert np.allclose(disp_poly_seq, disp_poly_par)
 
+
+def test_select_inward_outward_facing_vertices():
+    """Verify that selection functions correctly identify inward vs outward facing vertices on concentric spheres."""
+    # Outer sphere: normals point outwards
+    ov, of = generate_sphere_points_fibonacci(100, radius=20.0)
+    
+    # Inward selection on a standard outward-facing sphere should yield 0 vertices
+    # because all normals point outward (dot product > 0)
+    inward = select_inward_facing(ov, of)
+    outward = select_outward_facing(ov, of)
+    
+    assert len(inward) == 0
+    assert len(outward) == len(ov)
+
+    # If we invert the winding order of the faces, the normals point inward (dot product < 0)
+    of_inverted = of[:, [0, 2, 1]]
+    inward_inv = select_inward_facing(ov, of_inverted)
+    outward_inv = select_outward_facing(ov, of_inverted)
+    
+    assert len(inward_inv) == len(ov)
+    assert len(outward_inv) == 0
+
+
+def test_modify_vertex_colors():
+    """Verify modify_vertex_colors modifies correct subsets of colors."""
+    # Set up dummy vertices and colors
+    vertices = np.array([
+        [10.0, 0.0, 0.0],  # vertex 0
+        [-10.0, 0.0, 0.0], # vertex 1
+        [0.0, 10.0, 0.0],  # vertex 2
+        [0.0, -10.0, 0.0], # vertex 3
+    ], dtype=np.float64)
+    
+    colors = np.zeros((4, 3), dtype=np.float64)  # All black initial colors
+    
+    # Custom selection function
+    def dummy_select(v, f, **kwargs):
+        # Select indices where X > 0 (vertex 0 only)
+        return np.where(v[:, 0] > 0)[0]
+        
+    # Test constant coloring
+    mod_colors = modify_vertex_colors(
+        vertices=vertices,
+        colors=colors,
+        selection_function=dummy_select,
+        constant_color=[1.0, 0.5, 0.0]
+    )
+    
+    assert np.allclose(mod_colors[0], [1.0, 0.5, 0.0])
+    assert np.allclose(mod_colors[1], [0.0, 0.0, 0.0])
+    assert np.allclose(mod_colors[2], [0.0, 0.0, 0.0])
+    assert np.allclose(mod_colors[3], [0.0, 0.0, 0.0])
+    
+    # Test grid-based coloring (via mocked RegularGridInterpolator or simple data)
+    lats = np.array([-90.0, 90.0])
+    lons = np.array([-180.0, 180.0])
+    grid = np.array([[0.5, 0.5], [1.0, 1.0]])  # Constant high/low grid
+    
+    mod_colors_grid = modify_vertex_colors(
+        vertices=vertices,
+        colors=colors,
+        selection_function=dummy_select,
+        lats=lats,
+        lons=lons,
+        grid=grid,
+        colormap='gray'
+    )
+    
+    # Vertex 0 (lat=0, lon=0) is modified, others remain black
+    assert not np.allclose(mod_colors_grid[0], [0.0, 0.0, 0.0])
+    assert np.allclose(mod_colors_grid[1], [0.0, 0.0, 0.0])
+
+    # Test British spelling alias
+    mod_colors_alias = modify_vertex_colours(
+        vertices=vertices,
+        colors=colors,
+        selection_function=dummy_select,
+        constant_color=[0.0, 1.0, 1.0]
+    )
+    assert np.allclose(mod_colors_alias[0], [0.0, 1.0, 1.0])
+
+
+def test_cartesian_to_spherical():
+    """Verify that cartesian_to_spherical computes correct r, lat, lon values."""
+    from globe3d.displacement import cartesian_to_spherical
+
+    # Single point test (1D array)
+    v_1d = np.array([0.0, 10.0, 0.0])  # Y-axis equator, lon = 90
+    r, lat, lon = cartesian_to_spherical(v_1d)
+    assert pytest.approx(r) == 10.0
+    assert pytest.approx(lat) == 0.0
+    assert pytest.approx(lon) == 90.0
+
+    # Multi-point test (2D array)
+    vertices = np.array([
+        [1.0, 0.0, 0.0],  # Equator, 0 lon
+        [0.0, 0.0, 1.0],  # North Pole
+        [0.0, 0.0, -1.0], # South Pole
+        [0.0, 0.0, 0.0]   # Origin
+    ])
+    r_arr, lat_arr, lon_arr = cartesian_to_spherical(vertices)
+
+    assert r_arr.shape == (4,)
+    assert lat_arr.shape == (4,)
+    assert lon_arr.shape == (4,)
+
+    assert np.allclose(r_arr, [1.0, 1.0, 1.0, 0.0])
+    assert np.allclose(lat_arr, [0.0, 90.0, -90.0, 0.0])
+    # Lon for equator 0 lon it should be 0.0
+    assert pytest.approx(lon_arr[0]) == 0.0
 

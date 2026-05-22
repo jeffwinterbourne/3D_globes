@@ -1,15 +1,16 @@
 import numpy as np
 from netCDF4 import Dataset
+
 try:
     import rasterio
 except ImportError:
     rasterio = None
 
-def list_netcdf_variables(filename):
-    """
-    Lists variable names in a NetCDF file.
 
-    Parameters:
+def list_netcdf_variables(filename):
+    """Lists variable names in a NetCDF file.
+
+    Args:
         filename (str): Path to the NetCDF file.
 
     Returns:
@@ -18,18 +19,24 @@ def list_netcdf_variables(filename):
     with Dataset(filename, 'r') as ds:
         variable_names = list(ds.variables.keys())
     return variable_names
-    
+
 
 def load_netcdf_grid(filename, lat_var='lat', lon_var='lon', data_var='z'):
-    """
-    Loads a grid from a NetCDF file. Assumes the latitudes and longitudes are in WGS84.
+    """Loads a grid from a NetCDF file.
 
-    Parameters:
-      filename (str): Path to the NetCDF file.
-      lat_var, lon_var, data_var (str): Variable names in the file.
-    
+    Assumes the latitudes and longitudes are in WGS84.
+
+    Args:
+        filename (str): Path to the NetCDF file.
+        lat_var (str, optional): Variable name for latitude. Defaults to 'lat'.
+        lon_var (str, optional): Variable name for longitude. Defaults to 'lon'.
+        data_var (str, optional): Variable name for data value. Defaults to 'z'.
+
     Returns:
-      lats (1D numpy array), lons (1D numpy array), grid (2D numpy array)
+        tuple: A tuple containing:
+            - lats (numpy.ndarray): 1D array of latitude coordinates.
+            - lons (numpy.ndarray): 1D array of longitude coordinates.
+            - grid (numpy.ndarray): 2D array of grid values.
     """
     ds = Dataset(filename)
     lats = np.array(ds.variables[lat_var][:])
@@ -40,23 +47,28 @@ def load_netcdf_grid(filename, lat_var='lat', lon_var='lon', data_var='z'):
 
 
 def load_tiff_grid(filename):
-    """
-    Loads a single-channel 16-bit TIFF image assumed to be in an equirectangular projection.
-    The full image is treated as spanning -180 to 180 in longitude and 90 to -90 in latitude.
-    
-    Parameters:
-      filename (str): Path to the TIFF file.
-    
+    """Loads a single-channel TIFF image in an equirectangular projection.
+
+    The image is assumed to span -180 to 180 in longitude and 90 to -90 in latitude.
+
+    Args:
+        filename (str): Path to the TIFF file.
+
     Returns:
-      lats (1D numpy array), lons (1D numpy array), grid (2D numpy array)
+        tuple: A tuple containing:
+            - lats (numpy.ndarray): 1D array of latitude coordinates.
+            - lons (numpy.ndarray): 1D array of longitude coordinates.
+            - grid (numpy.ndarray): 2D array of grid values.
+
+    Raises:
+        ImportError: If rasterio is not installed.
     """
     if rasterio is None:
         raise ImportError("Rasterio is required for reading TIFF files. Please install it.")
-    
+
     with rasterio.open(filename) as src:
-        grid = src.read(1)  # Read first band
+        grid = src.read(1)
         height, width = grid.shape
-        # Generate latitude from 90 to -90 and longitude from -180 to 180.
         lats = np.linspace(90, -90, height)
         lons = np.linspace(-180, 180, width)
     return lats, lons, grid
