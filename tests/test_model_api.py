@@ -305,3 +305,76 @@ class TestDisplacementScale:
         scale = calculate_displacement_scale(40.0, vertical_exagg=50.0, grid_units='km')
         expected = (40.0 / (6371.0 * 1000.0)) * 50.0 * 1000.0
         assert pytest.approx(scale) == expected
+
+
+class TestModelPreviewAndErrors:
+
+    def test_thin_shell_magnet_error_propagation(self):
+        """Verify that when the shell is too thin to fit magnets, generate_hemispheres raises a ValueError."""
+        # Create a thin-shelled model: radius=40, inner_ratio=0.98 -> thickness is ~0.8mm
+        model = GlobeModel(n_points=200, radius=40.0, hollow=True, inner_ratio=0.98)
+        # Configure magnets without bosses, requiring enclosing radius of 3.5mm
+        model.configure_magnets(
+            diameter=5.0,
+            height=2.0,
+            n_magnets=3,
+            add_bosses=False,
+            min_thickness=1.0,
+        )
+        # Trying to generate hemispheres should raise ValueError (wrapped in RuntimeError or directly)
+        # Since insert_magnets_into_hemispheres raises ValueError, and create_hollow_hemispheres wraps it:
+        with pytest.raises(Exception) as excinfo:
+            model.generate_hemispheres(engine="manifold")
+        
+        # Verify the original ValueError's message is preserved
+        assert "Globe shell is too thin" in str(excinfo.value)
+
+    def test_export_hemispheres_propagates_magnet_error(self, tmp_path):
+        """Verify that export_hemispheres also propagates the thin-shell magnet error."""
+        model = GlobeModel(n_points=200, radius=40.0, hollow=True, inner_ratio=0.98)
+        model.configure_magnets(
+            diameter=5.0,
+            height=2.0,
+            n_magnets=3,
+            add_bosses=False,
+            min_thickness=1.0,
+        )
+        top_path = str(tmp_path / "top.stl")
+        bot_path = str(tmp_path / "bottom.stl")
+        with pytest.raises(Exception) as excinfo:
+            model.export_hemispheres(top_path, bot_path, engine="manifold")
+        assert "Globe shell is too thin" in str(excinfo.value)
+
+    def test_preview_method(self):
+        """Verify that preview() calls show() on the correct trimesh component."""
+        from unittest.mock import patch
+        
+        model = GlobeModel(n_points=100, radius=20.0, hollow=True, inner_n_points=50)
+        
+        # 1. Preview outer shell
+        with patch('trimesh.Trimesh.show', return_value="outer_scene") as mock_show:
+            res = model.preview(part="outer", viewer="gl")
+            assert res == "outer_scene"
+            mock_show.assert_called_once_with(viewer="gl")
+            
+        # 2. Preview inner shell
+        with patch('trimesh.Trimesh.show', return_value="inner_scene") as mock_show:
+            res = model.preview(part="inner")
+            assert res == "inner_scene"
+            mock_show.assert_called_once()
+            
+        # 3. Preview upper hemisphere
+        with patch('trimesh.Trimesh.show', return_value="upper_scene") as mock_show:
+            res = model.preview(part="upper", engine="manifold")
+            assert res == "upper_scene"
+            mock_show.assert_called_once()
+            
+        # 4. Preview lower hemisphere
+        with patch('trimesh.Trimesh.show', return_value="lower_scene") as mock_show:
+            res = model.preview(part="lower", engine="manifold")
+            assert res == "lower_scene"
+            mock_show.assert_called_once()
+            
+        # 5. Invalid part raises ValueError
+        with pytest.raises(ValueError, match="Unknown part"):
+            model.preview(part="invalid_part")

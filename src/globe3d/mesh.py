@@ -566,6 +566,68 @@ class GlobeModel:
         return top_half, bottom_half
 
     # ------------------------------------------------------------------
+    # Visualization & Preview
+    # ------------------------------------------------------------------
+
+    def preview(
+        self,
+        part: str = "whole",
+        hollow: bool = True,
+        thickness: float = 1.5,
+        engine: str = None,
+        **kwargs,
+    ):
+        """Visualizes the model (whole, or upper/lower hemisphere) in 3D.
+
+        Args:
+            part (str, optional): The part of the model to visualize:
+                - ``'whole'`` (or ``'combined'``, ``'outer'``, ``'inner'``): visualizes the entire model.
+                - ``'upper'`` (or ``'top'``): visualizes the upper/top hemisphere.
+                - ``'lower'`` (or ``'bottom'``): visualizes the lower/bottom hemisphere.
+                Defaults to ``'whole'``.
+            hollow (bool, optional): If visualizing a hemisphere, whether it
+                should be hollowed. Defaults to ``True``.
+            thickness (float, optional): Shell thickness in mm (used only if
+                inner mesh has not been created yet). Defaults to 1.5.
+            engine (str, optional): Boolean engine for hollowing/splitting.
+                Defaults to ``None``.
+            **kwargs: Extra keyword arguments passed to the trimesh visualizer
+                (e.g., `mesh.show(**kwargs)`).
+
+        Returns:
+            trimesh.Scene: The trimesh Scene object representing the 3D viewer.
+
+        Raises:
+            ValueError: If an unknown part is specified.
+        """
+        part_lower = part.lower()
+        if part_lower in ("whole", "combined"):
+            if self.inner_vertices is not None:
+                mesh = self.to_trimesh(part="combined")
+            else:
+                mesh = self.to_trimesh(part="outer")
+        elif part_lower == "outer":
+            mesh = self.to_trimesh(part="outer")
+        elif part_lower == "inner":
+            mesh = self.to_trimesh(part="inner")
+        elif part_lower in ("upper", "top"):
+            top_half, _ = self.generate_hemispheres(
+                hollow=hollow, thickness=thickness, engine=engine
+            )
+            mesh = top_half
+        elif part_lower in ("lower", "bottom"):
+            _, bottom_half = self.generate_hemispheres(
+                hollow=hollow, thickness=thickness, engine=engine
+            )
+            mesh = bottom_half
+        else:
+            raise ValueError(
+                f"Unknown part '{part}'. Supported: 'whole', 'combined', 'outer', 'inner', 'upper', 'top', 'lower', 'bottom'."
+            )
+
+        return mesh.show(**kwargs)
+
+    # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
@@ -931,15 +993,14 @@ def hollow_mesh(outer_vertices, outer_faces, inner_vertices=None, inner_faces=No
         hollowed_mesh = trimesh.boolean.difference(outer_mesh, inner_mesh, **kwargs)
     except Exception as e:
         if "object is not iterable" in str(e):
-            print("Error: Boolean operation failed (Trimesh object is not iterable). Check the mesh geometry.")
-            return None
+            raise RuntimeError(
+                "Error: Boolean operation failed (Trimesh object is not iterable). Check the mesh geometry."
+            ) from e
         else:
-            print(f"Error performing boolean difference: {e}")
-            return None
+            raise RuntimeError(f"Error performing boolean difference: {e}") from e
 
     if hollowed_mesh is None:
-        print("Error: Boolean difference returned None.")
-        return None
+        raise ValueError("Error: Boolean difference returned None.")
 
     if not hollowed_mesh.is_watertight:
         print("Warning: Resulting mesh is not watertight. Attempting to repair...")
@@ -952,8 +1013,7 @@ def hollow_mesh(outer_vertices, outer_faces, inner_vertices=None, inner_faces=No
             hollowed_mesh.export(output_path)
             print(f"Hollowed mesh saved to {output_path}")
         except Exception as e:
-            print(f"Error saving hollowed mesh: {e}")
-            return None
+            raise RuntimeError(f"Error saving hollowed mesh: {e}") from e
     return hollowed_mesh
 
 
@@ -980,8 +1040,7 @@ def split_mesh_hemispheres(mesh, normal=(0, 0, 1), origin=(0, 0, 0)):
         bottom_half = mesh.slice_plane(plane_origin=origin, plane_normal=[-n for n in normal], cap=True)
         return top_half, bottom_half
     except Exception as e:
-        print(f"Error splitting mesh: {e}")
-        return None, None
+        raise RuntimeError(f"Error splitting mesh: {e}") from e
 
 
 def create_hollow_hemispheres(
@@ -992,7 +1051,25 @@ def create_hollow_hemispheres(
     engine=None,
     magnet_params=None,
 ):
-    """Creates two hollow hemispheres for 3D printing, optionally with magnet voids."""
+    """Creates two hollow hemispheres for 3D printing, optionally with magnet voids.
+
+    Args:
+        outer_vertices (numpy.ndarray): Array of shape (n_points, 3) representing outer vertices.
+        outer_faces (numpy.ndarray): Array of shape (n_faces, 3) representing outer faces.
+        inner_vertices (numpy.ndarray): Array of shape (n_points_inner, 3) representing inner vertices.
+        inner_faces (numpy.ndarray): Array of shape (n_faces_inner, 3) representing inner faces.
+        plane_normal (array-like, optional): Winding normal direction for the cutting plane. Defaults to (0, 0, 1).
+        plane_origin (array-like, optional): Origin point of the cutting plane. Defaults to (0, 0, 0).
+        engine (str, optional): Boolean engine name. Defaults to None.
+        magnet_params (MagnetSettings, optional): Configuration settings for inserting magnet voids. Defaults to None.
+
+    Returns:
+        tuple: (top_hollow, bottom_hollow) as trimesh.Trimesh objects.
+
+    Raises:
+        RuntimeError: If mesh splitting, boolean subtraction, or magnet insertion fails.
+        ValueError: If slice plane operations or boolean difference operations return None.
+    """
     normal = np.array(plane_normal, dtype=np.float64)
     origin = np.array(plane_origin, dtype=np.float64)
 
@@ -1009,12 +1086,10 @@ def create_hollow_hemispheres(
             plane_origin=origin, plane_normal=-normal, cap=True
         )
     except Exception as e:
-        print(f"Error splitting outer mesh: {e}")
-        return None, None
+        raise RuntimeError(f"Error splitting outer mesh: {e}") from e
 
     if top_outer is None or bottom_outer is None:
-        print("Error: slice_plane returned None.")
-        return None, None
+        raise ValueError("slice_plane returned None, splitting outer mesh failed.")
 
     bool_kwargs = {}
     if engine is not None:
@@ -1025,16 +1100,20 @@ def create_hollow_hemispheres(
             [top_outer, inner_mesh], **bool_kwargs
         )
     except Exception as e:
-        print(f"Error performing boolean subtraction on top hemisphere: {e}")
-        return None, None
+        raise RuntimeError(f"Error performing boolean subtraction on top hemisphere: {e}") from e
+
+    if top_hollow is None:
+        raise ValueError("Boolean subtraction on top hemisphere returned None.")
 
     try:
         bottom_hollow = trimesh.boolean.difference(
             [bottom_outer, inner_mesh], **bool_kwargs
         )
     except Exception as e:
-        print(f"Error performing boolean subtraction on bottom hemisphere: {e}")
-        return None, None
+        raise RuntimeError(f"Error performing boolean subtraction on bottom hemisphere: {e}") from e
+
+    if bottom_hollow is None:
+        raise ValueError("Boolean subtraction on bottom hemisphere returned None.")
 
     if magnet_params is not None:
         from globe3d.magnets import insert_magnets_into_hemispheres
@@ -1050,7 +1129,6 @@ def create_hollow_hemispheres(
                 settings=magnet_params,
             )
         except Exception as e:
-            print(f"Error inserting magnets: {e}")
-            return None, None
+            raise RuntimeError(f"Error inserting magnets: {e}") from e
 
     return top_hollow, bottom_hollow
