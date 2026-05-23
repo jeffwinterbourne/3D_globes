@@ -66,19 +66,52 @@ def _wrap_longitude(lats, lons, grid):
     return lats, lons, grid
 
 
-def calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertical_exagg=1.0):
+_UNIT_TO_METERS = {
+    'm': 1.0,
+    'meters': 1.0,
+    'km': 1000.0,
+    'kilometers': 1000.0,
+    'cm': 0.01,
+    'centimeters': 0.01,
+    'mm': 0.001,
+    'millimeters': 0.001,
+    'ft': 0.3048,
+    'feet': 0.3048,
+}
+
+
+def calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertical_exagg=1.0,
+                                 grid_units='m'):
     """Calculates the displacement scale factor for a given model globe radius.
+
+    Converts real-world grid values (in the specified ``grid_units``) to
+    millimetres on the model sphere, optionally applying a vertical
+    exaggeration factor.
 
     Args:
         model_radius_mm (float): Desired radius of the un-displaced globe in millimeters.
         earth_radius_km (float, optional): Real-world earth radius in kilometers. Defaults to 6371.0.
         vertical_exagg (float, optional): Vertical exaggeration factor. Defaults to 1.0.
+        grid_units (str, optional): Units of the grid data values.  Supported values are
+            ``'m'``, ``'meters'``, ``'km'``, ``'kilometers'``, ``'cm'``,
+            ``'centimeters'``, ``'mm'``, ``'millimeters'``, ``'ft'``, ``'feet'``.
+            Defaults to ``'m'`` (meters).
 
     Returns:
-        float: The scale factor to use in `displace_vertices`.
+        float: The scale factor to pass to :meth:`GlobeModel.displace` or
+        :meth:`_MeshProxy.displace`.
+
+    Raises:
+        ValueError: If ``grid_units`` is not one of the supported unit strings.
     """
+    if grid_units not in _UNIT_TO_METERS:
+        raise ValueError(
+            f"Unknown grid_units '{grid_units}'. "
+            f"Supported: {sorted(set(_UNIT_TO_METERS.keys()))}"
+        )
+    meters_per_unit = _UNIT_TO_METERS[grid_units]
     earth_radius_m = earth_radius_km * 1000.0
-    return (model_radius_mm / earth_radius_m) * vertical_exagg
+    return (model_radius_mm / earth_radius_m) * vertical_exagg * meters_per_unit
 
 
 def cartesian_to_spherical(vertices):

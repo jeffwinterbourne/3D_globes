@@ -331,7 +331,7 @@ def test_constant_colourer_and_model_coloring():
     ], dtype=np.float64)
     
     faces = np.array([[0, 2, 1], [0, 1, 3]])
-    model = GlobeModel(vertices, faces)
+    model = GlobeModel(_vertices=vertices, _faces=faces)
     
     # Custom selection function
     def dummy_select(v, f, **kwargs):

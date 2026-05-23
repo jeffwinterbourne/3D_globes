@@ -14,12 +14,14 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 
 | Capability | Module / Class | Entry Point(s) / Methods |
 |---|---|---|
-| Globe model state & orchestration | `mesh.py` / `GlobeModel` | `GlobeModel.from_fibonacci`, `GlobeModel.from_icosahedron`, `GlobeModel.displace`, `GlobeModel.colour`, `GlobeModel.generate_hemispheres` |
+| Globe model state & orchestration | `mesh.py` / `GlobeModel` | `GlobeModel(method, n_points, radius, hollow, ...)`, `model.outer.displace`, `model.inner.displace`, `model.outer.colour` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
 | Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer`, `ConstantColourer` |
-| Magnet settings & placement options | `magnets.py` / `MagnetSettings` | `MagnetSettings` |
-| File export (STL & OBJ with vertex colors) | `mesh.py` / `GlobeModel` | `GlobeModel.write_stl`, `GlobeModel.write_obj` |
+| Displacement scale (unit-aware) | `displacement.py` | `calculate_displacement_scale(model_radius_mm, grid_units=...)` |
+| Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
+| Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
+| File export (STL & OBJ with vertex colors) | `mesh.py` / `GlobeModel` | `model.export(...)`, `model.export_hemispheres(...)`, `model.write_stl`, `model.write_obj` |
 | Visual QA | `plot.py` | `plot_vertex_distribution` |
 
 ---
@@ -46,6 +48,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 │       └── plot.py            # Matplotlib visual checks
 ├── tests/
 │   ├── test_mesh.py
+│   ├── test_model_api.py
 │   ├── test_displacement.py
 │   ├── test_grid.py
 │   └── test_magnets.py
@@ -103,24 +106,56 @@ Modules are intentionally loosely coupled: `grid.py` knows nothing about meshes,
 
 ### `mesh.py` — Geometry Generation & Processing
 
-This module defines the central **`GlobeModel`** class, which encapsulates the outer/inner geometry, styling, recipe, and export orchestration of the globe.
+This module defines the central **`GlobeModel`** class and the lightweight **`_MeshProxy`** class. Together they encapsulate the outer/inner geometry, displacement/colouring recipes, magnet settings, and export orchestration.
 
-#### `GlobeModel` Initialization & Creators
+#### `GlobeModel` Unified Constructor
 
-- `GlobeModel(vertices=None, faces=None)`: Creates a new model instance.
-- `GlobeModel.from_fibonacci(n_points, radius=1.0, center=(0.0, 0.0, 0.0))`: Generates a base sphere mesh using a Fibonacci lattice.
-- `GlobeModel.from_icosahedron(subdivisions, radius=1.0, center=(0.0, 0.0, 0.0))`: Generates a base sphere mesh by recursively subdividing an icosahedron.
+```python
+GlobeModel(
+    method='fibonacci',          # 'fibonacci' or 'icosahedron'
+    n_points=100000,             # outer-shell vertices (fibonacci)
+    radius=40.0,                 # globe radius in mm
+    center=(0.0, 0.0, 0.0),
+    subdivisions=None,           # icosahedron only
+    hollow=False,                # auto-generate inner mesh
+    inner_ratio=0.8,             # inner radius fraction
+    inner_n_points=None,         # inner vertices (default: n_points // 5)
+)
+```
 
-Both generators call `trimesh.fix_normals()` internally to guarantee outward-facing winding order.
+When `hollow=True`, both outer and inner sphere meshes are generated automatically by the constructor — no manual property setting required.
 
-#### `GlobeModel` Workflow Methods
+**Backward-compatible factory methods** are preserved as convenience wrappers:
+- `GlobeModel.from_fibonacci(n_points, radius, center)`
+- `GlobeModel.from_icosahedron(subdivisions, radius, center)`
 
-- `model.displace(displacer, scale=1.0)`: Applies a `Displacer` object to the outer vertices.
-- `model.colour(colourer, target='outer', selection=None, selection_kwargs=None)`: Applies a `Colourer` object to the model's vertices (optionally to a subset via a selection function).
-- `model.create_inner_mesh(thickness)`: Scales down the outer mesh to create an inner cavity.
-- `model.generate_hemispheres(plane_normal=(0,0,1), plane_origin=(0,0,0), hollow=True, thickness=1.5, engine=None)`: Splits and hollows the model, returning two `trimesh.Trimesh` halves. Re-applies the coloring recipe to the split hemispheres.
-- `model.write_stl(filename, part='outer')`: Exports the specified part to a binary STL file.
-- `model.write_obj(filename, part='outer', center=(0.0, 0.0, 0.0), fix_normals=False)`: Exports the specified part (with vertex colors) to an OBJ file.
+#### `_MeshProxy` — Inner/Outer Shell Access
+
+`model.outer` and `model.inner` return `_MeshProxy` instances with:
+- **Read-only properties**: `vertices`, `faces`, `colors`
+- **Mutating methods**: `displace(displacer, scale)`, `colour(colourer, selection, ...)`
+
+Displacement and colouring steps are recorded in **separate recipes** for the outer and inner shells (`model.recipe` and `model._inner_recipe`). Both recipes are re-applied automatically when `generate_hemispheres()` creates new vertices via boolean operations.
+
+#### `GlobeModel` Convenience Aliases
+
+- `model.displace(displacer, scale=1.0)` — alias for `model.outer.displace(...)`.
+- `model.colour(colourer, ...)` — colors the specified target (`'outer'` or `'inner'`).
+
+#### Magnet Configuration
+
+- `model.configure_magnets(**kwargs)` — creates a `MagnetSettings` instance from keyword arguments.
+
+#### Hemisphere Generation
+
+- `model.generate_hemispheres(hollow=True, thickness=1.5, engine=None, ...)` — splits and hollows the model, inserts magnets (if configured), re-applies colour recipes, returns `(top, bottom)` trimesh objects.
+
+#### Export Methods
+
+- `model.export(filename, part='outer')` — exports to STL/OBJ (format inferred from extension).
+- `model.export_hemispheres(top_filename, bottom_filename, ...)` — full pipeline: split → hollow → magnets → color → write. The highest-level helper.
+- `model.write_stl(filename, part)` — low-level STL export.
+- `model.write_obj(filename, part, fix_normals=False)` — low-level OBJ export with vertex colors.
 
 #### Hollowing & Splitting Helpers (Internal)
 
@@ -281,9 +316,9 @@ Converts vertex positions to `(lat, lon)` and plots them as a scatter plot. For 
 Re-exports the core OOP interface classes and helpers:
 
 - **Classes**: `GeographicGrid`, `GlobeModel`, `MagnetSettings`, `Displacer`, `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `Colourer`, `GridColourer`, `ImageColourer`, `ConstantColourer`
-- **Helpers & Registries**: `select_inward_facing`, `select_outward_facing`, `register_selection_function`, `cartesian_to_spherical`, `plot_vertex_distribution`
+- **Helpers & Registries**: `calculate_displacement_scale`, `select_inward_facing`, `select_outward_facing`, `register_selection_function`, `cartesian_to_spherical`, `plot_vertex_distribution`, `generate_magnet_test_piece`
 
-Internal helpers are not exported and should not be imported directly by users.
+Internal helpers (`_MeshProxy`, `_UNIT_TO_METERS`, `_wrap_longitude`, etc.) are not exported and should not be imported directly by users.
 
 ---
 
@@ -293,13 +328,12 @@ The following diagram shows the full data-flow in v3.0 for producing a 3D-printa
 
 ```mermaid
 flowchart TD
-    A["1. Create GlobeModel<br/><code>model = GlobeModel.from_fibonacci(n, radius_mm)</code>"] --> B
+    A["1. Create GlobeModel<br/><code>model = GlobeModel(n_points=N, radius=R, hollow=True)</code>"] --> B
     B["2. Load GeographicGrid<br/><code>grid = GeographicGrid.from_netcdf(file)</code>"] --> C
-    C["3. Displace GlobeModel<br/><code>model.displace(GridDisplacer(grid), scale)</code>"] --> D
-    D["4. Color GlobeModel<br/><code>model.colour(GridColourer(color_grid))</code>"] --> E
-    E["5. Configure Magnets<br/><code>model.magnet_settings = MagnetSettings(...)</code>"] --> F
-    F["6. Generate Hemispheres<br/><code>top, bottom = model.generate_hemispheres()</code>"] --> G
-    G["7. Export Files<br/><code>model.write_obj(file_top)</code>"]
+    C["3. Displace shells<br/><code>model.outer.displace(GridDisplacer(grid), scale)</code><br/><code>model.inner.displace(...)</code>"] --> D
+    D["4. Color outer shell<br/><code>model.outer.colour(GridColourer(color_grid))</code>"] --> E
+    E["5. Configure Magnets<br/><code>model.configure_magnets(...)</code>"] --> F
+    F["6. Export Hemispheres<br/><code>model.export_hemispheres(top_file, bottom_file)</code>"]
 ```
 
 ### Step-by-step (with reference parameters)
@@ -307,16 +341,24 @@ flowchart TD
 #### 1. Generate base model
 
 ```python
-from globe3d import GlobeModel, GeographicGrid, MagnetSettings
+from globe3d import GlobeModel, GeographicGrid
 from globe3d import GridDisplacer, PointDisplacer, LineDisplacer, PolygonDisplacer
 from globe3d import GridColourer, ImageColourer, ConstantColourer
+from globe3d import calculate_displacement_scale
 import matplotlib.pyplot as plt
 
 model_radius_mm = 50.0
-model = GlobeModel.from_fibonacci(n_points=1_000_000, radius=model_radius_mm)
+model = GlobeModel(
+    method='fibonacci',
+    n_points=1_000_000,
+    radius=model_radius_mm,
+    hollow=True,
+    inner_ratio=0.8,
+    inner_n_points=20_000,
+)
 ```
 
-The outer sphere uses a high vertex count for surface detail. An inner mesh is generated automatically during hollowing.
+The constructor generates both outer and inner meshes when `hollow=True`. No manual property setting required.
 
 #### 2. Load the geographic grid
 
@@ -336,18 +378,20 @@ color_grid = GeographicGrid.from_netcdf(
 )
 ```
 
-#### 3. Displace outer vertices
+#### 3. Displace shells
 
 ```python
-# Compute scale factor converts meters in ETOPO to mm on model:
+# Compute scale factor — ETOPO data is in meters:
+topo_units = 'm'
 vertical_exagg = 30.0
-scale = (model_radius_mm / (6371.0 * 1000)) * vertical_exagg
+scale = calculate_displacement_scale(model_radius_mm, vertical_exagg=vertical_exagg, grid_units=topo_units)
 
-# Apply GridDisplacer to the model
-model.displace(GridDisplacer(topo_grid), scale=scale)
+# Displace outer and (optionally) inner shells:
+model.outer.displace(GridDisplacer(topo_grid), scale=scale)
+model.inner.displace(GridDisplacer(tomo_grid), scale=-1.5 * 0.8)
 ```
 
-Only the outer shell is displaced. The inner shell remains a smooth sphere.
+The inner shell can be displaced independently using `model.inner.displace(...)`. Its recipe is tracked separately.
 
 > [!IMPORTANT]
 > **Displacement Validation**: All displacement classes validate that no vertex is translated deeper than or to the origin. If a negative displacement exceeds the vertex's current distance from the origin (new radius <= 0), a `ValueError` is raised.
@@ -377,27 +421,47 @@ model.displace(PolygonDisplacer("../inputs/land/ne_110m_land.shp", displacement=
 #### 4. Color the model
 
 ```python
-# Grid-based coloring
+# Grid-based coloring (outward-facing surfaces only)
 colourer = GridColourer(color_grid, colormap=plt.get_cmap('RdBu_r', 7), vmin=-2, vmax=2)
-model.colour(colourer)
+model.outer.colour(colourer, selection='outward_facing')
 
 # OR image-based coloring
+# model.outer.colour(ImageColourer('texture.png'))
+```
 
-Two example notebooks live in `examples/`:
+#### 5. Configure magnets (optional)
 
-### `tomo_globe_3d.ipynb`
+```python
+model.configure_magnets(diameter=5.0, height=2.0, n_magnets=3)
+```
 
-Demonstrates the **tomography globe** workflow — a globe with ETOPO topography displacement, a 1mm step at the coastlines, and vertex colors derived from a seismic tomography depth slice (e.g. S40RTS at 2850 km depth). This notebook uses `assign_vertex_colors` with:
-- A `BoundaryNorm` for discrete classification (`blue / white / red`), or
-- A discretised continuous colormap (`plt.get_cmap('RdBu_r', 7)`).
+#### 6. Export hemispheres
 
-The notebook includes a 2D preview (`pcolormesh`) of the color grid before applying it to the 3D model.
+```python
+# Full pipeline in one call: split → hollow → magnets → color → write
+model.export_hemispheres(
+    'globe_top.obj', 'globe_bottom.obj',
+    engine='manifold'
+)
+```
 
-### `demo_split_globe_image.ipynb`
+---
 
-Demonstrates **image-based coloring** using `assign_vertex_colors_image`. It programmatically generates a test equirectangular gradient image, generates a displaced sphere, hollows it using the subtractive approach with `resize_globe` and `combine_subtractive_globes`, splits it, and exports as OBJ to the `outputs/` directory.
+## 📓 Example Notebooks
 
-Both notebooks use `%autoreload 2` for iterative development.
+Seven example notebooks live in `examples/`:
+
+| Notebook | Purpose |
+|---|---|
+| `example_1_basic_globe.ipynb` | Minimal topography-only globe → STL |
+| `example_2_intermediate_globe.ipynb` | Coastline step + hemisphere splitting → STL |
+| `example_3_magnets_globe.ipynb` | Magnet void insertion (with and without bosses) |
+| `example_4_coloured_globe.ipynb` | Full pipeline: displacement + color + magnets → OBJ |
+| `tomo_globe_3d.ipynb` | Production tomography globe with all features |
+| `demo_magnets.ipynb` | Magnets demo with calibration test piece |
+| `demo_split_globe_image.ipynb` | Image-based coloring demo |
+
+All notebooks use the unified `GlobeModel(...)` constructor and `model.outer.displace(...)` / `model.export_hemispheres(...)` API.
 
 ---
 
@@ -409,7 +473,11 @@ The library uses a **right-handed Cartesian** system centred at the origin, with
 
 ### Units
 
-The canonical working unit is **millimetres** for model space (radii, displacements) because 3D printers universally use mm. Real-world data is assumed to be in **metres** for elevation / depth (the standard for datasets like ETOPO). The `calculate_displacement_scale` function handles the km→m→mm conversion internally.
+The canonical working unit is **millimetres** for model space (radii, displacements) because 3D printers universally use mm. Real-world grid data can be in any of the supported units (`m`, `km`, `cm`, `mm`, `ft`). The `calculate_displacement_scale` function accepts a `grid_units` parameter (default `'m'`) and applies the correct conversion factor internally:
+
+```python
+scale = calculate_displacement_scale(model_radius_mm, vertical_exagg=50, grid_units='m')
+```
 
 ### Why three hollowing approaches?
 
@@ -452,8 +520,9 @@ The test suite lives in `tests/` and uses `pytest`.
 
 | Test file | Module | Key tests |
 |---|---|---|
-| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds), `create_hollow_hemispheres` (watertight, correct volume, z-bounds) |
-| `test_displacement.py` | `displacement.py` | `displace_vertices` (constant grid → predictable radius change), `assign_vertex_colors` (output shape & range), `assign_vertex_colors_image` (mocked image, coordinate mapping) |
+| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds), `create_hollow_hemispheres` (watertight, correct volume, z-bounds), `GlobeModel` lifecycle |
+| `test_model_api.py` | `mesh.py`, `displacement.py` | Unified constructor (fibonacci, icosahedron, hollow), `_MeshProxy` (inner/outer displace, colour), `configure_magnets`, `export`, `export_hemispheres`, `calculate_displacement_scale` with `grid_units` |
+| `test_displacement.py` | `displacement.py` | `GridDisplacer`, `GridColourer`, `ImageColourer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `ConstantColourer`, selection functions, parallel displacement, dateline NaN handling |
 | `test_grid.py` | `grid.py` | `list_netcdf_variables` and `load_netcdf_grid` using mocked `netCDF4.Dataset` |
 | `test_io.py` | `io.py` | `write_stl_binary` (binary validation, size check, normals), `fix_face_chirality` (vectorized chirality checking), `write_obj_with_vertex_colors` (correct format, lines count) |
 | `test_magnets.py` | `magnets.py` | `optimize_magnet_positions` (bisection distance check), `insert_magnets_into_hemispheres` (watertightness, volume bounds), `generate_magnet_test_piece` (height/radius bounds, watertightness) |

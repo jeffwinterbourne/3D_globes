@@ -30,11 +30,11 @@ pip install -e .
 ## Code Standards
 - **Style**: Follow PEP 8 guidelines.
 - **Structure**: Keep code modular. Core logic resides in `src/globe3d/`.
-    - `mesh.py`: Geometry generation and manipulation.
-    - `grid.py`: Data loading.
-    - `displacement.py`: Topography application.
-    - `magnets.py`: Optimization and insertion of magnet voids and bosses.
-    - `io.py`: File export.
+    - `mesh.py`: `GlobeModel` (unified constructor, `_MeshProxy` for inner/outer shells, `configure_magnets()`, `export()`, `export_hemispheres()`), sphere generation, hollowing, splitting.
+    - `grid.py`: `GeographicGrid` data loading (NetCDF, TIFF).
+    - `displacement.py`: `Displacer` / `Colourer` class hierarchies, unit-aware `calculate_displacement_scale(grid_units=...)`.
+    - `magnets.py`: `MagnetSettings`, optimization and insertion of magnet voids and bosses.
+    - `io.py`: Low-level STL & OBJ file export (called internally by `GlobeModel.export`).
     - `plot.py`: Visualization.
 - **Docstrings**: All functions and classes MUST have complete and up-to-date docstrings (Google or NumPy style) explaining all parameters (including kwargs) and return values. When updating a function's signature, you MUST update its docstring concurrently to ensure documentation standards are met.
 - **Type Hinting**: Use type hints where helpful for clarity.

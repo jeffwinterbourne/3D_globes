@@ -12,8 +12,92 @@ from globe3d.displacement import Displacer, Colourer, select_inward_facing, sele
 from globe3d.magnets import MagnetSettings
 
 
+class _MeshProxy:
+    """Lightweight proxy giving ``model.outer`` / ``model.inner`` a clean API.
+
+    Users interact with ``model.outer.displace(...)`` and
+    ``model.inner.displace(...)`` instead of directly mutating arrays.
+
+    Attributes:
+        _model (GlobeModel): Back-reference to the owning model.
+        _target (str): ``'outer'`` or ``'inner'``.
+    """
+
+    def __init__(self, model: "GlobeModel", target: str):
+        """Initializes a _MeshProxy.
+
+        Args:
+            model (GlobeModel): The owning model.
+            target (str): ``'outer'`` or ``'inner'``.
+        """
+        object.__setattr__(self, '_model', model)
+        object.__setattr__(self, '_target', target)
+
+    # ----- read-only properties -------------------------------------------
+
+    @property
+    def vertices(self) -> np.ndarray:
+        """(N, 3) vertex array (read-only view)."""
+        return getattr(self._model, f"{self._target}_vertices")
+
+    @property
+    def faces(self) -> np.ndarray:
+        """(F, 3) face-index array (read-only view)."""
+        return getattr(self._model, f"{self._target}_faces")
+
+    @property
+    def colors(self) -> np.ndarray:
+        """(N, 3) RGB color array (read-only view), or None."""
+        return getattr(self._model, f"{self._target}_colors")
+
+    # ----- mutating helpers -----------------------------------------------
+
+    def displace(self, displacer: Displacer, scale: float = 1.0):
+        """Displaces this mesh's vertices and records the step in the recipe.
+
+        Args:
+            displacer (Displacer): The displacement object to apply.
+            scale (float, optional): Scaling multiplier. Defaults to 1.0.
+
+        Raises:
+            ValueError: If the geometry is not initialized.
+        """
+        verts = getattr(self._model, f"{self._target}_vertices")
+        if verts is None:
+            raise ValueError(f"Cannot displace: {self._target} geometry is not initialized.")
+        new_verts = displacer(verts, scale=scale)
+        setattr(self._model, f"{self._target}_vertices", new_verts)
+        recipe = self._model.recipe if self._target == "outer" else self._model._inner_recipe
+        recipe.append({
+            "type": "displacement",
+            "displacer": displacer,
+            "scale": scale,
+        })
+
+    def colour(self, colouring: Colourer, selection=None, selection_kwargs=None):
+        """Assigns colors to a subset of this mesh's vertices and records the step.
+
+        Args:
+            colouring (Colourer): The coloring object to apply.
+            selection (str, callable, or array-like, optional): Vertex subset.
+                Can be ``'inward_facing'``, ``'outward_facing'``, a custom callable,
+                or a list of indices.
+            selection_kwargs (dict, optional): Keyword arguments for the selection function.
+
+        Raises:
+            ValueError: If the geometry is not initialized.
+        """
+        self._model.colour(colouring, target=self._target,
+                           selection=selection, selection_kwargs=selection_kwargs)
+
+
 class GlobeModel:
-    """Contains the 3D geometry and recipe for building a 3D printable globe.
+    """Central object representing a 3D printable globe.
+
+    A ``GlobeModel`` encapsulates the outer and (optionally) inner shell
+    geometry, vertex colors, displacement/colouring recipes, and magnet
+    settings.  It exposes high-level methods so that the user never needs
+    to manipulate internal arrays directly.
 
     Attributes:
         outer_vertices (numpy.ndarray): (N, 3) array of outer shell vertices in mm.
@@ -23,84 +107,233 @@ class GlobeModel:
         inner_faces (numpy.ndarray): (F_inner, 3) array of inner shell face indices.
         inner_colors (numpy.ndarray): (N_inner, 3) array of inner RGB colors.
         magnet_settings (MagnetSettings): Configuration for magnet void insertion.
-        recipe (list): List of dicts representing applied displacement and colouring steps.
+        recipe (list): Outer-shell displacement and colouring steps.
     """
 
-    def __init__(self, vertices: np.ndarray = None, faces: np.ndarray = None):
-        """Initializes a GlobeModel.
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        method: str = 'fibonacci',
+        n_points: int = 100000,
+        radius: float = 40.0,
+        center: tuple = (0.0, 0.0, 0.0),
+        subdivisions: int = None,
+        hollow: bool = False,
+        inner_ratio: float = 0.8,
+        inner_n_points: int = None,
+        *,
+        _vertices: np.ndarray = None,
+        _faces: np.ndarray = None,
+    ):
+        """Creates a new GlobeModel.
+
+        The constructor generates both outer and (optionally) inner sphere
+        meshes so the user never needs to call internal geometry functions.
 
         Args:
-            vertices (numpy.ndarray, optional): Outer shell vertices. Defaults to None.
-            faces (numpy.ndarray, optional): Outer shell face indices. Defaults to None.
+            method (str, optional): Sphere generation method —
+                ``'fibonacci'`` or ``'icosahedron'``. Defaults to ``'fibonacci'``.
+            n_points (int, optional): Number of outer-shell vertices
+                (used when *method* is ``'fibonacci'``). Defaults to 100000.
+            radius (float, optional): Globe radius in mm. Defaults to 40.0.
+            center (tuple, optional): Sphere center. Defaults to ``(0, 0, 0)``.
+            subdivisions (int, optional): Number of icosahedron subdivision
+                steps (used when *method* is ``'icosahedron'``).
+            hollow (bool, optional): If ``True``, generate an inner mesh
+                automatically. Defaults to ``False``.
+            inner_ratio (float, optional): Inner-mesh radius as a fraction
+                of ``radius`` (0 < inner_ratio < 1). Defaults to 0.8.
+            inner_n_points (int, optional): Number of inner-shell vertices.
+                Defaults to ``n_points // 5`` when *method* is ``'fibonacci'``,
+                or ``max(subdivisions - 1, 1)`` when *method* is
+                ``'icosahedron'``.
+            _vertices (numpy.ndarray, optional): **Internal use only.**
+                Pre-computed outer vertices (bypasses sphere generation).
+            _faces (numpy.ndarray, optional): **Internal use only.**
+                Pre-computed outer faces (bypasses sphere generation).
+
+        Raises:
+            ValueError: If *method* is unknown, or *subdivisions* is missing
+                when ``method='icosahedron'``.
         """
-        self.outer_vertices = np.asarray(vertices, dtype=np.float64) if vertices is not None else None
-        self.outer_faces = np.asarray(faces, dtype=np.int32) if faces is not None else None
+        # --- Outer mesh ---------------------------------------------------
+        if _vertices is not None and _faces is not None:
+            # Internal fast-path used by from_fibonacci / from_icosahedron
+            self.outer_vertices = np.asarray(_vertices, dtype=np.float64)
+            self.outer_faces = np.asarray(_faces, dtype=np.int32)
+        else:
+            method = method.lower()
+            if method == 'fibonacci':
+                v, f = generate_sphere_points_fibonacci(n_points, radius, center)
+            elif method == 'icosahedron':
+                if subdivisions is None:
+                    raise ValueError(
+                        "subdivisions must be specified when method='icosahedron'."
+                    )
+                v, f = generate_sphere_points_icosahedron(subdivisions, radius, center)
+            else:
+                raise ValueError(
+                    f"Unknown sphere method '{method}'. "
+                    f"Supported: 'fibonacci', 'icosahedron'."
+                )
+            self.outer_vertices = v
+            self.outer_faces = f
+
         self.outer_colors = None
 
+        # --- Inner mesh ---------------------------------------------------
         self.inner_vertices = None
         self.inner_faces = None
         self.inner_colors = None
 
+        if hollow:
+            inner_radius = radius * inner_ratio
+            if method == 'fibonacci':
+                inner_np = inner_n_points or max(n_points // 5, 100)
+                iv, if_ = generate_sphere_points_fibonacci(inner_np, inner_radius, center)
+            elif method == 'icosahedron':
+                inner_sub = inner_n_points or max((subdivisions or 1) - 1, 1)
+                iv, if_ = generate_sphere_points_icosahedron(inner_sub, inner_radius, center)
+            else:
+                iv, if_ = generate_sphere_points_fibonacci(
+                    inner_n_points or max(n_points // 5, 100),
+                    inner_radius, center,
+                )
+            self.inner_vertices = iv
+            self.inner_faces = if_
+
+        # --- Metadata & recipes -------------------------------------------
         self.magnet_settings = None
-        self.recipe = []
+        self.recipe = []            # outer-shell recipe
+        self._inner_recipe = []     # inner-shell recipe
+        self._radius = radius
+        self._center = center
+
+        # --- Proxies (created on first access) ----------------------------
+        self._outer_proxy = None
+        self._inner_proxy = None
+
+    # ------------------------------------------------------------------
+    # Backward-compatible factory methods
+    # ------------------------------------------------------------------
 
     @classmethod
-    def from_fibonacci(cls, n_points: int, radius: float = 1.0, center=(0.0, 0.0, 0.0)) -> "GlobeModel":
-        """Generates a sphere GlobeModel using a Fibonacci lattice.
+    def from_fibonacci(cls, n_points: int, radius: float = 1.0,
+                       center=(0.0, 0.0, 0.0)) -> "GlobeModel":
+        """Creates a GlobeModel using a Fibonacci lattice (convenience wrapper).
 
         Args:
-            n_points (int): The number of points to generate.
-            radius (float, optional): The radius of the sphere in mm. Defaults to 1.0.
-            center (array-like, optional): Center of the sphere. Defaults to (0.0, 0.0, 0.0).
+            n_points (int): Number of outer-shell vertices.
+            radius (float, optional): Sphere radius in mm. Defaults to 1.0.
+            center (array-like, optional): Sphere center. Defaults to ``(0, 0, 0)``.
 
         Returns:
-            GlobeModel: A GlobeModel instance with a Fibonacci sphere geometry.
+            GlobeModel: A new model instance.
         """
         v, f = generate_sphere_points_fibonacci(n_points, radius, center)
-        return cls(v, f)
+        model = cls.__new__(cls)
+        model.outer_vertices = v
+        model.outer_faces = f
+        model.outer_colors = None
+        model.inner_vertices = None
+        model.inner_faces = None
+        model.inner_colors = None
+        model.magnet_settings = None
+        model.recipe = []
+        model._inner_recipe = []
+        model._radius = radius
+        model._center = center
+        model._outer_proxy = None
+        model._inner_proxy = None
+        return model
 
     @classmethod
-    def from_icosahedron(cls, subdivisions: int, radius: float = 1.0, center=(0.0, 0.0, 0.0)) -> "GlobeModel":
-        """Generates a sphere GlobeModel by recursively subdividing an icosahedron.
+    def from_icosahedron(cls, subdivisions: int, radius: float = 1.0,
+                         center=(0.0, 0.0, 0.0)) -> "GlobeModel":
+        """Creates a GlobeModel by subdividing an icosahedron (convenience wrapper).
 
         Args:
             subdivisions (int): Number of subdivision steps.
             radius (float, optional): Sphere radius in mm. Defaults to 1.0.
-            center (array-like, optional): Center of the sphere. Defaults to (0.0, 0.0, 0.0).
+            center (array-like, optional): Sphere center. Defaults to ``(0, 0, 0)``.
 
         Returns:
-            GlobeModel: A GlobeModel instance with an icosahedron-derived sphere.
+            GlobeModel: A new model instance.
         """
         v, f = generate_sphere_points_icosahedron(subdivisions, radius, center)
-        return cls(v, f)
+        model = cls.__new__(cls)
+        model.outer_vertices = v
+        model.outer_faces = f
+        model.outer_colors = None
+        model.inner_vertices = None
+        model.inner_faces = None
+        model.inner_colors = None
+        model.magnet_settings = None
+        model.recipe = []
+        model._inner_recipe = []
+        model._radius = radius
+        model._center = center
+        model._outer_proxy = None
+        model._inner_proxy = None
+        return model
+
+    # ------------------------------------------------------------------
+    # Proxy accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def outer(self) -> _MeshProxy:
+        """Proxy for the outer shell (use ``model.outer.displace(...)`` etc.)."""
+        if self._outer_proxy is None:
+            self._outer_proxy = _MeshProxy(self, "outer")
+        return self._outer_proxy
+
+    @property
+    def inner(self) -> _MeshProxy:
+        """Proxy for the inner shell (use ``model.inner.displace(...)`` etc.).
+
+        Raises:
+            ValueError: If inner geometry has not been initialized.
+        """
+        if self.inner_vertices is None:
+            raise ValueError(
+                "Inner geometry is not initialized. Create the model with "
+                "hollow=True, or call model.create_inner_mesh(thickness)."
+            )
+        if self._inner_proxy is None:
+            self._inner_proxy = _MeshProxy(self, "inner")
+        return self._inner_proxy
+
+    # ------------------------------------------------------------------
+    # Convenience wrappers (delegate to outer proxy)
+    # ------------------------------------------------------------------
 
     def displace(self, displacer: Displacer, scale: float = 1.0):
-        """Displaces the model's outer vertices and records the step in its recipe.
+        """Displaces the **outer** vertices.  Shortcut for ``model.outer.displace(...)``.
 
         Args:
             displacer (Displacer): The displacement object to apply.
-            scale (float, optional): Scaling multiplier for the displacement. Defaults to 1.0.
+            scale (float, optional): Scaling multiplier. Defaults to 1.0.
 
         Raises:
             ValueError: If outer geometry is not initialized.
         """
-        if self.outer_vertices is None:
-            raise ValueError("Cannot displace: outer geometry is not initialized.")
-        self.outer_vertices = displacer(self.outer_vertices, scale=scale)
-        self.recipe.append({
-            "type": "displacement",
-            "displacer": displacer,
-            "scale": scale
-        })
+        self.outer.displace(displacer, scale=scale)
 
-    def colour(self, colouring: Colourer, target: str = "outer", selection=None, selection_kwargs=None):
+    def colour(self, colouring: Colourer, target: str = "outer",
+               selection=None, selection_kwargs=None):
         """Assigns colors to a subset of the model's vertices and records the step in the recipe.
 
         Args:
             colouring (Colourer): The coloring object to apply.
-            target (str, optional): Target to color ('outer' or 'inner'). Defaults to 'outer'.
+            target (str, optional): Target to color (``'outer'`` or ``'inner'``).
+                Defaults to ``'outer'``.
             selection (str, callable, or array-like, optional): Vertex subset selection.
-                Can be 'inward_facing', 'outward_facing', a custom callable, or a list of indices.
+                Can be ``'inward_facing'``, ``'outward_facing'``, a custom callable,
+                or a list of indices.
             selection_kwargs (dict, optional): Keyword arguments for the selection function.
 
         Raises:
@@ -139,7 +372,8 @@ class GlobeModel:
             current_colors[selected_indices] = new_colors
             setattr(self, f"{target}_colors", current_colors)
 
-        self.recipe.append({
+        recipe = self.recipe if target == "outer" else self._inner_recipe
+        recipe.append({
             "type": "colouring",
             "colouring": colouring,
             "target": target,
@@ -147,8 +381,12 @@ class GlobeModel:
             "selection_kwargs": selection_kwargs
         })
 
+    # ------------------------------------------------------------------
+    # Inner mesh helpers
+    # ------------------------------------------------------------------
+
     def create_inner_mesh(self, thickness: float):
-        """Generates the inner mesh by scaling down the outer mesh relative to its bounds center.
+        """Generates the inner mesh by scaling down the outer mesh.
 
         Args:
             thickness (float): Target shell thickness in mm.
@@ -161,14 +399,37 @@ class GlobeModel:
         if self.outer_colors is not None:
             self.inner_colors = np.ones((len(self.inner_vertices), 3), dtype=np.float64)
 
-    def to_trimesh(self, part: str = "outer") -> trimesh.Trimesh:
-        """Generates a trimesh.Trimesh representation of the specified part.
+    # ------------------------------------------------------------------
+    # Magnet configuration
+    # ------------------------------------------------------------------
+
+    def configure_magnets(self, **kwargs):
+        """Configures magnet settings for hemisphere generation.
+
+        All keyword arguments are forwarded to :class:`MagnetSettings`.
+        Common parameters include ``diameter``, ``height``, ``n_magnets``,
+        ``position``, ``horizontal_tolerance``, ``vertical_tolerance``,
+        ``vertical_offset``, ``min_thickness``, ``add_bosses``,
+        ``min_magnets``, ``min_angular_spacing``, and ``step_degrees``.
 
         Args:
-            part (str, optional): Part to generate ('outer', 'inner', or 'combined'). Defaults to 'outer'.
+            **kwargs: Keyword arguments forwarded to :class:`MagnetSettings`.
+        """
+        self.magnet_settings = MagnetSettings(**kwargs)
+
+    # ------------------------------------------------------------------
+    # Trimesh conversion
+    # ------------------------------------------------------------------
+
+    def to_trimesh(self, part: str = "outer") -> trimesh.Trimesh:
+        """Generates a :class:`trimesh.Trimesh` representation.
+
+        Args:
+            part (str, optional): Part to generate — ``'outer'``, ``'inner'``,
+                or ``'combined'``. Defaults to ``'outer'``.
 
         Returns:
-            trimesh.Trimesh: The requested mesh representation.
+            trimesh.Trimesh: The requested mesh.
         """
         if part == "outer":
             if self.outer_vertices is None or self.outer_faces is None:
@@ -207,43 +468,49 @@ class GlobeModel:
         else:
             raise ValueError("part must be 'outer', 'inner', or 'combined'.")
 
+    # ------------------------------------------------------------------
+    # Recipe re-application (after boolean splits create new vertices)
+    # ------------------------------------------------------------------
+
     def _apply_recipe_colors_to_mesh(self, mesh: trimesh.Trimesh):
-        """Re-applies the colouring steps from the recipe to a post-processed mesh's vertices."""
-        if not self.recipe:
+        """Re-applies colouring steps from both recipes to a post-processed mesh."""
+        all_color_steps = [
+            s for s in self.recipe if s["type"] == "colouring"
+        ] + [
+            s for s in self._inner_recipe if s["type"] == "colouring"
+        ]
+        if not all_color_steps:
             return
 
-        # Initialize to solid white
         colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
-        has_colored = False
 
-        for step in self.recipe:
-            if step["type"] == "colouring":
-                has_colored = True
-                colouring = step["colouring"]
-                selection = step["selection"]
-                selection_kwargs = step["selection_kwargs"] or {}
+        for step in all_color_steps:
+            colouring = step["colouring"]
+            selection = step["selection"]
+            selection_kwargs = step["selection_kwargs"] or {}
 
-                if selection is None:
-                    selected_indices = np.arange(len(mesh.vertices))
-                elif isinstance(selection, str):
-                    if selection not in SELECTION_REGISTRY:
-                        continue
-                    select_func = SELECTION_REGISTRY[selection]
-                    selected_indices = select_func(mesh.vertices, mesh.faces, **selection_kwargs)
-                elif callable(selection):
-                    selected_indices = selection(mesh.vertices, mesh.faces, **selection_kwargs)
-                else:
-                    # Map indices roughly, but list of indices on original mesh might not align with new mesh.
-                    # As a fallback, try to apply.
-                    selected_indices = np.asarray(selection, dtype=np.int32)
-                    selected_indices = selected_indices[selected_indices < len(mesh.vertices)]
+            if selection is None:
+                selected_indices = np.arange(len(mesh.vertices))
+            elif isinstance(selection, str):
+                if selection not in SELECTION_REGISTRY:
+                    continue
+                select_func = SELECTION_REGISTRY[selection]
+                selected_indices = select_func(mesh.vertices, mesh.faces, **selection_kwargs)
+            elif callable(selection):
+                selected_indices = selection(mesh.vertices, mesh.faces, **selection_kwargs)
+            else:
+                selected_indices = np.asarray(selection, dtype=np.int32)
+                selected_indices = selected_indices[selected_indices < len(mesh.vertices)]
 
-                if len(selected_indices) > 0:
-                    new_colors = colouring(mesh.vertices[selected_indices])
-                    colors[selected_indices] = new_colors
+            if len(selected_indices) > 0:
+                new_colors = colouring(mesh.vertices[selected_indices])
+                colors[selected_indices] = new_colors
 
-        if has_colored:
-            mesh.visual.vertex_colors = (colors * 255.0).astype(np.uint8)
+        mesh.visual.vertex_colors = (colors * 255.0).astype(np.uint8)
+
+    # ------------------------------------------------------------------
+    # Hemisphere generation
+    # ------------------------------------------------------------------
 
     def generate_hemispheres(
         self,
@@ -253,17 +520,22 @@ class GlobeModel:
         thickness: float = 1.5,
         engine: str = None,
     ) -> tuple:
-        """Cuts the globe model into top and bottom capped hemispheres, optionally hollowed with magnets.
+        """Cuts the globe into top and bottom capped hemispheres, optionally hollowed with magnets.
 
         Args:
-            plane_normal (array-like, optional): Cutting plane normal. Defaults to (0, 0, 1).
-            plane_origin (array-like, optional): Cutting plane origin. Defaults to (0, 0, 0).
-            hollow (bool, optional): If True, hollow the hemispheres. Defaults to True.
-            thickness (float, optional): Shell thickness in mm. Defaults to 1.5.
-            engine (str, optional): Boolean engine for trimesh. Defaults to None.
+            plane_normal (array-like, optional): Cutting plane normal.
+                Defaults to ``(0, 0, 1)``.
+            plane_origin (array-like, optional): Cutting plane origin.
+                Defaults to ``(0, 0, 0)``.
+            hollow (bool, optional): If ``True``, hollow the hemispheres.
+                Defaults to ``True``.
+            thickness (float, optional): Shell thickness in mm (used only if
+                inner mesh has not been created yet). Defaults to 1.5.
+            engine (str, optional): Boolean engine for trimesh.
+                Defaults to ``None``.
 
         Returns:
-            tuple: (top_half, bottom_half) as trimesh.Trimesh objects.
+            tuple: ``(top_half, bottom_half)`` as :class:`trimesh.Trimesh` objects.
         """
         if self.outer_vertices is None or self.outer_faces is None:
             raise ValueError("Outer geometry is not defined.")
@@ -293,36 +565,149 @@ class GlobeModel:
 
         return top_half, bottom_half
 
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def export(self, filename: str, part: str = "outer", include_color: bool = True,
+               fix_normals: bool = False):
+        """Exports the model to disk.  File format is inferred from the extension.
+
+        Supported formats: ``.stl`` (binary STL, no color), ``.obj`` (OBJ
+        with vertex colors when *include_color* is ``True``).
+
+        Args:
+            filename (str): Output file path (must end with ``.stl`` or ``.obj``).
+            part (str, optional): Part to export — ``'outer'``, ``'inner'``,
+                or ``'combined'``. Defaults to ``'outer'``.
+            include_color (bool, optional): Embed vertex colors (OBJ only).
+                Defaults to ``True``.
+            fix_normals (bool, optional): Force outward-facing normals via
+                chirality fix (only for simple convex meshes).
+                Defaults to ``False``.
+
+        Raises:
+            ValueError: If the file extension is not supported.
+        """
+        import os as _os
+        ext = _os.path.splitext(filename)[1].lower()
+
+        if ext == '.stl':
+            self.write_stl(filename, part=part)
+        elif ext == '.obj':
+            self.write_obj(filename, part=part, fix_normals=fix_normals)
+        else:
+            raise ValueError(
+                f"Unsupported file extension '{ext}'. Use '.stl' or '.obj'."
+            )
+
+    def export_hemispheres(
+        self,
+        top_filename: str,
+        bottom_filename: str,
+        include_color: bool = True,
+        hollow: bool = True,
+        thickness: float = 1.5,
+        engine: str = 'manifold',
+        plane_normal=(0, 0, 1),
+        plane_origin=(0, 0, 0),
+    ):
+        """Splits, hollows, colors, and exports both hemispheres in one call.
+
+        This is the highest-level export helper — it performs the entire
+        split → hollow → color → write pipeline so the user never needs to
+        manually extract colors or import internal writers.
+
+        Args:
+            top_filename (str): Output path for the top hemisphere.
+            bottom_filename (str): Output path for the bottom hemisphere.
+            include_color (bool, optional): Embed vertex colors (OBJ only).
+                Defaults to ``True``.
+            hollow (bool, optional): Hollow the hemispheres.
+                Defaults to ``True``.
+            thickness (float, optional): Shell thickness in mm (used only if
+                inner mesh has not been created yet). Defaults to 1.5.
+            engine (str, optional): Boolean engine. Defaults to ``'manifold'``.
+            plane_normal (array-like, optional): Cutting plane normal.
+                Defaults to ``(0, 0, 1)``.
+            plane_origin (array-like, optional): Cutting plane origin.
+                Defaults to ``(0, 0, 0)``.
+
+        Raises:
+            RuntimeError: If hemisphere generation fails.
+        """
+        import os as _os
+        from globe3d.io import write_stl_binary, write_obj_with_vertex_colors
+
+        top_half, bottom_half = self.generate_hemispheres(
+            plane_normal=plane_normal,
+            plane_origin=plane_origin,
+            hollow=hollow,
+            thickness=thickness,
+            engine=engine,
+        )
+
+        if top_half is None or bottom_half is None:
+            raise RuntimeError("Hemisphere generation failed.")
+
+        for fname, mesh in [(top_filename, top_half), (bottom_filename, bottom_half)]:
+            # Ensure output directory exists
+            out_dir = _os.path.dirname(fname)
+            if out_dir:
+                _os.makedirs(out_dir, exist_ok=True)
+
+            ext = _os.path.splitext(fname)[1].lower()
+            if ext == '.stl':
+                write_stl_binary(fname, mesh.vertices, mesh.faces)
+            elif ext == '.obj':
+                if include_color and hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                    colors = mesh.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
+                else:
+                    colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
+                write_obj_with_vertex_colors(fname, mesh.vertices, mesh.faces, colors)
+            else:
+                raise ValueError(
+                    f"Unsupported file extension '{ext}'. Use '.stl' or '.obj'."
+                )
+
+    # ------------------------------------------------------------------
+    # Legacy export helpers
+    # ------------------------------------------------------------------
+
     def write_stl(self, filename: str, part: str = "outer"):
         """Exports the model geometry to a binary STL file.
 
         Args:
             filename (str): Path to export the STL.
-            part (str, optional): Part to export ("outer", "inner", or "combined"). Defaults to "outer".
+            part (str, optional): Part to export (``'outer'``, ``'inner'``,
+                or ``'combined'``). Defaults to ``'outer'``.
         """
         mesh = self.to_trimesh(part=part)
         from globe3d.io import write_stl_binary
         write_stl_binary(filename, mesh.vertices, mesh.faces)
 
-    def write_obj(self, filename: str, part: str = "outer", center=(0.0, 0.0, 0.0), fix_normals=False):
+    def write_obj(self, filename: str, part: str = "outer",
+                  center=(0.0, 0.0, 0.0), fix_normals=False):
         """Exports the model geometry with vertex colors to an OBJ file.
 
         Args:
             filename (str): Path to export the OBJ.
-            part (str, optional): Part to export ("outer", "inner", or "combined"). Defaults to "outer".
-            center (array-like, optional): Center point to offset the mesh. Defaults to (0.0, 0.0, 0.0).
-            fix_normals (bool, optional): If True, corrects face normals winding order. Defaults to False.
+            part (str, optional): Part to export (``'outer'``, ``'inner'``,
+                or ``'combined'``). Defaults to ``'outer'``.
+            center (array-like, optional): Center point. Defaults to ``(0, 0, 0)``.
+            fix_normals (bool, optional): If ``True``, corrects face normals
+                winding order. Defaults to ``False``.
         """
         mesh = self.to_trimesh(part=part)
         from globe3d.io import write_obj_with_vertex_colors
 
         if hasattr(mesh.visual, "vertex_colors") and mesh.visual.vertex_colors is not None:
-            # trimesh colors are uint8 of shape (V, 4) or (V, 3)
             colors = mesh.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
         else:
             colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
 
         write_obj_with_vertex_colors(filename, mesh.vertices, mesh.faces, colors, center=center, fix_normals=fix_normals)
+
 
 
 def fix_face_chirality(vertices, faces, center=(0.0, 0.0, 0.0)):
