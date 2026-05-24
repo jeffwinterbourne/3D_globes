@@ -1,23 +1,25 @@
 # 1. Getting Started
 
-This page explains how to set up your environment, clone the `globe3d` repository, install the library, and verify your installation.
+Welcome! Setting up a scientific Python environment can sometimes feel daunting, especially with libraries that process geospatial data. This page guides you through installing the environment step-by-step so you can start creating globes with ease.
 
 ---
 
-## Prerequisites: Install Conda
+## 🛠️ Prerequisites: Install Conda (Recommended)
 
-`globe3d` relies on several scientific Python libraries (like `numpy`, `scipy`, and `trimesh`). Some packages—particularly spatial libraries like `netCDF4`—can be difficult to compile manually. We recommend using **Miniconda** or **Anaconda** to manage your python packages safely.
+`globe3d` relies on heavy-duty scientific libraries like `numpy` (for math), `scipy` (for interpolation), and `trimesh` (for 3D mesh modeling). Some of these packages—particularly `netCDF4` (which reads scientific grids) and `rasterio` (for GeoTIFF images)—rely on underlying C libraries that can be tricky to compile manually.
 
-1. Download the installer for your operating system:
-   - [Miniconda Installer (Recommended, lightweight)](https://docs.conda.io/en/latest/miniconda.html)
-   - [Anaconda Installer (Full desktop application)](https://www.anaconda.com/products/individual)
-2. Follow the installation instructions for your system, making sure to add Conda to your shell/terminal path when prompted.
+To save you from compilation errors, we recommend using **Conda** (a package manager that downloads pre-compiled versions of these scientific libraries).
+
+1. Download the installer suited for your operating system:
+   - [Miniconda Installer (Recommended - lightweight, fast)](https://docs.conda.io/en/latest/miniconda.html)
+   - [Anaconda Installer (Full suite, includes a desktop dashboard)](https://www.anaconda.com/products/individual)
+2. Run the installer and follow the instructions. If you are on Windows, we recommend checking the option to "Add Conda to my PATH" or using the **Anaconda Prompt** terminal that the installer installs.
 
 ---
 
-## Step 1: Clone the Git Repository
+## 🚀 Step 1: Clone the Project Code
 
-Open your terminal (Linux/macOS) or Command Prompt/PowerShell (Windows) and clone the repository:
+Open your terminal (Linux/macOS) or your **Anaconda Prompt / PowerShell** (Windows) and download the repository:
 
 ```bash
 git clone https://github.com/jeffwinterbourne/3D_globes.git
@@ -26,57 +28,58 @@ cd 3D_globes
 
 ---
 
-## Step 2: Set Up the Conda Environment
+## 📦 Step 2: Set Up Your Python Environment
 
-We use a Conda environment called `pygmt` to ensure all spatial dependencies are resolved properly.
+We will create an isolated environment called `pygmt` where all our project dependencies will live safely without conflicting with other Python code on your computer.
 
-### Windows, macOS, and Linux Setup
+Run the following commands in your terminal:
 
 1. **Create and Activate the Environment**:
+   This installs Python 3.12 inside our clean space.
    ```bash
    conda create -n pygmt python=3.12 -y
    conda activate pygmt
    ```
-2. **Install netCDF4 (from conda-forge)**:
-   It is best to install `netCDF4` via Conda first to ensure the underlying C libraries are linked correctly:
+2. **Install netCDF4 (Pre-compiled)**:
+   We fetch this from `conda-forge` to ensure the underlying C-libraries link perfectly:
    ```bash
    conda install -c conda-forge netcdf4 -y
    ```
-3. **Install rasterio (optional, for GeoTIFF support)**:
-   If you plan to use GeoTIFF grids, install `rasterio`:
+3. **Install rasterio (Optional, for TIFF maps)**:
+   If you plan to load height maps or elevation models from `.tif` or `.tiff` files:
    ```bash
    conda install -c conda-forge rasterio -y
    ```
 
 ---
 
-## Step 3: Install the `globe3d` Package
+## 💻 Step 3: Install the `globe3d` Package
 
-Install `globe3d` in **editable mode**. This installs the package while allowing any changes you make to the code inside the `src/` directory to take effect immediately without re-installing:
+We will now install the `globe3d` package in **editable mode** (using `-e .`). This tells Python to register the library in your environment while pointing directly to the code in your folder. Any edits made in the code will take effect immediately without having to re-install.
 
 ```bash
 pip install -e .
 ```
 
-This will automatically pull in all other necessary dependencies (like `numpy`, `scipy`, `matplotlib`, `trimesh`, `tqdm`, and `cmocean`).
+*This will automatically pull in all other necessary libraries (such as NumPy, SciPy, Matplotlib, Trimesh, Tqdm, and Cmocean).*
 
 ---
 
-## Step 4: Verify the Installation
+## 🔍 Step 4: Verify Your Installation
 
-To ensure everything is installed and working correctly, run the `pytest` test suite:
+Let's make sure everything is installed and functioning correctly by running our automated test suite:
 
 ```bash
 pytest
 ```
 
-If the installation was successful, all tests should pass with green checkmarks (e.g. `34 passed`).
+If everything is correct, you should see green text indicating that all tests (e.g., `34 passed`) succeeded!
 
-### Starting Jupyter Notebooks
+### 📓 Launching the Example Notebooks
 
-To run the interactive example notebooks accompanying this guide:
+To run the interactive tutorials:
 
-1. Install Jupyter Lab or Notebook:
+1. Install Jupyter Lab inside your conda environment:
    ```bash
    conda install -c conda-forge jupyterlab -y
    ```
@@ -84,4 +87,4 @@ To run the interactive example notebooks accompanying this guide:
    ```bash
    jupyter lab
    ```
-3. Open any notebook in the `examples/` directory to run it step-by-step.
+3. The browser window will open. Click on the `examples` folder to open any tutorial notebook and run it cell-by-cell!

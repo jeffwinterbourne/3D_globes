@@ -1,123 +1,99 @@
 # 6. Example 3: Adding Magnets
 
-This tutorial explains how to add magnet voids and bosses to the equatorial mating surface of your split hemispheres, and how to print a calibration test piece to fine-tune tolerances.
+This tutorial explains how to add magnet cavities and structural reinforcement "bosses" to the equatorial mating surface of split hemispheres, allowing the halves to snap together perfectly. We will also generate a calibration test piece to fine-tune your printer's tolerances.
 
-The complete notebook is located at [examples/example_3_magnets_globe.ipynb](../examples/example_3_magnets_globe.ipynb).
-
----
-
-## The Hollowing & Magnet Insertion Pipeline
-
-When printing split globes, it is best to:
-1. Split the outer displaced mesh into top and bottom capped hemispheres.
-2. Hollow each hemisphere by subtracting a smaller concentric sphere (the inner mesh).
-3. Insert magnet voids (and optional reinforcing bosses) along the flat mating ring.
-
-`globe3d` automates this entire pipeline inside the `create_hollow_hemispheres` function.
+The complete interactive notebook is located at [examples/example_3_magnets_globe.ipynb](../examples/example_3_magnets_globe.ipynb).
 
 ---
 
-## Tolerances: Getting the Perfect Fit
+## 🧲 Why Add Magnets?
+To turn a split globe into an interactive model—like the nested "Seismic Matryoshka" or the "Earth Interior" model—you need a way to hold the hemispheres together that is clean and repeatable. Embedded neodymium magnets are perfect. They align the hemispheres automatically and hold them securely, yet let users easily separate the halves to inspect the interior.
 
-Because 3D printers squeeze plastic slightly outward as they print, a $5.0\text{ mm}$ hole will usually be too tight for a $5.0\text{ mm}$ magnet. To account for this, we add small tolerances:
-- **Radial/Horizontal Tolerance (`h_tol`)**: Typically $0.1\text{ to } 0.2\text{ mm}$. Added to the radius of the magnet.
-- **Vertical Tolerance (`v_tol`)**: Typically $0.05\text{ to } 0.15\text{ mm}$. Added to the height/depth of the magnet void.
-- **Vertical Offset (`v_offset`)**: The thickness of the plastic ceiling above the magnet (so it doesn't break through the flat mating surface). Typically $0.2\text{ mm}$ (exactly one or two print layers).
+### 🔍 Understanding Tolerances
+Because 3D printers extrude hot plastic that swells slightly as it cools, printing a $5.0\text{ mm}$ hole will result in a hole that is too small for a $5.0\text{ mm}$ magnet. To account for this, we add small adjustments:
+- **Horizontal/Radial Tolerance (`horizontal_tolerance`)**: Typically $0.1\text{ to } 0.2\text{ mm}$. This widens the hole so the magnet slides in smoothly.
+- **Vertical Tolerance (`vertical_tolerance`)**: Typically $0.05\text{ to } 0.15\text{ mm}$. This adds extra depth to the pocket so the magnet doesn't sit proud of the flat surface.
+- **Ceiling Thickness (`vertical_offset`)**: The thickness of the plastic layer between the magnet pocket and the flat mating surface. A thickness of $0.2\text{ mm}$ (usually one or two print layers) keeps the magnet invisible and close enough to retain high magnetic pull.
 
 ---
 
-## Code Walkthrough
+## 💻 Code Walkthrough
 
 ### 1. Import Libraries
+We import the core model constructor and the test piece helper:
 ```python
 import os
-import trimesh
-from globe3d import (
-    generate_sphere_points_fibonacci,
-    create_hollow_hemispheres,
-    generate_magnet_test_piece
-)
+from globe3d import GlobeModel, generate_magnet_test_piece
 ```
 
-### 2. Prepare Outer and Inner Spheres
-We generate a high-detail outer sphere (which we would displace) and a coarser, slightly smaller inner sphere defining the cavity:
+### 2. Prepare the Hollow Model
+We initialize our model with `hollow=True` and define an `inner_ratio` of `0.5` (which makes the hollow cavity $50\%$ of the outer radius, leaving a thick wall perfect for magnet pockets):
 ```python
 model_radius_mm = 40.0
 
-# Coarse outer sphere for demo
-outer_vertices, outer_faces = generate_sphere_points_fibonacci(n_points=6000, radius=model_radius_mm)
-
-# Inner sphere (75% of radius -> 10 mm thick default wall)
-inner_vertices, inner_faces = generate_sphere_points_fibonacci(n_points=1000, radius=model_radius_mm * 0.75)
+# Initialize a hollow model
+model = GlobeModel(
+    n_points=6000,
+    radius=model_radius_mm,
+    hollow=True,
+    inner_ratio=0.5,  # Thick shell for housing magnets
+)
+print(f"Outer shell: {model.outer.vertices.shape[0]} vertices")
+print(f"Inner shell: {model.inner.vertices.shape[0]} vertices")
 ```
 
 ### 3. Alternative A: Magnet Placement WITH Bosses (`add_bosses=True`)
-Use this when you want magnets placed at exact angular positions, and need plastic reinforcement "bosses" to shield the magnets because the shell wall is thin.
+If the globe walls are thin or if you want magnets placed at exact angular coordinates, the software must build structural cylindrical "towers" (bosses) around each magnet void on the inside of the cavity so the holes don't break through into the hollow center.
 ```python
-magnet_params_bosses = {
-    'magnet_diameter': 5.0,        # 5mm diameter
-    'magnet_height': 2.0,          # 2mm height
-    'h_tol': 0.15,                 # 0.15mm radial tolerance
-    'v_tol': 0.10,                 # 0.10mm vertical tolerance
-    'v_offset': 0.20,              # 0.20mm floor thickness
-    'min_thick': 1.5,              # 1.5mm wall surrounding the void
-    'n_magnets': 3,                # 3 magnets per side
-    'start_lon': 0.0,              # Space them evenly starting at 0 degrees
-    'add_bosses': True             # Reinforce with cylindrical towers
-}
-
-top_bosses, bottom_bosses = create_hollow_hemispheres(
-    outer_vertices=outer_vertices,
-    outer_faces=outer_faces,
-    inner_vertices=inner_vertices,
-    inner_faces=inner_faces,
-    engine='manifold',
-    magnet_params=magnet_params_bosses
+# Configure magnets with reinforcing bosses
+model.configure_magnets(
+    diameter=5.0,                  # 5 mm disc magnet
+    height=2.0,                    # 2 mm height
+    n_magnets=3,                   # 3 magnets evenly spaced
+    position=0.0,                  # Start angle
+    horizontal_tolerance=0.15,     # 0.15 mm radial tolerance
+    vertical_tolerance=0.10,       # 0.10 mm depth tolerance
+    vertical_offset=0.20,          # 0.20 mm plastic ceiling
+    min_thickness=1.5,             # 1.5 mm minimum plastic walls around magnet
+    add_bosses=True,               # Union support towers inside the cavity
 )
-print("Generated hollow hemispheres with bosses.")
+
+# Generate the meshes (hollowing and magnet voids are calculated automatically)
+top_boss, bottom_boss = model.generate_hemispheres(engine='manifold')
+print(f"Top hemisphere is watertight: {top_boss.is_watertight}")
 ```
 
 ### 4. Alternative B: Magnet Placement WITHOUT Bosses (Inside Shell)
-Use this to keep the interior cavity clean and avoid extra printed material. The algorithm steps around the shell at `step_degrees` increments and checks where a magnet void fits safely inside the natural wall thickness, selecting the positions that maximize angular spacing uniformity:
+If you want to keep the inner hollow cavity completely smooth and avoid printing protruding bosses, you can set `add_bosses=False`. The algorithm searches the equatorial plane in 2-degree increments to find optimal spots where the magnet pocket fits entirely inside the natural thickness of the displaced shell wall.
 ```python
-magnet_params_no_bosses = {
-    'magnet_diameter': 5.0,
-    'magnet_height': 2.0,
-    'h_tol': 0.15,
-    'v_tol': 0.10,
-    'v_offset': 0.20,
-    'min_thick': 1.5,
-    'n_magnets': 3,
-    'min_magnets': 2,             # Raise error if fewer than 2 fit
-    'min_angular_spacing': 60.0,  # Keep them at least 60 degrees apart
-    'step_degrees': 2.0,          # Step search resolution
-    'add_bosses': False           # Do not build bosses; fit inside the shell
-}
-
-top_noboss, bottom_noboss = create_hollow_hemispheres(
-    outer_vertices=outer_vertices,
-    outer_faces=outer_faces,
-    inner_vertices=inner_vertices,
-    inner_faces=inner_faces,
-    engine='manifold',
-    magnet_params=magnet_params_no_bosses
+# Reconfigure magnets to sit strictly inside the natural wall thickness
+model.configure_magnets(
+    diameter=5.0,
+    height=2.0,
+    n_magnets=3,
+    min_magnets=2,                 # Raise error if fewer than 2 spots fit
+    min_angular_spacing=60.0,      # Keep magnets at least 60 degrees apart
+    step_degrees=2.0,              # Search angular step resolution
+    horizontal_tolerance=0.15,
+    vertical_tolerance=0.10,
+    vertical_offset=0.20,
+    min_thickness=1.5,
+    add_bosses=False,              # No support bosses
 )
-print("Generated hollow hemispheres without bosses.")
+
+top_noboss, bottom_noboss = model.generate_hemispheres(engine='manifold')
 ```
 
 ---
 
-## 🔬 Calibrating with a Test Piece
+## 🔬 Calibration: Print a Test Piece First!
 
-Instead of printing a whole globe to test if your magnets fit, you should print a quick, 10-minute test cylinder containing a single magnet void.
+Do not print a full 8-hour globe to test if your magnet settings are correct. Instead, generate and print a small **10-minute calibration test piece** containing a single magnet pocket.
 
-Use the `generate_magnet_test_piece` function:
 ```python
-output_dir = "../outputs"
-os.makedirs(output_dir, exist_ok=True)
-test_piece_path = os.path.join(output_dir, "magnet_test_piece.stl")
+os.makedirs('../outputs', exist_ok=True)
+test_piece_path = "../outputs/magnet_test_piece.stl"
 
-# Generates a cylinder that fits one magnet
 generate_magnet_test_piece(
     diameter=5.0,
     height=2.0,
@@ -125,14 +101,18 @@ generate_magnet_test_piece(
     vertical_tolerance=0.10,
     vertical_offset=0.20,
     min_thickness=1.5,
-    output_path=test_piece_path
+    output_path=test_piece_path,
 )
-print(f"Generated calibration test piece at {test_piece_path}")
+print(f"Saved calibration test piece to: {test_piece_path}")
 ```
 
-### Tuning Process:
-1. Print the test piece.
-2. Push your magnet into the void.
-3. **If it is too loose** (falls out): Decrease `h_tol` or `v_tol`.
-4. **If it is too tight** (won't push in): Increase `h_tol` or `v_tol`.
-5. Once tuned, use those exact tolerance values in your main globe `magnet_params`.
+### 📈 How to Tune Your Settings:
+1. **Print the test cylinder** using the same layer height and settings you plan to use for your globe.
+2. **Press fit a magnet** into the pocket.
+3. **Analyze the fit**:
+   - *Too loose* (magnet drops out when shaken): Decrease the `horizontal_tolerance` or `vertical_tolerance`.
+   - *Too tight* (cannot press magnet in, or it warps the plastic): Increase the `horizontal_tolerance`.
+4. **Lock in the values**: Once the magnet pushes in snugly and stays in place, use those exact tolerances in your `configure_magnets()` call.
+
+> [!TIP]
+> When assembling the printed hemispheres, double-check the polarities of your magnets before gluing them in! It is extremely frustrating to glue a magnet in backward, preventing the hemispheres from closing.

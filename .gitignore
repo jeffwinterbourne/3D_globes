@@ -159,3 +159,6 @@ dmypy.json
 # inputs and outputs
 inputs/
 outputs/
+
+# context documents
+context/

@@ -1,84 +1,79 @@
 # 5. Example 2: Intermediate Globe (Coastline step & Hemisphere splitting)
 
-This tutorial walks through creating a globe that combines topography displacement with a sharp boundary step at the coastlines (derived from a shapefile), and splits the mesh into capped top and bottom hemispheres for easy flat-bed 3D printing.
+This tutorial walks through creating a more advanced globe that combines standard topographic displacement with a sharp, physical boundary step at the coastlines (derived from a vector shapefile). We will then split the displaced model into capped top and bottom hemispheres for easy flat-bed 3D printing.
 
-The complete notebook is located at [examples/example_2_intermediate_globe.ipynb](../examples/example_2_intermediate_globe.ipynb).
+The complete interactive notebook is located at [examples/example_2_intermediate_globe.ipynb](../examples/example_2_intermediate_globe.ipynb).
 
 ---
 
-## Code Walkthrough
+## 🎨 Scientific & Design Context
+When 3D printing long-wavelength models (like seismic tomography or dynamic topography), the surface can become highly distorted. Adding a **coastline step** serves as a vital physical "anchor" or grid reference:
+- **Spatial Reference**: It raises the continental landmasses by a constant step (e.g. 0.8 mm), creating a clear, sharp ledge at the coastline. 
+- **Tactile Learning**: This allows users (especially those with visual impairments) to immediately orient themselves and identify familiar landmasses (like the UK, Madagascar, or Australia) relative to the underlying geodynamic structures.
+
+---
+
+## 💻 Code Walkthrough
 
 ### 1. Import Libraries
+We import `globe3d`'s object-oriented components along with standard helper libraries.
 ```python
-import os
 import numpy as np
 import matplotlib.pyplot as plt
-import trimesh
 from globe3d import (
-    generate_sphere_points_fibonacci,
-    load_netcdf_grid,
-    calculate_displacement_scale,
-    displace_vertices,
-    displace_near_lines,
-    split_mesh_hemispheres
+    GlobeModel,
+    GeographicGrid,
+    GridDisplacer,
+    LineDisplacer,
+    calculate_displacement_scale
 )
 ```
 
 ### 2. Base Sphere and Topography
-We first generate our sphere and apply ETOPO grid displacement (just like in Example 1):
+We generate an 8,000-point Fibonacci sphere and apply ETOPO grid elevation displacement (just like in Example 1):
 ```python
 model_radius_mm = 40.0
-vertices, faces = generate_sphere_points_fibonacci(n_points=8000, radius=model_radius_mm)
+topo_units = 'm'  # ETOPO elevation data is in meters
+
+# Initialize the model
+model = GlobeModel(n_points=8000, radius=model_radius_mm)
 
 # Load and downsample ETOPO grid
-netcdf_path = "../inputs/ETOPO_2022_v1_60s_N90W180_surface.nc"
-lats, lons, grid = load_netcdf_grid(netcdf_path, 'lat', 'lon', 'z')
-lats_ds, lons_ds, grid_ds = lats[::10], lons[::10], grid[::10, ::10]
+full_grid = GeographicGrid.from_netcdf(
+    "../inputs/ETOPO_2022_v1_60s_N90W180_surface.nc", 'lat', 'lon', 'z'
+)
+grid_ds = GeographicGrid(
+    lats=full_grid.lats[::10],
+    lons=full_grid.lons[::10],
+    grid=full_grid.grid[::10, ::10]
+)
 
-scale = calculate_displacement_scale(model_radius_mm, earth_radius_km=6371.0, vertical_exagg=40.0)
-vertices = displace_vertices(vertices, lats_ds, lons_ds, grid_ds, scale)
+scale = calculate_displacement_scale(model_radius_mm, vertical_exagg=40.0, grid_units=topo_units)
+model.outer.displace(GridDisplacer(grid_ds), scale=scale)
 ```
 
-### 3. Add Coastline Step (Shapefile Displacement)
-To make coastlines stand out physically, we can apply a sharp step (e.g. 0.8 mm) using a global coastline shapefile. This displaces vertices that are near the coastlines:
+### 3. Apply the Coastline Step (Line Displacement)
+We load coastlines from a standard Natural Earth shapefile. The `LineDisplacer` identifies all vertices within a given width (in degrees) of a coastline and pushes them outward, creating a tactile ribbon ledge:
 ```python
 # Path to Natural Earth coastlines shapefile
 coastline_shp = "../inputs/coastlines/ne_110m_coastline.shp"
 
 # Apply a 0.8 mm step ribbon along the coastline to make borders distinct
-vertices = displace_near_lines(
-    vertices=vertices,
+model.outer.displace(LineDisplacer(
     shapefile_path=coastline_shp,
-    displacement=0.8,         # 0.8 mm step height
-    width_degrees=0.5         # 0.5 degrees ribbon width
-)
+    displacement=0.8,   # 0.8 mm step height
+    width_degrees=0.5   # 0.5 degrees ribbon width
+))
+print("Applied coastline step displacement.")
 ```
 
-### 4. Create Mesh Object
-We construct a watertight `trimesh.Trimesh` object from our displaced vertices and faces:
+### 4. Preview the Split Hemispheres
+Before saving, we can preview how the sphere looks when cut along the equator. `generate_hemispheres()` returns two mesh objects capped flat at the cut plane:
 ```python
-mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-mesh.fix_normals()
-print(f"Mesh is watertight: {mesh.is_watertight}")
-```
+# Generate hemispheres for preview (not hollow for this simple example)
+top_half, bottom_half = model.generate_hemispheres(hollow=False)
 
-### 5. Split into Hemispheres
-We use `split_mesh_hemispheres` to cut the mesh at the equator (`normal=(0, 0, 1)`). This caps both halves so they have a flat, solid face that can sit on the 3D printer bed:
-```python
-top_half, bottom_half = split_mesh_hemispheres(
-    mesh=mesh,
-    normal=(0, 0, 1),
-    origin=(0, 0, 0)
-)
-
-print(f"Top half is watertight: {top_half.is_watertight}")
-print(f"Bottom half is watertight: {bottom_half.is_watertight}")
-```
-
-### 6. Visualize Hemispheres
-Let's verify that we have two independent halves:
-```python
-fig = plt.figure(figsize=(10, 5))
+fig = plt.figure(figsize=(12, 6))
 
 # Top half preview
 ax1 = fig.add_subplot(121, projection='3d')
@@ -95,13 +90,13 @@ ax2.set_title("Bottom Hemisphere")
 plt.show()
 ```
 
-### 7. Export Halves
-We export each hemisphere as a separate STL file:
+### 5. Split and Export
+Rather than manually splitting and exporting, `GlobeModel.export_hemispheres` cuts the model at the equator, caps the faces, and writes them out to two separate STL files in a single line of code:
 ```python
-output_dir = "../outputs"
-os.makedirs(output_dir, exist_ok=True)
-
-top_half.export(os.path.join(output_dir, "example_2_top.stl"))
-bottom_half.export(os.path.join(output_dir, "example_2_bottom.stl"))
-print("Saved top and bottom hemispheres.")
+model.export_hemispheres(
+    "../outputs/example_2_top.stl",
+    "../outputs/example_2_bottom.stl",
+    hollow=False,
+)
+print("Hemispheres exported to outputs/")
 ```
