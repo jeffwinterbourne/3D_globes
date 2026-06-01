@@ -41,6 +41,35 @@ def test_grid_displacer():
     radii = np.linalg.norm(displaced, axis=1)
     assert np.allclose(radii, 1.1)
 
+def test_grid_displacer_reference_level():
+    # Create a grid with values from 0 to 10
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 5)
+    grid = np.ones((5, 5)) * 6.0
+    
+    g = GeographicGrid(lats, lons, grid)
+    # reference level of 5.0 -> displacement should be 6.0 - 5.0 = 1.0
+    displacer = GridDisplacer(g, reference_level=5.0)
+    
+    vertices = np.array([
+        [1.0, 0.0, 0.0],
+    ])
+    
+    scale = 0.5
+    displaced = displacer(vertices, scale=scale)
+    
+    # Expected radius is 1.0 + 0.5 * (6.0 - 5.0) = 1.5
+    radii = np.linalg.norm(displaced, axis=1)
+    assert np.allclose(radii, 1.5)
+
+    # reference level of 7.0 -> displacement should be 6.0 - 7.0 = -1.0
+    displacer_neg = GridDisplacer(g, reference_level=7.0)
+    displaced_neg = displacer_neg(vertices, scale=scale)
+    
+    # Expected radius is 1.0 + 0.5 * (6.0 - 7.0) = 0.5
+    radii_neg = np.linalg.norm(displaced_neg, axis=1)
+    assert np.allclose(radii_neg, 0.5)
+
 def test_grid_colourer():
     # Create a simple grid
     lats = np.linspace(-90, 90, 5)

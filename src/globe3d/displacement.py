@@ -176,6 +176,7 @@ class GridDisplacer(Displacer):
         num_threads: int = -1,
         show_progress: bool = False,
         chunk_size: int = 10000,
+        reference_level: float = 0.0,
     ):
         """Initializes a GridDisplacer.
 
@@ -185,6 +186,9 @@ class GridDisplacer(Displacer):
             num_threads (int, optional): Parallel execution thread count. Defaults to -1 (all available).
             show_progress (bool, optional): Show progress bar during displacement. Defaults to False.
             chunk_size (int, optional): Chunk size for parallel interpolation. Defaults to 10000.
+            reference_level (float, optional): Reference level about which to center the displacement.
+                Values below this level displace inward (negative), and values above displace outward (positive).
+                Defaults to 0.0.
         """
         if not isinstance(grid_data, GeographicGrid):
             raise TypeError("grid_data must be an instance of GeographicGrid.")
@@ -193,6 +197,7 @@ class GridDisplacer(Displacer):
         self.num_threads = num_threads
         self.show_progress = show_progress
         self.chunk_size = chunk_size
+        self.reference_level = float(reference_level)
 
     def __call__(self, vertices: np.ndarray, scale: float = 1.0) -> np.ndarray:
         lats, lons, grid = _wrap_longitude(self.grid_data.lats, self.grid_data.lons, self.grid_data.grid)
@@ -215,6 +220,7 @@ class GridDisplacer(Displacer):
             pts = np.stack((lat, lon), axis=-1)
             displacement = interpolator(pts)
             displacement = np.nan_to_num(displacement)
+            displacement = displacement - self.reference_level
             new_r = r + scale * displacement
             if np.any(new_r <= 0):
                 raise ValueError(
@@ -247,6 +253,7 @@ class GridDisplacer(Displacer):
                 pts = np.stack((lat, lon), axis=-1)
                 displacement = interpolator(pts)
                 displacement = np.nan_to_num(displacement)
+                displacement = displacement - self.reference_level
                 new_r = r + scale * displacement
                 if np.any(new_r <= 0):
                     raise ValueError(
