@@ -238,3 +238,59 @@ def test_globe_model_lifecycle(tmp_path):
     assert obj_path.exists()
 
 
+def test_hemisphere_recipe_coloring_isolation():
+    """Verify that hemisphere generation correctly isolates outer and inner coloring steps,
+    even in the presence of radial displacement where outer shell vertices end up closer
+    to the origin than the inner shell's radius.
+    """
+    from globe3d.mesh import GlobeModel
+    from globe3d.displacement import ConstantColourer, GridDisplacer
+    from globe3d.grid import GeographicGrid
+
+    # Initialize a hollow globe model with n_points=500, radius=40.0, hollow=True, inner_ratio=0.8
+    model = GlobeModel(n_points=500, radius=40.0, hollow=True, inner_ratio=0.8)
+    
+    # Outer mesh: blue base color
+    model.outer.colour(ConstantColourer([0.0, 0.0, 1.0]))
+    
+    # Inner mesh: red base color
+    model.inner.colour(ConstantColourer([1.0, 0.0, 0.0]))
+    
+    # Displace all outer vertices inward by 15.0 mm.
+    # Since outer radius is 40.0, this puts them at 25.0 mm, which is inside the undisplaced inner mesh radius (32.0 mm).
+    lats = np.linspace(-90, 90, 5)
+    lons = np.linspace(-180, 180, 5)
+    grid = -np.ones((5, 5)) * 15.0
+    geo_grid = GeographicGrid(lats, lons, grid)
+    displacer = GridDisplacer(geo_grid)
+    
+    model.displace(displacer, scale=1.0)
+    
+    outer_radii = np.linalg.norm(model.outer_vertices, axis=1)
+    assert np.allclose(outer_radii, 25.0)
+    
+    # Generate hemispheres
+    top, bottom = model.generate_hemispheres(hollow=True, engine='manifold')
+    
+    assert top is not None
+    assert bottom is not None
+    
+    top_colors = top.visual.vertex_colors[:, :3]
+    top_vertices = top.vertices
+    
+    is_outer, is_inner = model._classify_mesh_vertices(top_vertices)
+    
+    # All classified outer vertices must be blue
+    outer_indices = np.where(is_outer)[0]
+    outer_colors = top_colors[outer_indices]
+    for c in outer_colors:
+        assert np.allclose(c, [0, 0, 255])
+        
+    # All classified inner vertices must be red
+    inner_indices = np.where(is_inner)[0]
+    inner_colors = top_colors[inner_indices]
+    for c in inner_colors:
+        assert np.allclose(c, [255, 0, 0])
+
+
+

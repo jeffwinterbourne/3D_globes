@@ -472,6 +472,55 @@ class GlobeModel:
     # Recipe re-application (after boolean splits create new vertices)
     # ------------------------------------------------------------------
 
+    def _classify_mesh_vertices(self, mesh_vertices: np.ndarray) -> tuple:
+        """Classifies each vertex in mesh_vertices as belonging to the outer or inner shell.
+
+        Uses a direction-based radial comparison to handle radial displacements robustly.
+
+        Args:
+            mesh_vertices (numpy.ndarray): (M, 3) vertex coordinates to classify.
+
+        Returns:
+            tuple: (is_outer, is_inner) boolean masks of shape (M,).
+        """
+        from scipy.spatial import KDTree
+        C = np.asarray(self._center)
+        
+        # Outer original displaced vertices
+        dir_outer = self.outer_vertices - C
+        norm_outer = np.linalg.norm(dir_outer, axis=1, keepdims=True)
+        u_outer = dir_outer / np.where(norm_outer == 0, 1.0, norm_outer)
+        
+        # Inner original displaced vertices
+        dir_inner = self.inner_vertices - C
+        norm_inner = np.linalg.norm(dir_inner, axis=1, keepdims=True)
+        u_inner = dir_inner / np.where(norm_inner == 0, 1.0, norm_inner)
+        
+        # Query vertices
+        dir_query = mesh_vertices - C
+        norm_query = np.linalg.norm(dir_query, axis=1, keepdims=True)
+        u_query = dir_query / np.where(norm_query == 0, 1.0, norm_query)
+        
+        # Direction KD-trees
+        tree_outer = KDTree(u_outer)
+        tree_inner = KDTree(u_inner)
+        
+        _, idx_outer = tree_outer.query(u_query)
+        _, idx_inner = tree_inner.query(u_query)
+        
+        r_outer_matched = norm_outer[idx_outer, 0]
+        r_inner_matched = norm_inner[idx_inner, 0]
+        
+        r_query = norm_query[:, 0]
+        
+        dist_to_outer = np.abs(r_query - r_outer_matched)
+        dist_to_inner = np.abs(r_query - r_inner_matched)
+        
+        is_outer = dist_to_outer < dist_to_inner
+        is_inner = dist_to_inner <= dist_to_outer
+        
+        return is_outer, is_inner
+
     def _apply_recipe_colors_to_mesh(self, mesh: trimesh.Trimesh):
         """Re-applies colouring steps from both recipes to a post-processed mesh."""
         all_color_steps = [
@@ -484,10 +533,17 @@ class GlobeModel:
 
         colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
 
+        if self.inner_vertices is not None:
+            is_outer, is_inner = self._classify_mesh_vertices(mesh.vertices)
+        else:
+            is_outer = np.ones(len(mesh.vertices), dtype=bool)
+            is_inner = np.zeros(len(mesh.vertices), dtype=bool)
+
         for step in all_color_steps:
             colouring = step["colouring"]
             selection = step["selection"]
             selection_kwargs = step["selection_kwargs"] or {}
+            target = step.get("target", "outer")
 
             if selection is None:
                 selected_indices = np.arange(len(mesh.vertices))
@@ -500,7 +556,12 @@ class GlobeModel:
                 selected_indices = selection(mesh.vertices, mesh.faces, **selection_kwargs)
             else:
                 selected_indices = np.asarray(selection, dtype=np.int32)
-                selected_indices = selected_indices[selected_indices < len(mesh.vertices)]
+                selected_indices = selected_indices[(selected_indices >= 0) & (selected_indices < len(mesh.vertices))]
+
+            # Filter selected indices to target shell
+            target_mask = is_outer if target == "outer" else is_inner
+            if len(selected_indices) > 0:
+                selected_indices = selected_indices[target_mask[selected_indices]]
 
             if len(selected_indices) > 0:
                 new_colors = colouring(mesh.vertices[selected_indices], current_colors=colors[selected_indices])
@@ -959,7 +1020,11 @@ def combine_subtractive_globes(outer_vertices, outer_faces, inner_vertices, inne
     combined_vertices = np.vstack([outer_vertices, inner_vertices])
     combined_faces = np.vstack([outer_faces, inner_faces_inverted])
 
-    if (outer_colors is not None) and (inner_colors is not None):
+    if (outer_colors is not None) or (inner_colors is not None):
+        if outer_colors is None:
+            outer_colors = np.ones((len(outer_vertices), 3), dtype=np.float64)
+        if inner_colors is None:
+            inner_colors = np.ones((len(inner_vertices), 3), dtype=np.float64)
         combined_colors = np.vstack([outer_colors, inner_colors])
         return combined_vertices, combined_faces, combined_colors
     else:
