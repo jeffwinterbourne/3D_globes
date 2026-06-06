@@ -615,7 +615,9 @@ def test_parallel_colouring(tmp_path):
 
 
 def test_colourer_layering_and_background_none():
-    """Verify that Colourer classes do not overwrite existing colors when background_color is None."""
+    """Verify that Colourer classes do not overwrite existing colors when background_color is None,
+    but DO overwrite them with the specified background_color when it is provided.
+    """
     vertices = np.array([
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0]
@@ -623,28 +625,48 @@ def test_colourer_layering_and_background_none():
     
     c_blue = [0.0, 0.0, 1.0]
     c_red = [1.0, 0.0, 0.0]
+    c_green = [0.0, 1.0, 0.0]
     
-    # 1. PointColourer with background_color=None
+    # 1. PointColourer
     points = np.array([[90.0, 0.0]]) # Vertex 1 (0.0, 1.0, 0.0) is near this point
-    pc = PointColourer(points, color=c_red, background_color=None, radius_degrees=1.0)
-    
-    # Layer over blue colors
     existing_colors = np.tile(c_blue, (2, 1))
-    new_colors = pc(vertices, current_colors=existing_colors)
     
-    assert np.allclose(new_colors[0], c_blue) # Vertex 0 remains blue
-    assert np.allclose(new_colors[1], c_red)  # Vertex 1 becomes red
+    # background_color=None -> preserve background
+    pc_none = PointColourer(points, color=c_red, background_color=None, radius_degrees=1.0)
+    new_colors_none = pc_none(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_none[0], c_blue)
+    assert np.allclose(new_colors_none[1], c_red)
     
-    # 2. LineColourer with background_color=None
-    lc = LineColourer([np.array([(90.0, 0.0), (100.0, 0.0)])], color=c_red, background_color=None, width_degrees=1.0)
-    new_colors_line = lc(vertices, current_colors=existing_colors)
-    assert np.allclose(new_colors_line[0], c_blue)
-    assert np.allclose(new_colors_line[1], c_red)
+    # background_color=c_green -> overwrite background
+    pc_green = PointColourer(points, color=c_red, background_color=c_green, radius_degrees=1.0)
+    new_colors_green = pc_green(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_green[0], c_green)
+    assert np.allclose(new_colors_green[1], c_red)
     
-    # 3. PolygonColourer with background_color=None
+    # 2. LineColourer
+    # background_color=None -> preserve background
+    lc_none = LineColourer([np.array([(90.0, 0.0), (100.0, 0.0)])], color=c_red, background_color=None, width_degrees=1.0)
+    new_colors_line_none = lc_none(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_line_none[0], c_blue)
+    assert np.allclose(new_colors_line_none[1], c_red)
+    
+    # background_color=c_green -> overwrite background
+    lc_green = LineColourer([np.array([(90.0, 0.0), (100.0, 0.0)])], color=c_red, background_color=c_green, width_degrees=1.0)
+    new_colors_line_green = lc_green(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_line_green[0], c_green)
+    assert np.allclose(new_colors_line_green[1], c_red)
+    
+    # 3. PolygonColourer
     poly = [np.array([[80.0, -10.0], [100.0, -10.0], [100.0, 10.0], [80.0, 10.0], [80.0, -10.0]])]
-    pc_poly = PolygonColourer(poly, color=c_red, background_color=None, flood_inside=True)
-    new_colors_poly = pc_poly(vertices, current_colors=existing_colors)
-    assert np.allclose(new_colors_poly[0], c_blue)
-    assert np.allclose(new_colors_poly[1], c_red)
+    # background_color=None -> preserve background
+    pc_poly_none = PolygonColourer(poly, color=c_red, background_color=None, flood_inside=True)
+    new_colors_poly_none = pc_poly_none(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_poly_none[0], c_blue)
+    assert np.allclose(new_colors_poly_none[1], c_red)
+    
+    # background_color=c_green -> overwrite background
+    pc_poly_green = PolygonColourer(poly, color=c_red, background_color=c_green, flood_inside=True)
+    new_colors_poly_green = pc_poly_green(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_poly_green[0], c_green)
+    assert np.allclose(new_colors_poly_green[1], c_red)
 

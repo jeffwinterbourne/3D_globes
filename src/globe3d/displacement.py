@@ -813,6 +813,8 @@ class PointColourer(Colourer):
     def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         if current_colors is not None:
             colors = current_colors.copy()
+            if self.background_color is not None:
+                colors[:] = self.background_color
         else:
             bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
             colors = np.tile(bg, (len(vertices), 1))
@@ -957,6 +959,8 @@ class LineColourer(Colourer):
     def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         if current_colors is not None:
             colors = current_colors.copy()
+            if self.background_color is not None:
+                colors[:] = self.background_color
         else:
             bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
             colors = np.tile(bg, (len(vertices), 1))
@@ -1048,6 +1052,8 @@ class PolygonColourer(Colourer):
     def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         if current_colors is not None:
             colors = current_colors.copy()
+            if self.background_color is not None:
+                colors[:] = self.background_color
         else:
             bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
             colors = np.tile(bg, (len(vertices), 1))
