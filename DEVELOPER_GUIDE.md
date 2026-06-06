@@ -179,6 +179,27 @@ This module defines the **`GeographicGrid`** class, representing geographic coor
 
 ---
 
+### `datasets.py` — Datasets Fetcher & Cacher
+
+This module provides fetching, caching, and preprocessing capabilities for standard global geophysical datasets and shapefiles. It organizes them into a clean, hierarchical API:
+
+- **`datasets.topography`** (Earth, Mars, Moon, Venus, Mercury, ETOPO, GEBCO)
+- **`datasets.tomography`** (S40RTS)
+- **`datasets.geoid`** (EGM2008)
+- **`datasets.crust`** (CRUST1.0)
+- **`datasets.dynamic_topography`** (Hoggard 2016)
+- **`datasets.gravity`** (Bouguer Anomaly)
+- **`datasets.magnetics`** (EMAG2v3)
+- **`datasets.shapefiles`** (Natural Earth land and coastline vector data)
+
+#### Helper Methods & Functions
+
+- `list_datasets()`: Returns a dictionary of all available datasets grouped by category.
+- `shapefiles.land()`: Returns the absolute path to the extracted `ne_110m_land.shp` shapefile, downloading and extracting it if not cached.
+- `shapefiles.coastline()`: Returns the absolute path to the extracted `ne_110m_coastline.shp` shapefile, downloading and extracting it if not cached.
+
+---
+
 ### `displacement.py` — Radial Displacement & Vertex Coloring
 
 This is where the geographic data meets the 3D geometry (~229 lines).

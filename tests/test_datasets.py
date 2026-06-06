@@ -268,3 +268,121 @@ def test_planetary_topography_lowres(temp_cache_dir, monkeypatch):
     grid_venus = datasets.venus(resolution="30m", cache_dir=temp_cache_dir)
     assert isinstance(grid_venus, GeographicGrid)
     assert grid_venus.grid.shape == (4, 5)
+
+
+def test_list_datasets():
+    info = datasets.list_datasets()
+    assert isinstance(info, dict)
+    assert "topography" in info
+    assert "tomography" in info
+    assert "shapefiles" in info
+    assert info["topography"]["earth"] == "Earth global relief (topography + bathymetry)"
+
+
+def test_hierarchical_tomography(temp_cache_dir, monkeypatch):
+    filename = "S40RTS_dvs.nc"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_3d_netcdf(mock_filepath)
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.tomography.s40rts(depth=110.0, cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+    assert grid.grid.shape == (4, 5)
+
+
+def test_hierarchical_topography_mars(temp_cache_dir, monkeypatch):
+    filename = "mars_relief_30m_g.grd"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="z")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.topography.mars(resolution="30m", cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+
+
+def test_hierarchical_topography_earth(temp_cache_dir, monkeypatch):
+    filename = "earth_relief_30m_g.grd"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="z")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.topography.earth(resolution="30m", cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+
+
+def test_topography_mercury(temp_cache_dir, monkeypatch):
+    filename = "mercury_relief_30m_g.grd"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="z")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.topography.mercury(resolution="30m", cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+
+
+def test_topography_etopo(temp_cache_dir, monkeypatch):
+    filename = "earth_relief_30m_g.grd"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="z")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.topography.etopo(resolution="30m", cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+
+
+def test_topography_vesta():
+    with pytest.raises(NotImplementedError):
+        datasets.topography.vesta()
+
+
+def test_topography_gebco(temp_cache_dir, monkeypatch):
+    # Test ValueError without url
+    with pytest.raises(ValueError, match="GEBCO dataset is very large"):
+        datasets.topography.gebco()
+
+    # Test with local file mock
+    filename = "gebco_grid.nc"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="z")
+
+    grid = datasets.topography.gebco(url=mock_filepath)
+    assert isinstance(grid, GeographicGrid)
+
+
+def test_shapefiles(temp_cache_dir, monkeypatch):
+    # Mock download to return a zipped dummy file
+    mock_zip = os.path.join(temp_cache_dir, "ne_110m_land.zip")
+    with zipfile.ZipFile(mock_zip, "w") as zf:
+        zf.writestr("ne_110m_land.shp", "dummy content")
+
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_zip)
+
+    # Test land shapefile
+    shp_path = datasets.shapefiles.land(cache_dir=temp_cache_dir)
+    assert shp_path.endswith("ne_110m_land.shp")
+    assert os.path.exists(shp_path)
+
+    # Test coastline shapefile
+    mock_zip_coast = os.path.join(temp_cache_dir, "ne_110m_coastline.zip")
+    with zipfile.ZipFile(mock_zip_coast, "w") as zf:
+        zf.writestr("ne_110m_coastline.shp", "dummy content")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_zip_coast)
+
+    shp_path_coast = datasets.shapefiles.coastline(cache_dir=temp_cache_dir)
+    assert shp_path_coast.endswith("ne_110m_coastline.shp")
+    assert os.path.exists(shp_path_coast)
+
+
+def test_callable_namespaces(temp_cache_dir, monkeypatch):
+    # Test that datasets.gravity is callable (delegates to gravity.bouguer)
+    filename = "bouguer_anomaly.nc"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_2d_netcdf(mock_filepath, lat_var="lat", lon_var="lon", data_var="bouguer")
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    grid = datasets.gravity(cache_dir=temp_cache_dir)
+    assert isinstance(grid, GeographicGrid)
+
+    # Test that datasets.gravity.bouguer is also callable
+    grid2 = datasets.gravity.bouguer(cache_dir=temp_cache_dir)
+    assert isinstance(grid2, GeographicGrid)
