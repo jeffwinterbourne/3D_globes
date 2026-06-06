@@ -522,6 +522,13 @@ def test_line_colourer(tmp_path):
     assert np.allclose(colors_gdf[0], c_red)
     assert np.allclose(colors_gdf[1], c_white)
 
+    # Test list of coordinate arrays input
+    lc_arrs = LineColourer([np.array([(0, 0), (10, 0)])], color=c_red, background_color=c_white, width_degrees=0.5)
+    colors_arrs = lc_arrs(vertices)
+    assert np.allclose(colors_arrs[0], c_red)
+    assert np.allclose(colors_arrs[1], c_white)
+
+
 
 def test_polygon_colourer(tmp_path):
     """Test PolygonColourer works inside and outside with shapefile and GeoDataFrame input."""
@@ -565,6 +572,13 @@ def test_polygon_colourer(tmp_path):
     assert np.allclose(colors_out[0], c_white)
     assert np.allclose(colors_out[1], c_red)
 
+    # Test list of coordinate arrays input
+    pc_arrs = PolygonColourer([np.array([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])], color=c_red, background_color=c_white, flood_inside=True)
+    colors_arrs = pc_arrs(vertices)
+    assert np.allclose(colors_arrs[0], c_red)
+    assert np.allclose(colors_arrs[1], c_white)
+
+
 
 def test_parallel_colouring(tmp_path):
     """Test that coloring classes give identical results with single and multi-threading."""
@@ -598,3 +612,39 @@ def test_parallel_colouring(tmp_path):
     pc_poly_seq = PolygonColourer(gdf_poly, color=c_red, background_color=c_white, flood_inside=True, num_threads=1)(vertices)
     pc_poly_par = PolygonColourer(gdf_poly, color=c_red, background_color=c_white, flood_inside=True, num_threads=2)(vertices)
     assert np.allclose(pc_poly_seq, pc_poly_par)
+
+
+def test_colourer_layering_and_background_none():
+    """Verify that Colourer classes do not overwrite existing colors when background_color is None."""
+    vertices = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0]
+    ])
+    
+    c_blue = [0.0, 0.0, 1.0]
+    c_red = [1.0, 0.0, 0.0]
+    
+    # 1. PointColourer with background_color=None
+    points = np.array([[90.0, 0.0]]) # Vertex 1 (0.0, 1.0, 0.0) is near this point
+    pc = PointColourer(points, color=c_red, background_color=None, radius_degrees=1.0)
+    
+    # Layer over blue colors
+    existing_colors = np.tile(c_blue, (2, 1))
+    new_colors = pc(vertices, current_colors=existing_colors)
+    
+    assert np.allclose(new_colors[0], c_blue) # Vertex 0 remains blue
+    assert np.allclose(new_colors[1], c_red)  # Vertex 1 becomes red
+    
+    # 2. LineColourer with background_color=None
+    lc = LineColourer([np.array([(90.0, 0.0), (100.0, 0.0)])], color=c_red, background_color=None, width_degrees=1.0)
+    new_colors_line = lc(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_line[0], c_blue)
+    assert np.allclose(new_colors_line[1], c_red)
+    
+    # 3. PolygonColourer with background_color=None
+    poly = [np.array([[80.0, -10.0], [100.0, -10.0], [100.0, 10.0], [80.0, 10.0], [80.0, -10.0]])]
+    pc_poly = PolygonColourer(poly, color=c_red, background_color=None, flood_inside=True)
+    new_colors_poly = pc_poly(vertices, current_colors=existing_colors)
+    assert np.allclose(new_colors_poly[0], c_blue)
+    assert np.allclose(new_colors_poly[1], c_red)
+

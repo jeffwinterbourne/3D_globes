@@ -488,11 +488,13 @@ class PolygonDisplacer(Displacer):
 class Colourer:
     """Base class for assigning colors to vertices."""
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         """Generates RGB colors for the given (N, 3) vertex array.
 
         Args:
             vertices (numpy.ndarray): (N, 3) vertex array.
+            current_colors (numpy.ndarray, optional): Existing vertex colors to layer over.
+                Defaults to None.
 
         Returns:
             numpy.ndarray: (N, 3) RGB color array with values in [0, 1].
@@ -558,7 +560,7 @@ class GridColourer(Colourer):
         self.show_progress = show_progress
         self.chunk_size = chunk_size
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         if isinstance(self.colormap, str):
             cmap = plt.get_cmap(self.colormap)
         else:
@@ -655,7 +657,7 @@ class ImageColourer(Colourer):
         self.show_progress = show_progress
         self.chunk_size = chunk_size
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         img = plt.imread(self.image_path)
 
         if img.dtype == np.uint8:
@@ -733,7 +735,7 @@ class ConstantColourer(Colourer):
             raise ValueError("color values must be in the range [0, 1].")
         self.color = c_val
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         n = vertices.shape[0]
         return np.tile(self.color, (n, 1))
 
@@ -745,7 +747,7 @@ class PointColourer(Colourer):
         self,
         points_data: object,
         color: object = (1.0, 0.0, 0.0),
-        background_color: object = (1.0, 1.0, 1.0),
+        background_color: object = None,
         radius_degrees: float = 1.0,
         marker_shape: object = "circle",
         marker_thickness: float = 0.2,
@@ -757,7 +759,8 @@ class PointColourer(Colourer):
             points_data (str, GeoDataFrame, or array-like): Path to a shapefile, a GeoDataFrame,
                 or an (N, 2) array of (lon, lat).
             color (array-like, optional): RGB color for vertices inside the markers. Defaults to (1.0, 0.0, 0.0).
-            background_color (array-like, optional): RGB color for vertices outside the markers. Defaults to (1.0, 1.0, 1.0).
+            background_color (array-like, optional): RGB color for vertices outside the markers. If None,
+                preserves existing colors. Defaults to None.
             radius_degrees (float, optional): Size threshold of the markers in degrees. Defaults to 1.0.
             marker_shape (str or callable, optional): Shape of the marker. Supported string values are
                 'circle', 'square', 'triangle', 'cross', 'star'. Or a callable with signature
@@ -791,7 +794,7 @@ class PointColourer(Colourer):
 
         self.points_data = points_data
         self.color = np.asarray(color, dtype=np.float64)
-        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64) if background_color is not None else None
         self.radius_degrees = float(radius_degrees)
         self.marker_shape = marker_shape
         self.marker_thickness = float(marker_thickness)
@@ -801,13 +804,19 @@ class PointColourer(Colourer):
             raise ValueError("color must be a 3-element RGB array-like.")
         if np.any(self.color < 0.0) or np.any(self.color > 1.0):
             raise ValueError("color values must be in the range [0, 1].")
-        if self.background_color.shape != (3,):
-            raise ValueError("background_color must be a 3-element RGB array-like.")
-        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
-            raise ValueError("background_color values must be in the range [0, 1].")
+        if self.background_color is not None:
+            if self.background_color.shape != (3,):
+                raise ValueError("background_color must be a 3-element RGB array-like.")
+            if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+                raise ValueError("background_color values must be in the range [0, 1].")
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
-        colors = np.tile(self.background_color, (len(vertices), 1))
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        if current_colors is not None:
+            colors = current_colors.copy()
+        else:
+            bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
+            colors = np.tile(bg, (len(vertices), 1))
+
         if self.radius_degrees <= 0 or len(self._gdf) == 0:
             return colors
 
@@ -891,7 +900,7 @@ class LineColourer(Colourer):
         self,
         shapefile_path: object,
         color: object = (1.0, 0.0, 0.0),
-        background_color: object = (1.0, 1.0, 1.0),
+        background_color: object = None,
         width_degrees: float = 0.5,
         num_threads: int = -1,
     ):
@@ -900,25 +909,38 @@ class LineColourer(Colourer):
         Args:
             shapefile_path (str or GeoDataFrame): Path to the shapefile or a GeoDataFrame.
             color (array-like, optional): RGB color for vertices inside/near the lines. Defaults to (1.0, 0.0, 0.0).
-            background_color (array-like, optional): RGB color outside lines. Defaults to (1.0, 1.0, 1.0).
+            background_color (array-like, optional): RGB color outside lines. If None,
+                preserves existing colors. Defaults to None.
             width_degrees (float, optional): Distance in degrees to buffer geometries. Defaults to 0.5.
             num_threads (int, optional): Parallel threads. Defaults to -1.
         """
         import geopandas as gpd
+        from shapely.geometry import LineString
 
         if isinstance(shapefile_path, str):
             self._gdf = gpd.read_file(shapefile_path)
         elif isinstance(shapefile_path, gpd.GeoDataFrame):
             self._gdf = shapefile_path
+        elif isinstance(shapefile_path, (list, tuple, np.ndarray)):
+            if isinstance(shapefile_path, np.ndarray) and shapefile_path.ndim == 2:
+                lines = [LineString(shapefile_path)]
+            else:
+                lines = []
+                for item in shapefile_path:
+                    arr = np.asarray(item)
+                    if arr.ndim != 2 or arr.shape[1] != 2:
+                        raise ValueError("Each line array must have shape (N, 2) representing (lon, lat) points.")
+                    lines.append(LineString(arr))
+            self._gdf = gpd.GeoDataFrame(geometry=lines, crs="EPSG:4326").reset_index(drop=True)
         else:
-            raise TypeError("shapefile_path must be a string file path or a geopandas GeoDataFrame.")
+            raise TypeError("shapefile_path must be a string file path, geopandas GeoDataFrame, or a list/array of (N, 2) coordinates.")
 
         if width_degrees < 0:
             raise ValueError("width_degrees must be non-negative.")
 
         self.shapefile_path = shapefile_path
         self.color = np.asarray(color, dtype=np.float64)
-        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64) if background_color is not None else None
         self.width_degrees = float(width_degrees)
         self.num_threads = num_threads
 
@@ -926,13 +948,19 @@ class LineColourer(Colourer):
             raise ValueError("color must be a 3-element RGB array-like.")
         if np.any(self.color < 0.0) or np.any(self.color > 1.0):
             raise ValueError("color values must be in the range [0, 1].")
-        if self.background_color.shape != (3,):
-            raise ValueError("background_color must be a 3-element RGB array-like.")
-        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
-            raise ValueError("background_color values must be in the range [0, 1].")
+        if self.background_color is not None:
+            if self.background_color.shape != (3,):
+                raise ValueError("background_color must be a 3-element RGB array-like.")
+            if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+                raise ValueError("background_color values must be in the range [0, 1].")
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
-        colors = np.tile(self.background_color, (len(vertices), 1))
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        if current_colors is not None:
+            colors = current_colors.copy()
+        else:
+            bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
+            colors = np.tile(bg, (len(vertices), 1))
+
         if len(self._gdf) == 0:
             return colors
 
@@ -954,7 +982,7 @@ class PolygonColourer(Colourer):
         self,
         shapefile_path: object,
         color: object = (1.0, 0.0, 0.0),
-        background_color: object = (1.0, 1.0, 1.0),
+        background_color: object = None,
         flood_inside: bool = True,
         num_threads: int = -1,
     ):
@@ -963,30 +991,47 @@ class PolygonColourer(Colourer):
         Args:
             shapefile_path (str or GeoDataFrame): Path to shapefile containing Polygon/MultiPolygon geometries, or GeoDataFrame.
             color (array-like, optional): RGB color for the flooded region. Defaults to (1.0, 0.0, 0.0).
-            background_color (array-like, optional): RGB color for the non-flooded region. Defaults to (1.0, 1.0, 1.0).
+            background_color (array-like, optional): RGB color for the non-flooded region. If None,
+                preserves existing colors. Defaults to None.
             flood_inside (bool, optional): If True, flood points inside polygons. If False,
                 flood points outside. Defaults to True.
             num_threads (int, optional): Parallel threads. Defaults to -1.
         """
         import geopandas as gpd
+        from shapely.geometry import Polygon
 
         if isinstance(shapefile_path, str):
             gdf = gpd.read_file(shapefile_path)
+            invalid_types = set(gdf.geometry.geom_type.unique()) - {"Polygon", "MultiPolygon"}
+            if invalid_types:
+                raise TypeError(
+                    f"Geometries must be Polygons or MultiPolygons. Found types: {invalid_types}"
+                )
         elif isinstance(shapefile_path, gpd.GeoDataFrame):
             gdf = shapefile_path
+            invalid_types = set(gdf.geometry.geom_type.unique()) - {"Polygon", "MultiPolygon"}
+            if invalid_types:
+                raise TypeError(
+                    f"Geometries must be Polygons or MultiPolygons. Found types: {invalid_types}"
+                )
+        elif isinstance(shapefile_path, (list, tuple, np.ndarray)):
+            if isinstance(shapefile_path, np.ndarray) and shapefile_path.ndim == 2:
+                polys = [Polygon(shapefile_path)]
+            else:
+                polys = []
+                for item in shapefile_path:
+                    arr = np.asarray(item)
+                    if arr.ndim != 2 or arr.shape[1] != 2:
+                        raise ValueError("Each polygon array must have shape (N, 2) representing (lon, lat) points.")
+                    polys.append(Polygon(arr))
+            gdf = gpd.GeoDataFrame(geometry=polys, crs="EPSG:4326").reset_index(drop=True)
         else:
-            raise TypeError("shapefile_path must be a string file path or a geopandas GeoDataFrame.")
-
-        invalid_types = set(gdf.geometry.geom_type.unique()) - {"Polygon", "MultiPolygon"}
-        if invalid_types:
-            raise TypeError(
-                f"Geometries must be Polygons or MultiPolygons. Found types: {invalid_types}"
-            )
+            raise TypeError("shapefile_path must be a string file path, geopandas GeoDataFrame, or a list/array of (N, 2) coordinates.")
 
         self.shapefile_path = shapefile_path
         self._gdf = gdf
         self.color = np.asarray(color, dtype=np.float64)
-        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64) if background_color is not None else None
         self.flood_inside = bool(flood_inside)
         self.num_threads = num_threads
 
@@ -994,13 +1039,19 @@ class PolygonColourer(Colourer):
             raise ValueError("color must be a 3-element RGB array-like.")
         if np.any(self.color < 0.0) or np.any(self.color > 1.0):
             raise ValueError("color values must be in the range [0, 1].")
-        if self.background_color.shape != (3,):
-            raise ValueError("background_color must be a 3-element RGB array-like.")
-        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
-            raise ValueError("background_color values must be in the range [0, 1].")
+        if self.background_color is not None:
+            if self.background_color.shape != (3,):
+                raise ValueError("background_color must be a 3-element RGB array-like.")
+            if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+                raise ValueError("background_color values must be in the range [0, 1].")
 
-    def __call__(self, vertices: np.ndarray) -> np.ndarray:
-        colors = np.tile(self.background_color, (len(vertices), 1))
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        if current_colors is not None:
+            colors = current_colors.copy()
+        else:
+            bg = self.background_color if self.background_color is not None else np.array([1.0, 1.0, 1.0])
+            colors = np.tile(bg, (len(vertices), 1))
+
         if len(self._gdf) == 0:
             return colors
 

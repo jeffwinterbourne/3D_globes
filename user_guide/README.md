@@ -26,6 +26,8 @@ This guide is structured as a step-by-step path to taking a raw dataset and turn
    The ultimate pipeline: topography, coastal steps, split hemispheres, independent coloring for internal and external surfaces, and exporting for multi-color printing.
 8. [**Where to Get Data**](8_where_to_get_data.md)
    A curated library of free, open-source repositories where you can download global grids of Earth topography (ETOPO), lunar and planetary elevations, seismic tomography, geoid heights, and crustal thickness.
+9. [**Model Colouring**](9_model_colouring.md)
+   Learn the complete details of coloring globes using constant values, textures, grids, shapefiles, point markers, and coordinate arrays.
 
 ---
 

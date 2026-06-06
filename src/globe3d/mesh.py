@@ -368,7 +368,7 @@ class GlobeModel:
             if current_colors is None:
                 current_colors = np.ones((len(vertices), 3), dtype=np.float64)
 
-            new_colors = colouring(vertices[selected_indices])
+            new_colors = colouring(vertices[selected_indices], current_colors=current_colors[selected_indices])
             current_colors[selected_indices] = new_colors
             setattr(self, f"{target}_colors", current_colors)
 
@@ -503,7 +503,7 @@ class GlobeModel:
                 selected_indices = selected_indices[selected_indices < len(mesh.vertices)]
 
             if len(selected_indices) > 0:
-                new_colors = colouring(mesh.vertices[selected_indices])
+                new_colors = colouring(mesh.vertices[selected_indices], current_colors=colors[selected_indices])
                 colors[selected_indices] = new_colors
 
         mesh.visual.vertex_colors = (colors * 255.0).astype(np.uint8)
