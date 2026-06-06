@@ -191,10 +191,12 @@ This module provides fetching, caching, and preprocessing capabilities for stand
 - **`datasets.gravity`** (Bouguer Anomaly)
 - **`datasets.magnetics`** (EMAG2v3)
 - **`datasets.shapefiles`** (Natural Earth land and coastline vector data)
+- **`datasets.lithosphere`** (LITHO1.0 lithospheric thickness model)
 
 #### Helper Methods & Functions
 
 - `list_datasets()`: Returns a dictionary of all available datasets grouped by category.
+- `lithosphere.thickness(parameter="total", as_meters=True)`: Loads LITHO1.0 lithospheric thickness parameter as a grid (values in meters by default). Supports `"total"` thickness, `"lid"` mantle lid thickness, and `"lab"` boundary depth.
 - `shapefiles.land()`: Returns the absolute path to the extracted `ne_110m_land.shp` shapefile, downloading and extracting it if not cached.
 - `shapefiles.coastline()`: Returns the absolute path to the extracted `ne_110m_coastline.shp` shapefile, downloading and extracting it if not cached.
 

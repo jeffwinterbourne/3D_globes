@@ -509,6 +509,76 @@ class CrustNamespace:
         return GeographicGrid(lats, lons, grid)
 
 
+class LithosphereNamespace:
+    """Namespace for lithosphere datasets. Can be called directly for backward compatibility."""
+
+    def __call__(self, parameter="total", as_meters=True, cache_dir=None, url=None):
+        return self.thickness(parameter=parameter, as_meters=as_meters, cache_dir=cache_dir, url=url)
+
+    def thickness(self, parameter="total", as_meters=True, cache_dir=None, url=None):
+        """Fetches and loads the LITHO1.0 global lithospheric thickness model.
+
+        Args:
+            parameter (str, optional): The parameter to return:
+                - "total" (default): total solid lithospheric thickness (crust + lid)
+                - "lid": thickness of the lithospheric mantle lid only
+                - "lab": depth to the Lithosphere-Asthenosphere Boundary (LAB) below sea level
+            as_meters (bool, optional): Converts values from kilometers to meters. Defaults to True.
+            cache_dir (str, optional): Custom cache directory. Defaults to None.
+            url (str, optional): Custom download URL. Defaults to None.
+
+        Returns:
+            GeographicGrid: Grid representing the requested lithospheric property.
+        """
+        if parameter not in ["total", "lid", "lab"]:
+            raise ValueError("parameter must be one of: 'total', 'lid', 'lab'")
+
+        cache_dir = _get_cache_dir(cache_dir)
+        filename = "LITHO1.0.nc"
+        download_url = url or "https://ds.iris.edu/files/products/emc/emc-files/LITHO1.0.nc"
+        filepath = _download_file(download_url, filename, cache_dir)
+
+        with Dataset(filepath, "r") as ds:
+            lats = np.array(ds.variables["latitude"][:])
+            lons = np.array(ds.variables["longitude"][:])
+
+            if parameter == "lab":
+                grid = np.array(ds.variables["lid_bottom_depth"][:])
+            elif parameter == "lid":
+                lid_bottom = np.array(ds.variables["lid_bottom_depth"][:])
+                lid_top = np.array(ds.variables["lid_top_depth"][:])
+                grid = lid_bottom - lid_top
+            else:  # total
+                lid_bottom = np.array(ds.variables["lid_bottom_depth"][:])
+                solid_surface = np.array(ds.variables["lid_top_depth"][:]).copy()
+                
+                for top_var in [
+                    "lower_crust_top_depth",
+                    "middle_crust_top_depth",
+                    "upper_crust_top_depth",
+                    "lower_sediments_top_depth",
+                    "middle_sediments_top_depth",
+                    "upper_sediments_top_depth",
+                    "ice_top_depth",
+                    "water_bottom_depth"
+                ]:
+                    if top_var in ds.variables:
+                        val = np.array(ds.variables[top_var][:])
+                        mask = ~np.isnan(val)
+                        solid_surface[mask] = val[mask]
+                
+                grid = lid_bottom - solid_surface
+
+            if len(lats) > 1 and lats[1] < lats[0]:
+                lats = lats[::-1]
+                grid = np.flipud(grid)
+
+            if as_meters:
+                grid = grid * 1000.0
+
+            return GeographicGrid(lats, lons, grid)
+
+
 class DynamicTopographyNamespace:
     """Namespace for dynamic topography datasets. Can be called directly for backward compatibility."""
 
@@ -728,6 +798,7 @@ dynamic_topography = DynamicTopographyNamespace()
 gravity = GravityNamespace()
 magnetics = MagneticsNamespace()
 shapefiles = ShapefilesNamespace()
+lithosphere = LithosphereNamespace()
 
 
 def list_datasets():
@@ -768,6 +839,9 @@ def list_datasets():
         "shapefiles": {
             "land": "Natural Earth land polygons shapefile (1:110m)",
             "coastline": "Natural Earth coastline lines shapefile (1:110m)",
+        },
+        "lithosphere": {
+            "thickness": "LITHO1.0 global lithospheric thickness model",
         }
     }
     return datasets_info

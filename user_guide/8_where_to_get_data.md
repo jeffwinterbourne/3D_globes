@@ -23,6 +23,7 @@ All datasets are organized in a clean, hierarchical structure:
 - `datasets.gravity` (Bouguer Anomaly)
 - `datasets.magnetics` (EMAG2v3)
 - `datasets.shapefiles` (Natural Earth land and coastline vector data)
+- `datasets.lithosphere` (LITHO1.0)
 
 ---
 
@@ -159,6 +160,27 @@ For applying sharp step displacements or coloring boundaries (like coastlines an
     
     # Automatically download, cache, extract and retrieve the path to the 1:110m coastlines shapefile
     coastline_shp = datasets.shapefiles.coastline()
+    ```
+
+---
+
+## 🪨 8. Lithospheric Thickness
+
+Lithospheric thickness is the total depth of the Earth's solid lithosphere (crust + lithospheric mantle lid) down to the Lithosphere-Asthenosphere Boundary (LAB):
+
+*   **LITHO1.0**
+    *   **What it is**: An updated 1-degree global model of the Earth's lithosphere, containing detailed profiles of the crust and uppermost mantle.
+    *   **Where to download**: [LITHO1.0 project page at UCSD](http://igppweb.ucsd.edu/~gabi/litho1.0.html) or [IRIS EMC](https://ds.iris.edu/ds/products/emc-litho10/).
+*   **Quick access via `datasets`**:
+    ```python
+    # Load total lithospheric thickness (crust + lid) in meters
+    litho_thickness = datasets.lithosphere.thickness(parameter="total", as_meters=True)
+    
+    # Load thickness of the lithospheric mantle lid only
+    lid_thickness = datasets.lithosphere.thickness(parameter="lid")
+    
+    # Load depth to the Lithosphere-Asthenosphere Boundary (LAB) below sea level
+    lab_depth = datasets.lithosphere.thickness(parameter="lab")
     ```
 
 ---

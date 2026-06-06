@@ -386,3 +386,73 @@ def test_callable_namespaces(temp_cache_dir, monkeypatch):
     # Test that datasets.gravity.bouguer is also callable
     grid2 = datasets.gravity.bouguer(cache_dir=temp_cache_dir)
     assert isinstance(grid2, GeographicGrid)
+
+
+def create_mock_litho_netcdf(filepath):
+    """Helper to create a small mock LITHO1.0 NetCDF file."""
+    with netCDF4.Dataset(filepath, "w", format="NETCDF4") as ds:
+        ds.createDimension("latitude", 4)
+        ds.createDimension("longitude", 5)
+
+        lats = ds.createVariable("latitude", "f4", ("latitude",))
+        lons = ds.createVariable("longitude", "f4", ("longitude",))
+        
+        lats[:] = [-90.0, -30.0, 30.0, 90.0]
+        lons[:] = [-180.0, -90.0, 0.0, 90.0, 180.0]
+        
+        lid_bottom = ds.createVariable("lid_bottom_depth", "f4", ("latitude", "longitude"))
+        lid_top = ds.createVariable("lid_top_depth", "f4", ("latitude", "longitude"))
+        water_bottom = ds.createVariable("water_bottom_depth", "f4", ("latitude", "longitude"))
+        ice_top = ds.createVariable("ice_top_depth", "f4", ("latitude", "longitude"))
+        
+        lid_bottom[:] = np.ones((4, 5)) * 100.0
+        lid_top[:] = np.ones((4, 5)) * 30.0
+        
+        wb_data = np.full((4, 5), np.nan, dtype=np.float32)
+        wb_data[0, 0] = 5.0
+        water_bottom[:] = wb_data
+        
+        it_data = np.full((4, 5), np.nan, dtype=np.float32)
+        it_data[1, 1] = -2.0
+        ice_top[:] = it_data
+
+
+def test_lithosphere_thickness(temp_cache_dir, monkeypatch):
+    """Test lithosphere thickness calculation under different parameters and units."""
+    filename = "LITHO1.0.nc"
+    mock_filepath = os.path.join(temp_cache_dir, filename)
+    create_mock_litho_netcdf(mock_filepath)
+
+    monkeypatch.setattr(datasets, "_download_file", lambda url, fname, cdir: mock_filepath)
+
+    # 1. Test parameter="lab", as_meters=False
+    grid_lab = datasets.lithosphere.thickness(parameter="lab", as_meters=False, cache_dir=temp_cache_dir)
+    assert isinstance(grid_lab, GeographicGrid)
+    assert grid_lab.grid.shape == (4, 5)
+    assert np.allclose(grid_lab.grid, 100.0)
+
+    # 2. Test parameter="lid", as_meters=False
+    grid_lid = datasets.lithosphere.thickness(parameter="lid", as_meters=False, cache_dir=temp_cache_dir)
+    assert np.allclose(grid_lid.grid, 70.0)
+
+    # 3. Test parameter="total", as_meters=False (default parameter is total)
+    grid_total = datasets.lithosphere(parameter="total", as_meters=False, cache_dir=temp_cache_dir)
+    assert grid_total.grid[0, 0] == 95.0
+    assert grid_total.grid[1, 1] == 102.0
+    assert grid_total.grid[2, 2] == 70.0
+
+    # 4. Test as_meters=True (should scale by 1000)
+    grid_meters = datasets.lithosphere(as_meters=True, cache_dir=temp_cache_dir)
+    assert grid_meters.grid[0, 0] == 95000.0
+    assert grid_meters.grid[1, 1] == 102000.0
+    assert grid_meters.grid[2, 2] == 70000.0
+
+    # 5. Check list_datasets contains lithosphere
+    info = datasets.list_datasets()
+    assert "lithosphere" in info
+    assert info["lithosphere"]["thickness"] == "LITHO1.0 global lithospheric thickness model"
+
+    # 6. Test invalid parameter raises ValueError
+    with pytest.raises(ValueError, match="parameter must be one of"):
+        datasets.lithosphere.thickness(parameter="invalid_param")
+
