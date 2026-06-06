@@ -8,6 +8,7 @@ spherical meshes, handling displacement, vertex coloring, and hollowing for
 from .grid import GeographicGrid
 from .displacement import (
     Displacer,
+    ConstantDisplacer,
     GridDisplacer,
     PointDisplacer,
     LineDisplacer,
@@ -33,6 +34,7 @@ from . import datasets
 __all__ = [
     "GeographicGrid",
     "Displacer",
+    "ConstantDisplacer",
     "GridDisplacer",
     "PointDisplacer",
     "LineDisplacer",

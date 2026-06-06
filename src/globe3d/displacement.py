@@ -166,6 +166,32 @@ class Displacer:
         model.displace(self, scale=scale)
 
 
+class ConstantDisplacer(Displacer):
+    """Displaces vertices radially by a constant amount."""
+
+    def __init__(self, displacement: float):
+        """Initializes a ConstantDisplacer.
+
+        Args:
+            displacement (float): Radial displacement in mm.
+        """
+        self.displacement = float(displacement)
+
+    def __call__(self, vertices: np.ndarray, scale: float = 1.0) -> np.ndarray:
+        r, lat, lon = cartesian_to_spherical(vertices)
+        eff_disp = self.displacement * scale
+        new_r = r + eff_disp
+
+        if np.any(new_r <= 0):
+            raise ValueError(
+                "Vertex displacement translates point(s) deeper than the origin (new radius <= 0)."
+            )
+
+        r_safe = np.where(r == 0.0, 1.0, r)
+        new_vertices = (vertices / r_safe[:, None]) * new_r[:, None]
+        return new_vertices
+
+
 class GridDisplacer(Displacer):
     """Displaces vertices radially based on values interpolated from a geographic grid."""
 

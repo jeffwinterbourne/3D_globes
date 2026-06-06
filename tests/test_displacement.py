@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 from globe3d.grid import GeographicGrid
 from globe3d.displacement import (
     GridDisplacer,
+    ConstantDisplacer,
     PointDisplacer,
     LineDisplacer,
     PolygonDisplacer,
@@ -669,4 +670,19 @@ def test_colourer_layering_and_background_none():
     new_colors_poly_green = pc_poly_green(vertices, current_colors=existing_colors)
     assert np.allclose(new_colors_poly_green[0], c_green)
     assert np.allclose(new_colors_poly_green[1], c_red)
+
+
+def test_constant_displacer():
+    displacer = ConstantDisplacer(1.5)
+    vertices = np.array([
+        [10.0, 0.0, 0.0],
+        [0.0, 10.0, 0.0],
+    ])
+    displaced = displacer(vertices)
+    radii = np.linalg.norm(displaced, axis=1)
+    assert np.allclose(radii, 11.5)
+
+    # test ValueError on negative displacement deeper than origin
+    with pytest.raises(ValueError, match="Vertex displacement translates point"):
+        displacer(vertices, scale=-10.0)
 

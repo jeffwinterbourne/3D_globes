@@ -167,6 +167,35 @@ class TestMeshProxy:
         radii = np.linalg.norm(model.outer_vertices, axis=1)
         assert np.allclose(radii, 23.0)
 
+    def test_outer_proxy_displace_constant(self):
+        """model.outer.displace_constant() displaces outer vertices by a constant amount and records recipe."""
+        model = GlobeModel(n_points=100, radius=20.0)
+        model.outer.displace_constant(1.5, scale=2.0)
+
+        assert len(model.recipe) == 1
+        assert model.recipe[0]["type"] == "displacement"
+        radii = np.linalg.norm(model.outer_vertices, axis=1)
+        assert np.allclose(radii, 23.0)  # 20 + 1.5 * 2.0
+
+    def test_inner_proxy_displace_constant(self):
+        """model.inner.displace_constant() displaces inner vertices by a constant amount and records recipe."""
+        model = GlobeModel(n_points=100, radius=20.0, hollow=True, inner_ratio=0.5, inner_n_points=50)
+        model.inner.displace_constant(1.0, scale=1.5)
+
+        assert len(model._inner_recipe) == 1
+        assert model._inner_recipe[0]["type"] == "displacement"
+        inner_radii = np.linalg.norm(model.inner_vertices, axis=1)
+        assert np.allclose(inner_radii, 11.5)  # 10 + 1.0 * 1.5
+
+    def test_displace_constant_convenience_alias(self):
+        """model.displace_constant() is an alias for model.outer.displace_constant()."""
+        model = GlobeModel(n_points=100, radius=20.0)
+        model.displace_constant(1.5, scale=2.0)
+
+        assert len(model.recipe) == 1
+        radii = np.linalg.norm(model.outer_vertices, axis=1)
+        assert np.allclose(radii, 23.0)
+
 
 # ---------------------------------------------------------------------------
 # configure_magnets tests

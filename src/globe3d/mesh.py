@@ -74,6 +74,20 @@ class _MeshProxy:
             "scale": scale,
         })
 
+    def displace_constant(self, amount: float, scale: float = 1.0):
+        """Displaces this mesh's vertices by a constant radial amount.
+
+        Args:
+            amount (float): The constant displacement in mm.
+            scale (float, optional): Scaling multiplier. Defaults to 1.0.
+
+        Raises:
+            ValueError: If the geometry is not initialized.
+        """
+        from globe3d.displacement import ConstantDisplacer
+        displacer = ConstantDisplacer(amount)
+        self.displace(displacer, scale=scale)
+
     def colour(self, colouring: Colourer, selection=None, selection_kwargs=None):
         """Assigns colors to a subset of this mesh's vertices and records the step.
 
@@ -322,6 +336,20 @@ class GlobeModel:
             ValueError: If outer geometry is not initialized.
         """
         self.outer.displace(displacer, scale=scale)
+
+    def displace_constant(self, amount: float, scale: float = 1.0):
+        """Displaces the **outer** vertices by a constant radial amount.
+
+        Shortcut for ``model.outer.displace_constant(...)``.
+
+        Args:
+            amount (float): The constant displacement in mm.
+            scale (float, optional): Scaling multiplier. Defaults to 1.0.
+
+        Raises:
+            ValueError: If outer geometry is not initialized.
+        """
+        self.outer.displace_constant(amount, scale=scale)
 
     def colour(self, colouring: Colourer, target: str = "outer",
                selection=None, selection_kwargs=None):
