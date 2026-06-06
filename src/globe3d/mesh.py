@@ -427,6 +427,116 @@ class GlobeModel:
         if self.outer_colors is not None:
             self.inner_colors = np.ones((len(self.inner_vertices), 3), dtype=np.float64)
 
+    def fix_intersection(self, min_thickness: float = 1.2, mode: str = "inner"):
+        """Resolves intersections and thickness violations between the outer and inner shells.
+
+        For any region where the shell thickness (outer radius minus inner radius in the same direction)
+        is less than ``min_thickness``, the vertices are displaced radially to enforce the minimum thickness.
+
+        Args:
+            min_thickness (float, optional): The minimum allowable shell thickness in mm.
+                Defaults to 1.2.
+            mode (str, optional): The strategy to resolve violations:
+                - ``'inner'`` (default): displace inner vertices inward.
+                - ``'outer'``: displace outer vertices outward.
+                - ``'both'``: displace both inner and outer vertices symmetrically.
+
+        Raises:
+            ValueError: If the inner geometry is not defined, or if the mode is invalid.
+        """
+        if self.inner_vertices is None:
+            raise ValueError(
+                "Cannot fix intersection: model is not hollow (inner geometry is not initialized)."
+            )
+        mode_lower = mode.lower()
+        if mode_lower not in ("inner", "outer", "both"):
+            raise ValueError("mode must be one of: 'inner', 'outer', 'both'")
+
+        from scipy.spatial import KDTree
+
+        center = np.asarray(self._center)
+
+        # 1. Compute current radii and directions
+        dir_outer = self.outer_vertices - center
+        r_outer = np.linalg.norm(dir_outer, axis=1)
+        r_outer_safe = np.where(r_outer == 0, 1.0, r_outer)
+        dirs_outer = dir_outer / r_outer_safe[:, np.newaxis]
+
+        dir_inner = self.inner_vertices - center
+        r_inner = np.linalg.norm(dir_inner, axis=1)
+        r_inner_safe = np.where(r_inner == 0, 1.0, r_inner)
+        dirs_inner = dir_inner / r_inner_safe[:, np.newaxis]
+
+        # 2. Map vertices between shells based on radial direction (nearest angle)
+        tree_inner = KDTree(dirs_inner)
+        _, nearest_inner = tree_inner.query(dirs_outer)
+
+        tree_outer = KDTree(dirs_outer)
+        _, nearest_outer = tree_outer.query(dirs_inner)
+
+        if mode_lower == "inner":
+            max_r_inner = r_inner.copy()
+            # Enforce constraint from inner perspective: r_inner[k] <= r_outer[nearest_outer[k]] - min_thickness
+            max_r_inner = np.minimum(max_r_inner, r_outer[nearest_outer] - min_thickness)
+            # Enforce constraint from outer perspective: r_inner[nearest_inner[j]] <= r_outer[j] - min_thickness
+            np.minimum.at(max_r_inner, nearest_inner, r_outer - min_thickness)
+            
+            # Ensure radius does not go below or equal to 0 (origin)
+            max_r_inner = np.maximum(max_r_inner, 0.001)
+            
+            self.inner_vertices = center + dirs_inner * max_r_inner[:, np.newaxis]
+
+        elif mode_lower == "outer":
+            min_r_outer = r_outer.copy()
+            # Enforce constraint from outer perspective: r_outer[j] >= r_inner[nearest_inner[j]] + min_thickness
+            min_r_outer = np.maximum(min_r_outer, r_inner[nearest_inner] + min_thickness)
+            # Enforce constraint from inner perspective: r_outer[nearest_outer[k]] >= r_inner[k] + min_thickness
+            np.maximum.at(min_r_outer, nearest_outer, r_inner + min_thickness)
+            
+            self.outer_vertices = center + dirs_outer * min_r_outer[:, np.newaxis]
+
+        elif mode_lower == "both":
+            # Compute pairwise violations
+            val_o = r_inner[nearest_inner] + min_thickness - r_outer
+            viol_o = np.maximum(0.0, val_o)
+
+            val_i = r_inner + min_thickness - r_outer[nearest_outer]
+            viol_i = np.maximum(0.0, val_i)
+
+            # Initialize shifts to 0
+            shift_outer = np.zeros_like(r_outer)
+            shift_inner = np.zeros_like(r_inner)
+
+            # Apply shifts from outer perspective (distribute symmetrically: half outer outward, half inner inward)
+            shift_outer = np.maximum(shift_outer, viol_o / 2.0)
+            np.maximum.at(shift_inner, nearest_inner, viol_o / 2.0)
+
+            # Apply shifts from inner perspective
+            shift_inner = np.maximum(shift_inner, viol_i / 2.0)
+            np.maximum.at(shift_outer, nearest_outer, viol_i / 2.0)
+
+            # Update radii
+            new_r_outer = r_outer + shift_outer
+            new_r_inner = r_inner - shift_inner
+            
+            # Ensure inner radius does not go below/equal to 0
+            new_r_inner = np.maximum(new_r_inner, 0.001)
+
+            self.outer_vertices = center + dirs_outer * new_r_outer[:, np.newaxis]
+            self.inner_vertices = center + dirs_inner * new_r_inner[:, np.newaxis]
+
+        # Record in recipes
+        self.recipe.append({
+            "type": "fix_intersection",
+            "min_thickness": min_thickness,
+            "mode": mode,
+        })
+        self._inner_recipe.append({
+            "type": "fix_intersection",
+            "min_thickness": min_thickness,
+            "mode": mode,
+        })
+
     # ------------------------------------------------------------------
     # Magnet configuration
     # ------------------------------------------------------------------

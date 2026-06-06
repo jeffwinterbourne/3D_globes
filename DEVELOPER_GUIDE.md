@@ -142,6 +142,10 @@ Displacement and colouring steps are recorded in **separate recipes** for the ou
 - `model.displace(displacer, scale=1.0)` — alias for `model.outer.displace(...)`.
 - `model.colour(colourer, ...)` — colors the specified target (`'outer'` or `'inner'`).
 
+#### Shell Thickness & Intersection Resolution
+
+- `model.fix_intersection(min_thickness=1.2, mode="inner")` — resolves shell thickness violations and intersections by displacing vertices radially inward, outward, or both symmetrically.
+
 #### Magnet Configuration
 
 - `model.configure_magnets(**kwargs)` — creates a `MagnetSettings` instance from keyword arguments.
