@@ -738,6 +738,283 @@ class ConstantColourer(Colourer):
         return np.tile(self.color, (n, 1))
 
 
+class PointColourer(Colourer):
+    """Assigns RGB colors to vertices based on proximity to Point/MultiPoint geometries and customizable marker shapes."""
+
+    def __init__(
+        self,
+        points_data: object,
+        color: object = (1.0, 0.0, 0.0),
+        background_color: object = (1.0, 1.0, 1.0),
+        radius_degrees: float = 1.0,
+        marker_shape: object = "circle",
+        marker_thickness: float = 0.2,
+        num_threads: int = -1,
+    ):
+        """Initializes a PointColourer.
+
+        Args:
+            points_data (str, GeoDataFrame, or array-like): Path to a shapefile, a GeoDataFrame,
+                or an (N, 2) array of (lon, lat).
+            color (array-like, optional): RGB color for vertices inside the markers. Defaults to (1.0, 0.0, 0.0).
+            background_color (array-like, optional): RGB color for vertices outside the markers. Defaults to (1.0, 1.0, 1.0).
+            radius_degrees (float, optional): Size threshold of the markers in degrees. Defaults to 1.0.
+            marker_shape (str or callable, optional): Shape of the marker. Supported string values are
+                'circle', 'square', 'triangle', 'cross', 'star'. Or a callable with signature
+                (x_deg, y_deg, radius_degrees) -> boolean_array. Defaults to 'circle'.
+            marker_thickness (float, optional): Relative thickness of the cross marker shape. Defaults to 0.2.
+            num_threads (int, optional): Parallel threads. Defaults to -1.
+        """
+        import geopandas as gpd
+
+        if isinstance(points_data, str):
+            gdf = gpd.read_file(points_data)
+            invalid_types = set(gdf.geometry.geom_type.unique()) - {"Point", "MultiPoint"}
+            if invalid_types:
+                raise TypeError(
+                    f"Geometries must be Points or MultiPoints. Found types: {invalid_types}"
+                )
+            self._gdf = gdf.reset_index(drop=True)
+        elif isinstance(points_data, gpd.GeoDataFrame):
+            self._gdf = points_data.reset_index(drop=True)
+        else:
+            pts = np.asarray(points_data)
+            if pts.ndim != 2 or pts.shape[1] != 2:
+                raise ValueError("points_data array must have shape (N, 2) representing (lon, lat).")
+            self._gdf = gpd.GeoDataFrame(
+                geometry=gpd.points_from_xy(pts[:, 0], pts[:, 1]),
+                crs="EPSG:4326"
+            ).reset_index(drop=True)
+
+        if radius_degrees < 0:
+            raise ValueError("radius_degrees must be non-negative.")
+
+        self.points_data = points_data
+        self.color = np.asarray(color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.radius_degrees = float(radius_degrees)
+        self.marker_shape = marker_shape
+        self.marker_thickness = float(marker_thickness)
+        self.num_threads = num_threads
+
+        if self.color.shape != (3,):
+            raise ValueError("color must be a 3-element RGB array-like.")
+        if np.any(self.color < 0.0) or np.any(self.color > 1.0):
+            raise ValueError("color values must be in the range [0, 1].")
+        if self.background_color.shape != (3,):
+            raise ValueError("background_color must be a 3-element RGB array-like.")
+        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+            raise ValueError("background_color values must be in the range [0, 1].")
+
+    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+        colors = np.tile(self.background_color, (len(vertices), 1))
+        if self.radius_degrees <= 0 or len(self._gdf) == 0:
+            return colors
+
+        import geopandas as gpd
+        buffered_gdf = self._gdf.copy()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+            buffered_gdf.geometry = buffered_gdf.geometry.buffer(self.radius_degrees)
+
+        r, lats, lons = cartesian_to_spherical(vertices)
+        points_gdf = gpd.GeoDataFrame(
+            geometry=gpd.points_from_xy(lons, lats),
+            crs=self._gdf.crs
+        )
+
+        joined = _parallel_sjoin(points_gdf, buffered_gdf, num_threads=self.num_threads)
+        valid_joins = joined[joined['index_right'].notna()]
+        if len(valid_joins) == 0:
+            return colors
+
+        v_idx = valid_joins.index.values
+        p_idx = valid_joins['index_right'].astype(int).values
+
+        orig_lons = self._gdf.geometry.x.values
+        orig_lats = self._gdf.geometry.y.values
+        lat_P = orig_lats[p_idx]
+        lon_P = orig_lons[p_idx]
+
+        lat_V = lats[v_idx]
+        lon_V = lons[v_idx]
+
+        lat_V_rad = np.radians(lat_V)
+        lon_V_rad = np.radians(lon_V)
+        lat_P_rad = np.radians(lat_P)
+        lon_P_rad = np.radians(lon_P)
+
+        dlon_rad = lon_V_rad - lon_P_rad
+        dlon_rad = (dlon_rad + np.pi) % (2 * np.pi) - np.pi
+
+        x = np.cos(lat_V_rad) * np.sin(dlon_rad)
+        y = np.sin(lat_V_rad) * np.cos(lat_P_rad) - np.cos(lat_V_rad) * np.sin(lat_P_rad) * np.cos(dlon_rad)
+
+        x_deg = np.degrees(x)
+        y_deg = np.degrees(y)
+
+        if callable(self.marker_shape):
+            inside = self.marker_shape(x_deg, y_deg, self.radius_degrees)
+        else:
+            shape_str = str(self.marker_shape).lower()
+            if shape_str == "circle":
+                inside = (x_deg**2 + y_deg**2) <= self.radius_degrees**2
+            elif shape_str in ("square", "box"):
+                inside = (np.abs(x_deg) <= self.radius_degrees) & (np.abs(y_deg) <= self.radius_degrees)
+            elif shape_str == "triangle":
+                inside = (y_deg >= -self.radius_degrees / 2.0) & (y_deg <= self.radius_degrees - np.sqrt(3.0) * np.abs(x_deg))
+            elif shape_str == "cross":
+                w = self.marker_thickness * self.radius_degrees
+                inside_box = (np.abs(x_deg) <= self.radius_degrees) & (np.abs(y_deg) <= self.radius_degrees)
+                inside_bars = (np.abs(x_deg) <= w) | (np.abs(y_deg) <= w)
+                inside = inside_box & inside_bars
+            elif shape_str == "star":
+                theta = np.arctan2(y_deg, x_deg)
+                r_val = np.sqrt(x_deg**2 + y_deg**2)
+                r_limit = self.radius_degrees * (0.6 + 0.4 * np.cos(5 * theta - np.pi / 2.0))
+                inside = r_val <= r_limit
+            else:
+                raise ValueError(
+                    f"Unsupported marker_shape '{self.marker_shape}'. "
+                    f"Supported: 'circle', 'square', 'triangle', 'cross', 'star' or a callable."
+                )
+
+        inside_v_idx = v_idx[inside]
+        colors[inside_v_idx] = self.color
+        return colors
+
+
+class LineColourer(Colourer):
+    """Assigns RGB colors to vertices based on proximity to line or polygon geometries."""
+
+    def __init__(
+        self,
+        shapefile_path: object,
+        color: object = (1.0, 0.0, 0.0),
+        background_color: object = (1.0, 1.0, 1.0),
+        width_degrees: float = 0.5,
+        num_threads: int = -1,
+    ):
+        """Initializes a LineColourer.
+
+        Args:
+            shapefile_path (str or GeoDataFrame): Path to the shapefile or a GeoDataFrame.
+            color (array-like, optional): RGB color for vertices inside/near the lines. Defaults to (1.0, 0.0, 0.0).
+            background_color (array-like, optional): RGB color outside lines. Defaults to (1.0, 1.0, 1.0).
+            width_degrees (float, optional): Distance in degrees to buffer geometries. Defaults to 0.5.
+            num_threads (int, optional): Parallel threads. Defaults to -1.
+        """
+        import geopandas as gpd
+
+        if isinstance(shapefile_path, str):
+            self._gdf = gpd.read_file(shapefile_path)
+        elif isinstance(shapefile_path, gpd.GeoDataFrame):
+            self._gdf = shapefile_path
+        else:
+            raise TypeError("shapefile_path must be a string file path or a geopandas GeoDataFrame.")
+
+        if width_degrees < 0:
+            raise ValueError("width_degrees must be non-negative.")
+
+        self.shapefile_path = shapefile_path
+        self.color = np.asarray(color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.width_degrees = float(width_degrees)
+        self.num_threads = num_threads
+
+        if self.color.shape != (3,):
+            raise ValueError("color must be a 3-element RGB array-like.")
+        if np.any(self.color < 0.0) or np.any(self.color > 1.0):
+            raise ValueError("color values must be in the range [0, 1].")
+        if self.background_color.shape != (3,):
+            raise ValueError("background_color must be a 3-element RGB array-like.")
+        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+            raise ValueError("background_color values must be in the range [0, 1].")
+
+    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+        colors = np.tile(self.background_color, (len(vertices), 1))
+        if len(self._gdf) == 0:
+            return colors
+
+        gdf = self._gdf.copy()
+        if self.width_degrees > 0:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+                gdf.geometry = gdf.geometry.buffer(self.width_degrees)
+
+        inside_mask, r = _find_points_inside_gdf(vertices, gdf, num_threads=self.num_threads)
+        colors[inside_mask] = self.color
+        return colors
+
+
+class PolygonColourer(Colourer):
+    """Assigns RGB colors to vertices depending on whether they fall inside/outside closed polygons."""
+
+    def __init__(
+        self,
+        shapefile_path: object,
+        color: object = (1.0, 0.0, 0.0),
+        background_color: object = (1.0, 1.0, 1.0),
+        flood_inside: bool = True,
+        num_threads: int = -1,
+    ):
+        """Initializes a PolygonColourer.
+
+        Args:
+            shapefile_path (str or GeoDataFrame): Path to shapefile containing Polygon/MultiPolygon geometries, or GeoDataFrame.
+            color (array-like, optional): RGB color for the flooded region. Defaults to (1.0, 0.0, 0.0).
+            background_color (array-like, optional): RGB color for the non-flooded region. Defaults to (1.0, 1.0, 1.0).
+            flood_inside (bool, optional): If True, flood points inside polygons. If False,
+                flood points outside. Defaults to True.
+            num_threads (int, optional): Parallel threads. Defaults to -1.
+        """
+        import geopandas as gpd
+
+        if isinstance(shapefile_path, str):
+            gdf = gpd.read_file(shapefile_path)
+        elif isinstance(shapefile_path, gpd.GeoDataFrame):
+            gdf = shapefile_path
+        else:
+            raise TypeError("shapefile_path must be a string file path or a geopandas GeoDataFrame.")
+
+        invalid_types = set(gdf.geometry.geom_type.unique()) - {"Polygon", "MultiPolygon"}
+        if invalid_types:
+            raise TypeError(
+                f"Geometries must be Polygons or MultiPolygons. Found types: {invalid_types}"
+            )
+
+        self.shapefile_path = shapefile_path
+        self._gdf = gdf
+        self.color = np.asarray(color, dtype=np.float64)
+        self.background_color = np.asarray(background_color, dtype=np.float64)
+        self.flood_inside = bool(flood_inside)
+        self.num_threads = num_threads
+
+        if self.color.shape != (3,):
+            raise ValueError("color must be a 3-element RGB array-like.")
+        if np.any(self.color < 0.0) or np.any(self.color > 1.0):
+            raise ValueError("color values must be in the range [0, 1].")
+        if self.background_color.shape != (3,):
+            raise ValueError("background_color must be a 3-element RGB array-like.")
+        if np.any(self.background_color < 0.0) or np.any(self.background_color > 1.0):
+            raise ValueError("background_color values must be in the range [0, 1].")
+
+    def __call__(self, vertices: np.ndarray) -> np.ndarray:
+        colors = np.tile(self.background_color, (len(vertices), 1))
+        if len(self._gdf) == 0:
+            return colors
+
+        inside_mask, r = _find_points_inside_gdf(vertices, self._gdf, num_threads=self.num_threads)
+
+        if self.flood_inside:
+            apply_mask = inside_mask
+        else:
+            apply_mask = ~inside_mask
+
+        colors[apply_mask] = self.color
+        return colors
+
+
 def select_inward_facing(vertices, faces, **kwargs):
     """Selects vertices that form inward-facing faces.
 

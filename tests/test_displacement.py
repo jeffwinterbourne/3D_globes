@@ -12,6 +12,9 @@ from globe3d.displacement import (
     GridColourer,
     ImageColourer,
     ConstantColourer,
+    PointColourer,
+    LineColourer,
+    PolygonColourer,
     select_inward_facing,
     select_outward_facing,
     cartesian_to_spherical,
@@ -399,3 +402,199 @@ def test_cartesian_to_spherical():
     assert np.allclose(r_arr, [1.0, 1.0, 1.0, 0.0])
     assert np.allclose(lat_arr, [0.0, 90.0, -90.0, 0.0])
     assert pytest.approx(lon_arr[0]) == 0.0
+
+
+def test_point_colourer_shapes(tmp_path):
+    """Test PointColourer with different marker shapes and custom callable."""
+    # Vertex at (lon=10, lat=10)
+    lat_rad, lon_rad = np.radians(10.0), np.radians(10.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_rad) * np.cos(lon_rad),
+        10.0 * np.cos(lat_rad) * np.sin(lon_rad),
+        10.0 * np.sin(lat_rad)
+    ])
+    
+    # Vertex at (lon=10.5, lat=10.0) -> offset in lon by 0.5 degrees
+    lon_rad2 = np.radians(10.5)
+    v2 = np.array([
+        10.0 * np.cos(lat_rad) * np.cos(lon_rad2),
+        10.0 * np.cos(lat_rad) * np.sin(lon_rad2),
+        10.0 * np.sin(lat_rad)
+    ])
+    
+    # Vertex at (lon=10.0, lat=12.0) -> offset in lat by 2.0 degrees (outside 1.0 deg radius)
+    lat_rad3 = np.radians(12.0)
+    v3 = np.array([
+        10.0 * np.cos(lat_rad3) * np.cos(lon_rad),
+        10.0 * np.cos(lat_rad3) * np.sin(lon_rad),
+        10.0 * np.sin(lat_rad3)
+    ])
+
+    vertices = np.vstack([v1, v2, v3])
+    points = np.array([[10.0, 10.0]])
+    
+    c_red = [1.0, 0.0, 0.0]
+    c_white = [1.0, 1.0, 1.0]
+
+    # Test circular shape
+    colourer_circle = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape='circle')
+    colors = colourer_circle(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[1], c_red)
+    assert np.allclose(colors[2], c_white)
+
+    # Test square shape
+    colourer_square = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape='square')
+    colors = colourer_square(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[1], c_red)
+    assert np.allclose(colors[2], c_white)
+
+    # Test triangle shape
+    colourer_triangle = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape='triangle')
+    colors = colourer_triangle(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[1], c_red)
+    assert np.allclose(colors[2], c_white)
+
+    # Test cross shape
+    colourer_cross = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape='cross', marker_thickness=0.2)
+    colors = colourer_cross(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[1], c_red)
+    assert np.allclose(colors[2], c_white)
+
+    # Test star shape
+    colourer_star = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape='star')
+    colors = colourer_star(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[2], c_white)
+
+    # Test custom callable shape
+    def custom_marker(x_deg, y_deg, radius_degrees):
+        return x_deg < 0
+
+    colourer_custom = PointColourer(points, color=c_red, background_color=c_white, radius_degrees=1.0, marker_shape=custom_marker)
+    colors = colourer_custom(vertices)
+    assert np.allclose(colors[0], c_white)
+    assert np.allclose(colors[1], c_white)
+    assert np.allclose(colors[2], c_white)
+
+
+def test_line_colourer(tmp_path):
+    """Test LineColourer works with shapefile and GeoDataFrame input."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    gdf = gpd.GeoDataFrame(geometry=[LineString([(0, 0), (10, 0)])], crs="EPSG:4326")
+    shp_path = tmp_path / "test_line_colour.shp"
+    gdf.to_file(shp_path)
+
+    # Vertex 1: (lon=5, lat=0.1) -> near line
+    lat_1, lon_1 = np.radians(0.1), np.radians(5.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+
+    # Vertex 2: (lon=5, lat=2.0) -> far from line
+    lat_2, lon_2 = np.radians(2.0), np.radians(5.0)
+    v2 = np.array([
+        10.0 * np.cos(lat_2) * np.cos(lon_2),
+        10.0 * np.cos(lat_2) * np.sin(lon_2),
+        10.0 * np.sin(lat_2)
+    ])
+
+    vertices = np.vstack([v1, v2])
+    c_red = [1.0, 0.0, 0.0]
+    c_white = [1.0, 1.0, 1.0]
+
+    # Test path input
+    lc_path = LineColourer(str(shp_path), color=c_red, background_color=c_white, width_degrees=0.5)
+    colors = lc_path(vertices)
+    assert np.allclose(colors[0], c_red)
+    assert np.allclose(colors[1], c_white)
+
+    # Test GeoDataFrame input
+    lc_gdf = LineColourer(gdf, color=c_red, background_color=c_white, width_degrees=0.5)
+    colors_gdf = lc_gdf(vertices)
+    assert np.allclose(colors_gdf[0], c_red)
+    assert np.allclose(colors_gdf[1], c_white)
+
+
+def test_polygon_colourer(tmp_path):
+    """Test PolygonColourer works inside and outside with shapefile and GeoDataFrame input."""
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    gdf = gpd.GeoDataFrame(geometry=[poly], crs="EPSG:4326")
+    shp_path = tmp_path / "test_poly_colour.shp"
+    gdf.to_file(shp_path)
+
+    # Vertex 1: (lon=5, lat=5) -> inside
+    lat_1, lon_1 = np.radians(5.0), np.radians(5.0)
+    v1 = np.array([
+        10.0 * np.cos(lat_1) * np.cos(lon_1),
+        10.0 * np.cos(lat_1) * np.sin(lon_1),
+        10.0 * np.sin(lat_1)
+    ])
+
+    # Vertex 2: (lon=20, lat=20) -> outside
+    lat_2, lon_2 = np.radians(20.0), np.radians(20.0)
+    v2 = np.array([
+        10.0 * np.cos(lat_2) * np.cos(lon_2),
+        10.0 * np.cos(lat_2) * np.sin(lon_2),
+        10.0 * np.sin(lat_2)
+    ])
+
+    vertices = np.vstack([v1, v2])
+    c_red = [1.0, 0.0, 0.0]
+    c_white = [1.0, 1.0, 1.0]
+
+    # Test flood inside
+    pc_in = PolygonColourer(gdf, color=c_red, background_color=c_white, flood_inside=True)
+    colors_in = pc_in(vertices)
+    assert np.allclose(colors_in[0], c_red)
+    assert np.allclose(colors_in[1], c_white)
+
+    # Test flood outside
+    pc_out = PolygonColourer(gdf, color=c_red, background_color=c_white, flood_inside=False)
+    colors_out = pc_out(vertices)
+    assert np.allclose(colors_out[0], c_white)
+    assert np.allclose(colors_out[1], c_red)
+
+
+def test_parallel_colouring(tmp_path):
+    """Test that coloring classes give identical results with single and multi-threading."""
+    import geopandas as gpd
+    from shapely.geometry import LineString, Polygon
+
+    vertices = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+    ])
+
+    c_red = [1.0, 0.0, 0.0]
+    c_white = [1.0, 1.0, 1.0]
+
+    # 1. PointColourer
+    pts = np.array([[0.0, 0.0], [90.0, 0.0]])
+    pc_seq = PointColourer(pts, color=c_red, background_color=c_white, radius_degrees=1.0, num_threads=1)(vertices)
+    pc_par = PointColourer(pts, color=c_red, background_color=c_white, radius_degrees=1.0, num_threads=2)(vertices)
+    assert np.allclose(pc_seq, pc_par)
+
+    # 2. LineColourer
+    gdf_line = gpd.GeoDataFrame(geometry=[LineString([(0, 0), (10, 0)])], crs="EPSG:4326")
+    lc_seq = LineColourer(gdf_line, color=c_red, background_color=c_white, width_degrees=1.0, num_threads=1)(vertices)
+    lc_par = LineColourer(gdf_line, color=c_red, background_color=c_white, width_degrees=1.0, num_threads=2)(vertices)
+    assert np.allclose(lc_seq, lc_par)
+
+    # 3. PolygonColourer
+    poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    gdf_poly = gpd.GeoDataFrame(geometry=[poly], crs="EPSG:4326")
+    pc_poly_seq = PolygonColourer(gdf_poly, color=c_red, background_color=c_white, flood_inside=True, num_threads=1)(vertices)
+    pc_poly_par = PolygonColourer(gdf_poly, color=c_red, background_color=c_white, flood_inside=True, num_threads=2)(vertices)
+    assert np.allclose(pc_poly_seq, pc_poly_par)
