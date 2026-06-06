@@ -25,6 +25,7 @@ from .displacement import (
 from .magnets import MagnetSettings, generate_magnet_test_piece
 from .mesh import GlobeModel
 from .plot import plot_vertex_distribution
+from . import datasets
 
 __all__ = [
     "GeographicGrid",
@@ -46,4 +47,5 @@ __all__ = [
     "generate_magnet_test_piece",
     "GlobeModel",
     "plot_vertex_distribution",
+    "datasets",
 ]

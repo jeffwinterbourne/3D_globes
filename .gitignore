@@ -162,3 +162,6 @@ outputs/
 
 # context documents
 context/
+
+# download cache
+.download_cache/
