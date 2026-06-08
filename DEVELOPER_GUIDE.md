@@ -140,7 +140,7 @@ Displacement and colouring steps are recorded in **separate recipes** for the ou
 #### `GlobeModel` Convenience Aliases
 
 - `model.displace(displacer, scale=1.0)` — alias for `model.outer.displace(...)`.
-- `model.colour(colourer, ...)` — colors the specified target (`'outer'` or `'inner'`).
+- `model.colour(colourer, ...)` — colors the specified target (`'all'`, `'outer'`, or `'inner'`). Defaults to `'all'`.
 
 #### Shell Thickness & Intersection Resolution
 

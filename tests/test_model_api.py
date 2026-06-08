@@ -196,6 +196,33 @@ class TestMeshProxy:
         radii = np.linalg.norm(model.outer_vertices, axis=1)
         assert np.allclose(radii, 23.0)
 
+    def test_colour_convenience_alias_default_all(self):
+        """model.colour() with no target parameter defaults to target='all'."""
+        # Test 1: hollow model
+        model = GlobeModel(n_points=100, radius=20.0, hollow=True, inner_ratio=0.5, inner_n_points=50)
+        colourer = ConstantColourer([1.0, 0.0, 0.0])
+        model.colour(colourer)
+
+        # Both outer and inner colors must be red [1, 0, 0]
+        assert model.outer_colors is not None
+        assert np.allclose(model.outer_colors, [1.0, 0.0, 0.0])
+        assert model.inner_colors is not None
+        assert np.allclose(model.inner_colors, [1.0, 0.0, 0.0])
+
+        # Recipes for both must record the coloring
+        assert len(model.recipe) == 1
+        assert model.recipe[0]["type"] == "colouring"
+        assert model.recipe[0]["target"] == "outer"
+        assert len(model._inner_recipe) == 1
+        assert model._inner_recipe[0]["type"] == "colouring"
+        assert model._inner_recipe[0]["target"] == "inner"
+
+        # Test 2: non-hollow model (should only color outer, not raise error)
+        model_solid = GlobeModel(n_points=100, radius=20.0)
+        model_solid.colour(colourer)
+        assert model_solid.outer_colors is not None
+        assert np.allclose(model_solid.outer_colors, [1.0, 0.0, 0.0])
+
 
 # ---------------------------------------------------------------------------
 # configure_magnets tests

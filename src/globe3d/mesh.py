@@ -351,14 +351,14 @@ class GlobeModel:
         """
         self.outer.displace_constant(amount, scale=scale)
 
-    def colour(self, colouring: Colourer, target: str = "outer",
+    def colour(self, colouring: Colourer, target: str = "all",
                selection=None, selection_kwargs=None):
         """Assigns colors to a subset of the model's vertices and records the step in the recipe.
 
         Args:
             colouring (Colourer): The coloring object to apply.
-            target (str, optional): Target to color (``'outer'`` or ``'inner'``).
-                Defaults to ``'outer'``.
+            target (str, optional): Target to color (``'all'``, ``'outer'`` or ``'inner'``).
+                Defaults to ``'all'``.
             selection (str, callable, or array-like, optional): Vertex subset selection.
                 Can be ``'inward_facing'``, ``'outward_facing'``, a custom callable,
                 or a list of indices.
@@ -367,14 +367,21 @@ class GlobeModel:
         Raises:
             ValueError: If target is invalid or the target geometry is not initialized.
         """
-        if target not in ("outer", "inner"):
-            raise ValueError("target must be either 'outer' or 'inner'.")
+        target_lower = target.lower()
+        if target_lower not in ("all", "outer", "inner"):
+            raise ValueError("target must be one of: 'all', 'outer', 'inner'.")
 
-        vertices = getattr(self, f"{target}_vertices")
-        faces = getattr(self, f"{target}_faces")
+        if target_lower == "all":
+            self.colour(colouring, target="outer", selection=selection, selection_kwargs=selection_kwargs)
+            if self.inner_vertices is not None:
+                self.colour(colouring, target="inner", selection=selection, selection_kwargs=selection_kwargs)
+            return
+
+        vertices = getattr(self, f"{target_lower}_vertices")
+        faces = getattr(self, f"{target_lower}_faces")
 
         if vertices is None:
-            raise ValueError(f"Cannot color: {target} geometry is not initialized.")
+            raise ValueError(f"Cannot color: {target_lower} geometry is not initialized.")
 
         if selection is None:
             selected_indices = np.arange(len(vertices))
@@ -392,19 +399,19 @@ class GlobeModel:
             selected_indices = np.asarray(selection, dtype=np.int32)
 
         if len(selected_indices) > 0:
-            current_colors = getattr(self, f"{target}_colors")
+            current_colors = getattr(self, f"{target_lower}_colors")
             if current_colors is None:
                 current_colors = np.ones((len(vertices), 3), dtype=np.float64)
 
             new_colors = colouring(vertices[selected_indices], current_colors=current_colors[selected_indices])
             current_colors[selected_indices] = new_colors
-            setattr(self, f"{target}_colors", current_colors)
+            setattr(self, f"{target_lower}_colors", current_colors)
 
-        recipe = self.recipe if target == "outer" else self._inner_recipe
+        recipe = self.recipe if target_lower == "outer" else self._inner_recipe
         recipe.append({
             "type": "colouring",
             "colouring": colouring,
-            "target": target,
+            "target": target_lower,
             "selection": selection,
             "selection_kwargs": selection_kwargs
         })
