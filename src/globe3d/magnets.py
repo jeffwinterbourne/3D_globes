@@ -28,6 +28,8 @@ class MagnetSettings:
         min_magnets: int = 2,
         min_angular_spacing: float = 60.0,
         step_degrees: float = 2,
+        placement_strategy: str = "cluster_peaks",
+        angle_tolerance: float = 0.0,
     ):
         """Initializes a MagnetSettings instance.
 
@@ -44,6 +46,12 @@ class MagnetSettings:
             min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
             min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
             step_degrees (float, optional): Longitude step size for searching positions. Defaults to 2.
+            placement_strategy (str, optional): Strategy for choosing magnet angles when add_bosses=False.
+                Options are 'cluster_peaks' (default, places in thickest part of continental regions),
+                'uniform' (maximizes spacing uniformity), or 'margin_weighted' (balances spacing
+                and clearance margin). Defaults to 'cluster_peaks'.
+            angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
+                angles when explicit positions are specified. Defaults to 0.0.
         """
         self.diameter = float(diameter)
         self.height = float(height)
@@ -57,6 +65,8 @@ class MagnetSettings:
         self.min_magnets = int(min_magnets)
         self.min_angular_spacing = float(min_angular_spacing)
         self.step_degrees = float(step_degrees)
+        self.placement_strategy = str(placement_strategy)
+        self.angle_tolerance = float(angle_tolerance)
 
 
 def _generate_cylinder_check_points(radius, height, num_angles=16, num_heights=5, num_radii=4):
@@ -168,7 +178,16 @@ def optimize_magnet_positions(
 
 
 def _find_optimal_spacing(valid_angles, k, min_spacing):
-    """Finds the subset of k angles from valid_angles that maximizes spacing uniformity."""
+    """Finds the subset of k angles from valid_angles that maximizes spacing uniformity.
+
+    Args:
+        valid_angles (list of float): List of candidate longitude angles in degrees.
+        k (int): Number of angles to select.
+        min_spacing (float): Minimum angular spacing required between adjacent selected angles.
+
+    Returns:
+        list of float or None: The selected subset of k angles, or None if no valid combination exists.
+    """
     if len(valid_angles) < k:
         return None
 
@@ -187,6 +206,98 @@ def _find_optimal_spacing(valid_angles, k, min_spacing):
                 gaps.append(curr_subset[i+1] - curr_subset[i])
             gaps.append(gap_last)
             score = sum((g - 360.0 / k) ** 2 for g in gaps)
+            if score < best_score:
+                best_score = score
+                best_subset = list(curr_subset)
+            return
+
+        for i in range(start_idx, len(valid_angles)):
+            angle = valid_angles[i]
+            if angle - curr_subset[-1] < min_spacing:
+                continue
+            remaining_needed = k - len(curr_subset)
+            if (360.0 + curr_subset[0] - angle) < remaining_needed * min_spacing:
+                continue
+            curr_subset.append(angle)
+            backtrack(curr_subset, i + 1)
+            curr_subset.pop()
+            if best_score < 1e-6:
+                return
+
+    for idx in range(len(valid_angles) - k + 1):
+        backtrack([valid_angles[idx]], idx + 1)
+        if best_score < 1e-6:
+            break
+
+    return best_subset
+
+
+def _group_circular_clusters(valid_angles, step_degrees):
+    """Groups valid angles into contiguous circular clusters on the 360-degree circle.
+
+    Args:
+        valid_angles (list of float): List of valid candidate longitude angles in degrees.
+        step_degrees (float): Longitude step size used during candidate evaluation.
+
+    Returns:
+        list of list of float: Contiguous clusters of angles.
+    """
+    if not valid_angles:
+        return []
+
+    valid_angles = sorted(valid_angles)
+    step_tol = step_degrees * 1.5
+
+    clusters = []
+    curr = [valid_angles[0]]
+    for a in valid_angles[1:]:
+        if a - curr[-1] <= step_tol:
+            curr.append(a)
+        else:
+            clusters.append(curr)
+            curr = [a]
+    clusters.append(curr)
+
+    if len(clusters) > 1:
+        wrap_gap = 360.0 + valid_angles[0] - valid_angles[-1]
+        if wrap_gap <= step_tol:
+            clusters[0] = clusters[-1] + clusters[0]
+            clusters.pop()
+
+    return clusters
+
+
+def _find_margin_weighted_spacing(valid_angles, valid_margins, k, min_spacing, margin_weight=50.0):
+    """Finds the subset of k angles balancing spacing uniformity and wall clearance margin.
+
+    Args:
+        valid_angles (list of float): List of valid candidate longitude angles in degrees.
+        valid_margins (dict): Mapping from angle to clearance margin in mm.
+        k (int): Number of angles to select.
+        min_spacing (float): Minimum angular spacing required between adjacent selected angles.
+        margin_weight (float, optional): Weighting coefficient for clearance margin. Defaults to 50.0.
+
+    Returns:
+        list of float or None: The selected subset of k angles, or None if no valid combination exists.
+    """
+    if len(valid_angles) < k:
+        return None
+
+    valid_angles = sorted(valid_angles)
+    best_score = float('inf')
+    best_subset = None
+    target_gap = 360.0 / k
+
+    def backtrack(curr_subset, start_idx):
+        nonlocal best_score, best_subset
+        if len(curr_subset) == k:
+            gap_last = 360.0 + curr_subset[0] - curr_subset[-1]
+            if gap_last < min_spacing:
+                return
+            gaps = [curr_subset[i+1] - curr_subset[i] for i in range(k - 1)] + [gap_last]
+            spacing_cost = sum((g - target_gap) ** 2 for g in gaps)
+            margin_bonus = sum(valid_margins[a] for a in curr_subset) * margin_weight
+            score = spacing_cost - margin_bonus
             if score < best_score:
                 best_score = score
                 best_subset = list(curr_subset)
@@ -221,19 +332,33 @@ def find_valid_magnet_positions_no_bosses(
     candidate_angles=None,
     bisection_iters=20,
     num_angles=16,
+    placement_strategy="cluster_peaks",
+    angle_tolerance=0.0,
 ):
     """Finds valid magnet positions in the globe shell without adding bosses/material.
 
-    Steps around the model in step_degrees increments and tests whether a cylinder
-    of radius r_enc and height from -h_boss to h_boss can be completely inserted
-    within the solid part of the hollowed globe (inside outer mesh, outside inner mesh).
-    Then finds the subset of valid locations that spaces them as evenly as possible.
+    Tests candidate longitude angles on the equatorial splitting plane (Z = 0)
+    to determine whether a cylinder of radius r_enc and height from -h_boss to +h_boss
+    can be completely contained within the solid shell of the hollowed globe (inside
+    outer_mesh and outside inner_mesh).
+
+    Uses a dual-bisection search to find the valid radial range [d_min, d_max]
+    at each candidate angle, centering the magnet void at d = (d_min + d_max) / 2
+    to maximize plastic clearance from both the inner and outer shell walls.
+
+    Supports multiple placement strategies for selecting the final subset of angles:
+    - 'cluster_peaks' (default): Groups adjacent valid longitudes into contiguous
+      bands (continental regions) and selects the peak clearance point in each band,
+      maximizing wall thickness. Falls back to uniform spacing if fewer clusters exist
+      than requested magnets.
+    - 'uniform': Purely maximizes angular spacing uniformity among all valid angles.
+    - 'margin_weighted': Balances spacing uniformity with clearance margin.
 
     Args:
         outer_mesh (trimesh.Trimesh): Watertight outer globe mesh.
         inner_mesh (trimesh.Trimesh): Watertight inner globe mesh.
-        r_enc (float): Enclosing radius of the magnet void + min thickness.
-        h_boss (float): Enclosing height of the void.
+        r_enc (float): Enclosing radius of the magnet void + min thickness in mm.
+        h_boss (float): Enclosing height of the void in mm.
         step_degrees (float, optional): Longitude step size in degrees. Defaults to 2.
         n_magnets (int, optional): Target number of magnet pairs. Defaults to 3.
         min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
@@ -241,11 +366,19 @@ def find_valid_magnet_positions_no_bosses(
         candidate_angles (list of float, optional): Custom list of candidate angles to test.
         bisection_iters (int, optional): Iterations for binary search. Defaults to 20.
         num_angles (int, optional): Number of angles to sample on check boundaries. Defaults to 16.
+        placement_strategy (str, optional): Strategy for selecting angles ('cluster_peaks',
+            'uniform', or 'margin_weighted'). Defaults to 'cluster_peaks'.
+        angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
+            angles when explicit positions are specified. Defaults to 0.0.
 
     Returns:
         tuple: A tuple (centers, chosen_angles) where:
             - centers (list of tuple): (x, y) coordinates for optimized magnet centers.
             - chosen_angles (list of float): Corresponding chosen longitude angles.
+
+    Raises:
+        ValueError: If no candidate positions can fit the magnet void, or if fewer than
+            min_magnets can be placed satisfying min_angular_spacing.
     """
     outer_verts = outer_mesh.vertices
     outer_norms = np.linalg.norm(outer_verts, axis=1)
@@ -261,79 +394,150 @@ def find_valid_magnet_positions_no_bosses(
 
     local_pts = _generate_cylinder_check_points(r_enc, h_boss, num_angles=num_angles)
 
-    max_outer_radius = np.max(outer_norms)
-    max_inner_radius = np.max(inner_norms)
+    min_inner_radius = float(np.min(inner_norms))
+    max_outer_radius = float(np.max(outer_norms))
 
-    low_limit = max_inner_radius + r_enc
-    high_limit = max_outer_radius - r_enc
+    def eval_margins(d, cos_t, sin_t):
+        global_pts = local_pts + np.array([d * cos_t, d * sin_t, 0.0])
+        r_pts = np.linalg.norm(global_pts, axis=1)
+        r_safe = np.where(r_pts == 0.0, 1.0, r_pts)
+        unit_pts = global_pts / r_safe[:, None]
 
-    if low_limit > high_limit:
-        raise ValueError(
-            f"Globe shell is too thin to fit magnets of enclosing radius {r_enc:.2f} mm "
-            f"without adding bosses. Max inner radius: {max_inner_radius:.2f} mm, "
-            f"Max outer radius: {max_outer_radius:.2f} mm."
-        )
+        dists_out, idxs_out = kdtree_outer.query(unit_pts, k=3)
+        w_out = 1.0 / np.maximum(dists_out, 1e-6)
+        w_out /= np.sum(w_out, axis=1, keepdims=True)
+        r_outer = np.sum(outer_norms[idxs_out] * w_out, axis=1)
 
-    if candidate_angles is None:
-        candidate_angles = np.arange(0.0, 360.0, step_degrees)
+        dists_in, idxs_in = kdtree_inner.query(unit_pts, k=3)
+        w_in = 1.0 / np.maximum(dists_in, 1e-6)
+        w_in /= np.sum(w_in, axis=1, keepdims=True)
+        r_inner = np.sum(inner_norms[idxs_in] * w_in, axis=1)
 
-    valid_angles = []
-    valid_centers = {}
+        in_margin = float(np.min(r_pts - r_inner))
+        out_margin = float(np.min(r_outer - r_pts))
+        return in_margin, out_margin
 
-    for angle_deg in candidate_angles:
+    def test_single_angle(angle_deg):
         angle_wrapped = (angle_deg % 360.0 + 360.0) % 360.0
         theta = np.radians(angle_wrapped)
         cos_t = np.cos(theta)
         sin_t = np.sin(theta)
 
-        low = float(low_limit)
-        high = float(high_limit)
-        best_d = 0.0
+        in_m_high, _ = eval_margins(max_outer_radius, cos_t, sin_t)
+        if in_m_high < 0.0:
+            return None
+        _, out_m_low = eval_margins(min_inner_radius, cos_t, sin_t)
+        if out_m_low < 0.0:
+            return None
 
-        def check_containment(d):
-            global_pts = local_pts + np.array([d * cos_t, d * sin_t, 0.0])
-            r_pts = np.linalg.norm(global_pts, axis=1)
-            r_safe = np.where(r_pts == 0.0, 1.0, r_pts)
-            unit_pts = global_pts / r_safe[:, None]
-
-            # Outer containment
-            dists_out, idxs_out = kdtree_outer.query(unit_pts, k=3)
-            w_out = 1.0 / np.maximum(dists_out, 1e-6)
-            w_out /= np.sum(w_out, axis=1, keepdims=True)
-            r_outer = np.sum(outer_norms[idxs_out] * w_out, axis=1)
-
-            # Inner containment
-            dists_in, idxs_in = kdtree_inner.query(unit_pts, k=3)
-            w_in = 1.0 / np.maximum(dists_in, 1e-6)
-            w_in /= np.sum(w_in, axis=1, keepdims=True)
-            r_inner = np.sum(inner_norms[idxs_in] * w_in, axis=1)
-
-            return np.all((r_pts <= r_outer) & (r_pts >= r_inner))
-
+        # Bisect for d_min (inner shell clearance)
+        low = min_inner_radius
+        high = max_outer_radius
         for _ in range(bisection_iters):
             mid = (low + high) / 2.0
-            if check_containment(mid):
-                best_d = mid
+            in_m, _ = eval_margins(mid, cos_t, sin_t)
+            if in_m >= 0.0:
+                high = mid
+            else:
+                low = mid
+        d_min = high
+
+        # Bisect for d_max (outer shell containment)
+        low = min_inner_radius
+        high = max_outer_radius
+        for _ in range(bisection_iters):
+            mid = (low + high) / 2.0
+            _, out_m = eval_margins(mid, cos_t, sin_t)
+            if out_m >= 0.0:
                 low = mid
             else:
                 high = mid
+        d_max = low
 
-        if best_d > 0.0 and check_containment(best_d):
-            if angle_wrapped not in valid_centers:
-                valid_angles.append(angle_wrapped)
-                valid_centers[angle_wrapped] = (best_d * cos_t, best_d * sin_t)
+        if d_min <= d_max:
+            best_d = (d_min + d_max) / 2.0
+            in_m, out_m = eval_margins(best_d, cos_t, sin_t)
+            if in_m >= 0.0 and out_m >= 0.0:
+                margin = min(in_m, out_m)
+                center = (best_d * cos_t, best_d * sin_t)
+                return angle_wrapped, center, margin
+        return None
+
+    valid_angles = []
+    valid_centers = {}
+    valid_margins = {}
+
+    explicit_candidate_list = candidate_angles is not None
+    if not explicit_candidate_list:
+        test_angles = np.arange(0.0, 360.0, step_degrees)
+    else:
+        test_angles = list(candidate_angles)
+
+    for angle_deg in test_angles:
+        res = test_single_angle(angle_deg)
+        if res is None and explicit_candidate_list and angle_tolerance > 0.0:
+            best_nudge = None
+            best_nudge_margin = -1.0
+            nudge_steps = np.arange(-angle_tolerance, angle_tolerance + step_degrees / 2.0, step_degrees)
+            for offset in nudge_steps:
+                n_res = test_single_angle(angle_deg + offset)
+                if n_res is not None and n_res[2] > best_nudge_margin:
+                    best_nudge_margin = n_res[2]
+                    best_nudge = n_res
+            if best_nudge is not None:
+                res = best_nudge
+
+        if res is not None:
+            a_w, center, margin = res
+            if a_w not in valid_centers:
+                valid_angles.append(a_w)
+                valid_centers[a_w] = center
+                valid_margins[a_w] = margin
+
+    if not valid_angles:
+        raise ValueError(
+            f"Globe shell is too thin to fit magnets of enclosing radius {r_enc:.2f} mm "
+            f"without adding bosses at any candidate position. "
+            f"Min inner radius: {min_inner_radius:.2f} mm, Max outer radius: {max_outer_radius:.2f} mm."
+        )
+
+    # If explicit candidate angles were passed and all matched, preserve their order
+    if explicit_candidate_list and len(valid_angles) == len(test_angles):
+        chosen_subset = valid_angles
+        centers = [valid_centers[angle] for angle in chosen_subset]
+        return centers, chosen_subset
 
     chosen_subset = None
     for k in range(n_magnets, min_magnets - 1, -1):
-        subset = _find_optimal_spacing(valid_angles, k, min_angular_spacing)
-        if subset is not None:
-            chosen_subset = subset
-            break
+        if placement_strategy == "cluster_peaks":
+            clusters = _group_circular_clusters(valid_angles, step_degrees)
+            if len(clusters) >= k:
+                peak_angles = [max(cl, key=lambda a: valid_margins[a]) for cl in clusters]
+                subset = _find_optimal_spacing(peak_angles, k, min_angular_spacing)
+                if subset is not None:
+                    chosen_subset = subset
+                    break
+            # Fallback to uniform if cluster peaks couldn't space k magnets
+            subset = _find_optimal_spacing(valid_angles, k, min_angular_spacing)
+            if subset is not None:
+                chosen_subset = subset
+                break
+        elif placement_strategy == "margin_weighted":
+            subset = _find_margin_weighted_spacing(valid_angles, valid_margins, k, min_angular_spacing)
+            if subset is not None:
+                chosen_subset = subset
+                break
+        else:  # "uniform"
+            subset = _find_optimal_spacing(valid_angles, k, min_angular_spacing)
+            if subset is not None:
+                chosen_subset = subset
+                break
 
     if chosen_subset is None:
         raise ValueError(
             f"Could not place at least {min_magnets} magnet pairs satisfying "
-            f"the min_angular_spacing of {min_angular_spacing} degrees and containment constraints."
+            f"the min_angular_spacing of {min_angular_spacing} degrees and containment constraints. "
+            f"Found {len(valid_angles)} valid candidate angles."
         )
 
     centers = [valid_centers[angle] for angle in chosen_subset]
@@ -361,6 +565,8 @@ def insert_magnets_into_hemispheres(
     inner_vertices=None,
     inner_faces=None,
     settings=None,
+    placement_strategy="cluster_peaks",
+    angle_tolerance=0.0,
 ):
     """Inserts magnet voids and optionally enclosing material (bosses) into the hemispheres.
 
@@ -371,22 +577,26 @@ def insert_magnets_into_hemispheres(
         bottom_mesh (trimesh.Trimesh): Capped, hollow bottom hemisphere mesh.
         outer_vertices (numpy.ndarray or trimesh.Trimesh): Outer shell vertices or pre-built outer Trimesh.
         outer_faces (numpy.ndarray or None): Outer shell face indices.
-        diameter (float, optional): Diameter of the cylindrical magnets in mm.
-        height (float, optional): Height of the cylindrical magnets in mm.
-        n_magnets (int, optional): Number of magnets per hemisphere.
-        position (float or list of float, optional): Initial angle or list of longitudes to place magnets at.
-        horizontal_tolerance (float, optional): Radial tolerance to add to the magnet radius.
-        vertical_tolerance (float, optional): Vertical tolerance to add to the magnet height.
-        vertical_offset (float, optional): Distance between magnet void and cut plane.
-        min_thickness (float, optional): Minimum surrounding plastic thickness in mm.
-        engine (str, optional): Boolean engine for trimesh.
-        add_bosses (bool, optional): If True, add surrounding plastic bosses. If False, only subtract voids.
-        min_magnets (int, optional): Minimum required magnet pairs.
-        min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs.
-        step_degrees (float, optional): Longitude step size for search.
-        inner_vertices (numpy.ndarray or trimesh.Trimesh, optional): Inner shell vertices or pre-built inner Trimesh.
-        inner_faces (numpy.ndarray, optional): Inner shell face indices.
-        settings (MagnetSettings, optional): A MagnetSettings instance containing configuration values.
+        diameter (float, optional): Diameter of the cylindrical magnets in mm. Defaults to 5.0.
+        height (float, optional): Height of the cylindrical magnets in mm. Defaults to 2.0.
+        n_magnets (int, optional): Number of magnets per hemisphere. Defaults to 3.
+        position (float or list of float, optional): Initial angle or list of longitudes to place magnets at. Defaults to 0.0.
+        horizontal_tolerance (float, optional): Radial tolerance to add to the magnet radius. Defaults to 0.15.
+        vertical_tolerance (float, optional): Vertical tolerance to add to the magnet height. Defaults to 0.10.
+        vertical_offset (float, optional): Distance between magnet void and cut plane. Defaults to 0.20.
+        min_thickness (float, optional): Minimum surrounding plastic thickness in mm. Defaults to 1.5.
+        engine (str, optional): Boolean engine for trimesh. Defaults to None.
+        add_bosses (bool, optional): If True, add surrounding plastic bosses. If False, only subtract voids. Defaults to True.
+        min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
+        min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
+        step_degrees (float, optional): Longitude step size for search. Defaults to 2.
+        inner_vertices (numpy.ndarray or trimesh.Trimesh, optional): Inner shell vertices or pre-built inner Trimesh. Defaults to None.
+        inner_faces (numpy.ndarray, optional): Inner shell face indices. Defaults to None.
+        settings (MagnetSettings, optional): A MagnetSettings instance containing configuration values. Defaults to None.
+        placement_strategy (str, optional): Strategy for selecting angles when add_bosses=False ('cluster_peaks',
+            'uniform', or 'margin_weighted'). Defaults to 'cluster_peaks'.
+        angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
+            angles when explicit positions are specified. Defaults to 0.0.
 
     Returns:
         tuple: (top_mesh_with_magnets, bottom_mesh_with_magnets) as trimesh.Trimesh objects.
@@ -404,6 +614,8 @@ def insert_magnets_into_hemispheres(
         min_magnets = settings.min_magnets
         min_angular_spacing = settings.min_angular_spacing
         step_degrees = settings.step_degrees
+        placement_strategy = getattr(settings, "placement_strategy", placement_strategy)
+        angle_tolerance = getattr(settings, "angle_tolerance", angle_tolerance)
 
     r_void = diameter / 2.0 + horizontal_tolerance
     h_void = height + vertical_tolerance
@@ -459,6 +671,8 @@ def insert_magnets_into_hemispheres(
             min_magnets=min_mag,
             min_angular_spacing=min_angular_spacing,
             candidate_angles=cand_angles,
+            placement_strategy=placement_strategy,
+            angle_tolerance=angle_tolerance,
         )
 
     top_bosses = []

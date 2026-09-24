@@ -165,3 +165,6 @@ context/
 
 # download cache
 .download_cache/
+
+# working notebooks
+working/

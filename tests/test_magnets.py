@@ -267,3 +267,118 @@ def test_insert_magnets_no_bosses_end_to_end():
     assert bottom_mag.is_watertight
     assert top_mag.volume > 0
     assert bottom_mag.volume > 0
+
+
+def test_find_valid_magnet_positions_variable_thickness():
+    """Verify that find_valid_magnet_positions_no_bosses succeeds when the shell has variable thickness.
+
+    Specifically tests when max_inner_radius + r_enc > max_outer_radius - r_enc globally,
+    but local continental regions are thick enough to house the magnets.
+    """
+    outer_radius = 45.0
+    ov, of = generate_sphere_points_fibonacci(600, outer_radius)
+
+    # Create an inner shell with variable depth:
+    # On one side (x > 0, e.g. continental root), inner radius is deep (32 mm).
+    # On the other side (x < 0, e.g. oceanic crust), inner radius is shallow (41 mm).
+    iv, if_ = generate_sphere_points_fibonacci(600, 36.5)
+    r_in = np.linalg.norm(iv, axis=1)
+    unit_iv = iv / r_in[:, None]
+    var_r_in = 36.5 - 4.5 * unit_iv[:, 0]  # varies from 32 mm (at x = +1) to 41 mm (at x = -1)
+    iv = unit_iv * var_r_in[:, None]
+
+    outer_mesh = trimesh.Trimesh(vertices=ov, faces=of)
+    inner_mesh = trimesh.Trimesh(vertices=iv, faces=if_)
+
+    r_enc = 3.45
+    h_boss = 3.10
+
+    # Verify global condition that previously caused immediate crash:
+    assert np.max(var_r_in) + r_enc > outer_radius - r_enc
+
+    # Strategy: cluster_peaks
+    centers, chosen_angles = find_valid_magnet_positions_no_bosses(
+        outer_mesh=outer_mesh,
+        inner_mesh=inner_mesh,
+        r_enc=r_enc,
+        h_boss=h_boss,
+        step_degrees=5.0,
+        n_magnets=2,
+        min_magnets=1,
+        min_angular_spacing=30.0,
+        placement_strategy="cluster_peaks",
+    )
+    assert len(centers) >= 1
+    assert len(chosen_angles) == len(centers)
+
+    # Strategy: margin_weighted
+    centers_mw, chosen_angles_mw = find_valid_magnet_positions_no_bosses(
+        outer_mesh=outer_mesh,
+        inner_mesh=inner_mesh,
+        r_enc=r_enc,
+        h_boss=h_boss,
+        step_degrees=5.0,
+        n_magnets=2,
+        min_magnets=1,
+        min_angular_spacing=30.0,
+        placement_strategy="margin_weighted",
+    )
+    assert len(centers_mw) >= 1
+
+    # Strategy: uniform
+    centers_u, chosen_angles_u = find_valid_magnet_positions_no_bosses(
+        outer_mesh=outer_mesh,
+        inner_mesh=inner_mesh,
+        r_enc=r_enc,
+        h_boss=h_boss,
+        step_degrees=5.0,
+        n_magnets=2,
+        min_magnets=1,
+        min_angular_spacing=30.0,
+        placement_strategy="uniform",
+    )
+    assert len(centers_u) >= 1
+
+
+def test_candidate_angles_with_tolerance_nudge():
+    """Verify that candidate_angles can be nudged using angle_tolerance."""
+    outer_radius = 45.0
+    ov, of = generate_sphere_points_fibonacci(400, outer_radius)
+    iv, if_ = generate_sphere_points_fibonacci(400, 35.0)
+
+    # Push inner shell outward tightly around longitude 90 deg so 90 deg is too thin
+    r_in = np.linalg.norm(iv, axis=1)
+    unit_iv = iv / r_in[:, None]
+    var_r_in = np.where(unit_iv[:, 1] > 0.98, 43.0, 35.0)
+    iv = unit_iv * var_r_in[:, None]
+
+    outer_mesh = trimesh.Trimesh(vertices=ov, faces=of)
+    inner_mesh = trimesh.Trimesh(vertices=iv, faces=if_)
+
+    r_enc = 3.0
+    h_boss = 2.5
+
+    # At exact lon 90, it should fail without tolerance
+    with pytest.raises(ValueError):
+        find_valid_magnet_positions_no_bosses(
+            outer_mesh=outer_mesh,
+            inner_mesh=inner_mesh,
+            r_enc=r_enc,
+            h_boss=h_boss,
+            candidate_angles=[90.0],
+            angle_tolerance=0.0,
+        )
+
+    # With angle_tolerance=25.0, it should nudge away from 90 to a thick region
+    centers, chosen_angles = find_valid_magnet_positions_no_bosses(
+        outer_mesh=outer_mesh,
+        inner_mesh=inner_mesh,
+        r_enc=r_enc,
+        h_boss=h_boss,
+        candidate_angles=[90.0],
+        angle_tolerance=25.0,
+        step_degrees=2.0,
+    )
+    assert len(centers) == 1
+    assert abs(chosen_angles[0] - 90.0) > 0.1
+

@@ -555,7 +555,8 @@ class GlobeModel:
         Common parameters include ``diameter``, ``height``, ``n_magnets``,
         ``position``, ``horizontal_tolerance``, ``vertical_tolerance``,
         ``vertical_offset``, ``min_thickness``, ``add_bosses``,
-        ``min_magnets``, ``min_angular_spacing``, and ``step_degrees``.
+        ``min_magnets``, ``min_angular_spacing``, ``step_degrees``,
+        ``placement_strategy``, and ``angle_tolerance``.
 
         Args:
             **kwargs: Keyword arguments forwarded to :class:`MagnetSettings`.

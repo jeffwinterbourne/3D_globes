@@ -280,9 +280,16 @@ For each target longitude on the equatorial cut plane, this function uses a bise
 - Uses `outer_mesh.contains(global_pts)` to perform fast and precise geometric containment checks directly on the watertight displaced outer mesh.
 - Returns a list of optimized `(x, y)` center coordinates.
 
-**`find_valid_magnet_positions_no_bosses(outer_mesh, inner_mesh, r_enc, h_boss, step_degrees=2, n_magnets=3, min_magnets=2, min_angular_spacing=60.0, ...)`**
+**`find_valid_magnet_positions_no_bosses(outer_mesh, inner_mesh, r_enc, h_boss, step_degrees=2, n_magnets=3, min_magnets=2, min_angular_spacing=60.0, placement_strategy='cluster_peaks', angle_tolerance=0.0, ...)`**
 
-Steps around the model cut-plane in `step_degrees` increments and checks containment of a candidate magnet void completely within the solid shell of the hollowed globe (inside `outer_mesh` and outside `inner_mesh`). It then uses a backtracking optimization algorithm to find a subset of candidate angles that maximizes spacing uniformity while respecting `min_angular_spacing`. Raises `ValueError` if fewer than `min_magnets` can be placed.
+Evaluates candidate longitudes on the equatorial cut-plane ($Z = 0$) and tests containment of a candidate magnet void completely within the solid shell of the hollowed globe (inside `outer_mesh` and outside `inner_mesh`).
+- **Dual-Bisection Search**: Uses independent monotonic bisections for inner shell clearance ($d_{min}$) and outer shell containment ($d_{max}$). If $d_{min} \le d_{max}$, the void fits within the shell, and the magnet is centered at $d = (d_{min} + d_{max}) / 2$ to maximize clearance from both walls.
+- **Placement Strategies**:
+  - `'cluster_peaks'` (default): Groups contiguous valid longitudes into continental clusters (handling circular 360° wraparound) and selects the peak wall clearance point in each cluster, prioritizing structural strength. Falls back to uniform spacing if fewer clusters exist than requested magnets.
+  - `'uniform'`: Backtracks across all valid angles to maximize angular spacing uniformity (minimizing variance from $360^\circ / k$).
+  - `'margin_weighted'`: Optimizes a combined objective balancing angular spacing uniformity and wall clearance margin.
+- **Angle Nudging**: If explicit candidate angles are passed via `candidate_angles` (or `position`) and an angle is slightly outside the solid shell, `angle_tolerance` allows searching within a local window $[\theta - \Delta, \theta + \Delta]$ to find the nearest valid position.
+- Raises `ValueError` if no valid candidate positions fit the void, or if fewer than `min_magnets` can be placed respecting `min_angular_spacing`.
 
 #### Magnet Insertion
 
