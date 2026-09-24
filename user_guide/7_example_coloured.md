@@ -85,7 +85,7 @@ model.configure_magnets(
     vertical_offset=0.20,
     min_thickness=1.5,
     n_magnets=3,
-    add_bosses=True,
+    allow_bosses=True,
 )
 ```
 

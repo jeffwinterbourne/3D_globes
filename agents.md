@@ -33,7 +33,7 @@ pip install -e .
     - `mesh.py`: `GlobeModel` (unified constructor, `_MeshProxy` for inner/outer shells, `configure_magnets()`, `export()`, `export_hemispheres()`), sphere generation, hollowing, splitting.
     - `grid.py`: `GeographicGrid` data loading (NetCDF, TIFF).
     - `displacement.py`: `Displacer` / `Colourer` class hierarchies, unit-aware `calculate_displacement_scale(grid_units=...)`.
-    - `magnets.py`: `MagnetSettings`, optimization and insertion of magnet voids and bosses.
+    - `magnets.py`: `MagnetSettings` (`allow_bosses`), multi-objective optimization and insertion of magnet voids with boss count and material minimization.
     - `io.py`: Low-level STL & OBJ file export (called internally by `GlobeModel.export`).
     - `plot.py`: Visualization.
 - **Docstrings**: All functions and classes MUST have complete and up-to-date docstrings (Google or NumPy style) explaining all parameters (including kwargs) and return values. When updating a function's signature, you MUST update its docstring concurrently to ensure documentation standards are met.

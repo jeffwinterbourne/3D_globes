@@ -42,20 +42,22 @@ print(f"Outer shell: {model.outer.vertices.shape[0]} vertices")
 print(f"Inner shell: {model.inner.vertices.shape[0]} vertices")
 ```
 
-### 3. Alternative A: Magnet Placement WITH Bosses (`add_bosses=True`)
-If the globe walls are thin or if you want magnets placed at exact angular coordinates, the software must build structural cylindrical "towers" (bosses) around each magnet void on the inside of the cavity so the holes don't break through into the hollow center.
+### 3. Alternative A: Allowing Bosses with Automatic Minimization (`allow_bosses=True`)
+By default, `allow_bosses=True` allows the software to build structural cylindrical "towers" (bosses) around magnet voids on the inside of the cavity where the shell is too thin. Crucially, the algorithm **minimizes the number of bosses needed and minimizes the material added**:
+- If the shell is thick enough at candidate locations, **zero bosses are created**, leaving those regions completely smooth.
+- If some bosses are required to meet your requested magnet count and spacing, it selects positions that minimize the total boss count and pushes the voids outward to minimize how far the bosses protrude into the cavity.
 ```python
-# Configure magnets with reinforcing bosses
+# Configure magnets allowing bosses when necessary (auto-minimizing boss count & material)
 model.configure_magnets(
     diameter=5.0,                  # 5 mm disc magnet
     height=2.0,                    # 2 mm height
-    n_magnets=3,                   # 3 magnets evenly spaced
-    position=0.0,                  # Start angle
+    n_magnets=3,                   # 3 magnets
+    position=0.0,                  # Start angle or search base
     horizontal_tolerance=0.15,     # 0.15 mm radial tolerance
     vertical_tolerance=0.10,       # 0.10 mm depth tolerance
     vertical_offset=0.20,          # 0.20 mm plastic ceiling
     min_thickness=1.5,             # 1.5 mm minimum plastic walls around magnet
-    add_bosses=True,               # Union support towers inside the cavity
+    allow_bosses=True,             # Allow bosses if needed (minimizes boss count & protrusion)
 )
 
 # Generate the meshes (hollowing and magnet voids are calculated automatically)
@@ -63,10 +65,10 @@ top_boss, bottom_boss = model.generate_hemispheres(engine='manifold')
 print(f"Top hemisphere is watertight: {top_boss.is_watertight}")
 ```
 
-### 4. Alternative B: Magnet Placement WITHOUT Bosses (Inside Shell)
-If you want to keep the inner hollow cavity completely smooth and avoid printing protruding bosses, you can set `add_bosses=False`. The algorithm searches the equatorial plane in 2-degree increments to find optimal spots where the magnet pocket fits entirely inside the natural thickness of the displaced shell wall.
+### 4. Alternative B: Strict No-Boss Placement (`allow_bosses=False`)
+If you want to guarantee that the inner hollow cavity remains completely smooth with zero protruding bosses, set `allow_bosses=False`. The algorithm searches the equatorial plane to find optimal spots where the magnet pocket fits entirely inside the natural thickness of the displaced shell wall, raising an error if not enough zero-boss locations exist.
 ```python
-# Reconfigure magnets to sit strictly inside the natural wall thickness
+# Reconfigure magnets to sit strictly inside the natural wall thickness with zero bosses
 model.configure_magnets(
     diameter=5.0,
     height=2.0,
@@ -78,7 +80,7 @@ model.configure_magnets(
     vertical_tolerance=0.10,
     vertical_offset=0.20,
     min_thickness=1.5,
-    add_bosses=False,              # No support bosses
+    allow_bosses=False,            # Strictly no support bosses
 )
 
 top_noboss, bottom_noboss = model.generate_hemispheres(engine='manifold')

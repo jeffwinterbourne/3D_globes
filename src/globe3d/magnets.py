@@ -24,12 +24,13 @@ class MagnetSettings:
         vertical_tolerance: float = 0.10,
         vertical_offset: float = 0.20,
         min_thickness: float = 1.5,
-        add_bosses: bool = True,
+        allow_bosses: bool = True,
         min_magnets: int = 2,
         min_angular_spacing: float = 60.0,
         step_degrees: float = 2,
         placement_strategy: str = "cluster_peaks",
         angle_tolerance: float = 0.0,
+        add_bosses: object = None,
     ):
         """Initializes a MagnetSettings instance.
 
@@ -42,17 +43,23 @@ class MagnetSettings:
             vertical_tolerance (float, optional): Tolerance added to magnet height. Defaults to 0.10.
             vertical_offset (float, optional): Distance between void and cut plane. Defaults to 0.20.
             min_thickness (float, optional): Minimum surrounding material thickness. Defaults to 1.5.
-            add_bosses (bool, optional): If True, add bosses. If False, place inside solid shell. Defaults to True.
+            allow_bosses (bool, optional): If True, allows adding bosses when the shell is too thin,
+                minimizing the number of bosses and the protrusion into the cavity. If False, magnets
+                must fit entirely within the solid shell wall without adding any bosses. Defaults to True.
             min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
             min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
             step_degrees (float, optional): Longitude step size for searching positions. Defaults to 2.
-            placement_strategy (str, optional): Strategy for choosing magnet angles when add_bosses=False.
+            placement_strategy (str, optional): Strategy for choosing magnet angles when fitting within the shell.
                 Options are 'cluster_peaks' (default, places in thickest part of continental regions),
                 'uniform' (maximizes spacing uniformity), or 'margin_weighted' (balances spacing
                 and clearance margin). Defaults to 'cluster_peaks'.
             angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
                 angles when explicit positions are specified. Defaults to 0.0.
+            add_bosses (bool, optional): Deprecated alias for ``allow_bosses``. If specified, overrides
+                ``allow_bosses`` for backward compatibility. Defaults to None.
         """
+        if add_bosses is not None:
+            allow_bosses = bool(add_bosses)
         self.diameter = float(diameter)
         self.height = float(height)
         self.n_magnets = int(n_magnets)
@@ -61,7 +68,8 @@ class MagnetSettings:
         self.vertical_tolerance = float(vertical_tolerance)
         self.vertical_offset = float(vertical_offset)
         self.min_thickness = float(min_thickness)
-        self.add_bosses = bool(add_bosses)
+        self.allow_bosses = bool(allow_bosses)
+        self.add_bosses = self.allow_bosses  # Backward compatibility alias
         self.min_magnets = int(min_magnets)
         self.min_angular_spacing = float(min_angular_spacing)
         self.step_degrees = float(step_degrees)
@@ -334,24 +342,36 @@ def find_valid_magnet_positions_no_bosses(
     num_angles=16,
     placement_strategy="cluster_peaks",
     angle_tolerance=0.0,
+    allow_bosses=False,
+    add_bosses=None,
+    return_details=False,
 ):
-    """Finds valid magnet positions in the globe shell without adding bosses/material.
+    """Finds valid magnet positions in the globe shell, optionally allowing bosses when needed.
 
     Tests candidate longitude angles on the equatorial splitting plane (Z = 0)
     to determine whether a cylinder of radius r_enc and height from -h_boss to +h_boss
-    can be completely contained within the solid shell of the hollowed globe (inside
+    can be contained within the solid shell of the hollowed globe (inside
     outer_mesh and outside inner_mesh).
 
     Uses a dual-bisection search to find the valid radial range [d_min, d_max]
-    at each candidate angle, centering the magnet void at d = (d_min + d_max) / 2
-    to maximize plastic clearance from both the inner and outer shell walls.
+    at each candidate angle:
+    - If d_min <= d_max, the magnet fits cleanly inside the solid shell without a boss.
+      The void is placed at d = (d_min + d_max) / 2 to maximize plastic clearance.
+    - If d_min > d_max and allow_bosses is True, the void is placed at d = d_max to
+      minimize how much the boss protrudes into the inner cavity, minimizing added material.
 
-    Supports multiple placement strategies for selecting the final subset of angles:
+    When allow_bosses is True:
+    - The algorithm first searches for valid combinations that require zero bosses.
+    - If not enough zero-boss positions are available, it optimizes a multi-objective
+      cost function that minimizes the number of bosses required, minimizes the
+      cavity protrusion depth (material added), and balances angular spacing uniformity.
+
+    Supports multiple placement strategies for zero-boss positioning:
     - 'cluster_peaks' (default): Groups adjacent valid longitudes into contiguous
       bands (continental regions) and selects the peak clearance point in each band,
       maximizing wall thickness. Falls back to uniform spacing if fewer clusters exist
       than requested magnets.
-    - 'uniform': Purely maximizes angular spacing uniformity among all valid angles.
+    - 'uniform': Purely maximizes angular spacing uniformity among valid angles.
     - 'margin_weighted': Balances spacing uniformity with clearance margin.
 
     Args:
@@ -370,16 +390,27 @@ def find_valid_magnet_positions_no_bosses(
             'uniform', or 'margin_weighted'). Defaults to 'cluster_peaks'.
         angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
             angles when explicit positions are specified. Defaults to 0.0.
+        allow_bosses (bool, optional): If True, allows placing bosses when the shell is too thin,
+            minimizing boss count and protrusion. If False, raises ValueError if the void cannot
+            fit within the solid shell. Defaults to False.
+        add_bosses (bool, optional): Deprecated alias for ``allow_bosses``. Defaults to None.
+        return_details (bool, optional): If True, returns a 3-element tuple (centers, chosen_angles,
+            boss_flags). If False, returns (centers, chosen_angles). Defaults to False.
 
     Returns:
-        tuple: A tuple (centers, chosen_angles) where:
+        tuple: A tuple (centers, chosen_angles) or (centers, chosen_angles, boss_flags) where:
             - centers (list of tuple): (x, y) coordinates for optimized magnet centers.
             - chosen_angles (list of float): Corresponding chosen longitude angles.
+            - boss_flags (list of bool, optional): Present if return_details is True. Indicates
+              whether each magnet requires an added boss cylinder.
 
     Raises:
         ValueError: If no candidate positions can fit the magnet void, or if fewer than
-            min_magnets can be placed satisfying min_angular_spacing.
+            min_magnets can be placed satisfying min_angular_spacing and containment constraints.
     """
+    if add_bosses is not None:
+        allow_bosses = bool(add_bosses)
+
     outer_verts = outer_mesh.vertices
     outer_norms = np.linalg.norm(outer_verts, axis=1)
     outer_norms_safe = np.where(outer_norms == 0.0, 1.0, outer_norms)
@@ -417,32 +448,13 @@ def find_valid_magnet_positions_no_bosses(
         out_margin = float(np.min(r_outer - r_pts))
         return in_margin, out_margin
 
-    def test_single_angle(angle_deg):
+    def evaluate_single_angle(angle_deg):
         angle_wrapped = (angle_deg % 360.0 + 360.0) % 360.0
         theta = np.radians(angle_wrapped)
         cos_t = np.cos(theta)
         sin_t = np.sin(theta)
 
-        in_m_high, _ = eval_margins(max_outer_radius, cos_t, sin_t)
-        if in_m_high < 0.0:
-            return None
-        _, out_m_low = eval_margins(min_inner_radius, cos_t, sin_t)
-        if out_m_low < 0.0:
-            return None
-
-        # Bisect for d_min (inner shell clearance)
-        low = min_inner_radius
-        high = max_outer_radius
-        for _ in range(bisection_iters):
-            mid = (low + high) / 2.0
-            in_m, _ = eval_margins(mid, cos_t, sin_t)
-            if in_m >= 0.0:
-                high = mid
-            else:
-                low = mid
-        d_min = high
-
-        # Bisect for d_max (outer shell containment)
+        # 1. Bisect for d_max (outer containment)
         low = min_inner_radius
         high = max_outer_radius
         for _ in range(bisection_iters):
@@ -454,94 +466,223 @@ def find_valid_magnet_positions_no_bosses(
                 high = mid
         d_max = low
 
+        # 2. Bisect for d_min (inner clearance)
+        low = min_inner_radius
+        high = max_outer_radius
+        for _ in range(bisection_iters):
+            mid = (low + high) / 2.0
+            in_m, _ = eval_margins(mid, cos_t, sin_t)
+            if in_m >= 0.0:
+                high = mid
+            else:
+                low = mid
+        d_min = high
+
         if d_min <= d_max:
+            # Fits inside solid shell without boss!
             best_d = (d_min + d_max) / 2.0
             in_m, out_m = eval_margins(best_d, cos_t, sin_t)
-            if in_m >= 0.0 and out_m >= 0.0:
-                margin = min(in_m, out_m)
-                center = (best_d * cos_t, best_d * sin_t)
-                return angle_wrapped, center, margin
-        return None
+            margin = min(in_m, out_m)
+            needs_boss = False
+            protrusion = 0.0
+        else:
+            # Needs boss! Place at d_max to minimize protrusion into inner cavity
+            best_d = d_max
+            in_m, out_m = eval_margins(best_d, cos_t, sin_t)
+            needs_boss = True
+            protrusion = max(0.0, -in_m)
+            margin = -protrusion
 
-    valid_angles = []
-    valid_centers = {}
-    valid_margins = {}
+        center = (best_d * cos_t, best_d * sin_t)
+        return {
+            "angle": angle_wrapped,
+            "center": center,
+            "best_d": best_d,
+            "needs_boss": needs_boss,
+            "protrusion": protrusion,
+            "margin": margin,
+        }
 
     explicit_candidate_list = candidate_angles is not None
-    if not explicit_candidate_list:
-        test_angles = np.arange(0.0, 360.0, step_degrees)
-    else:
+    if explicit_candidate_list:
         test_angles = list(candidate_angles)
+    else:
+        test_angles = np.arange(0.0, 360.0, step_degrees)
 
-    for angle_deg in test_angles:
-        res = test_single_angle(angle_deg)
-        if res is None and explicit_candidate_list and angle_tolerance > 0.0:
-            best_nudge = None
-            best_nudge_margin = -1.0
-            nudge_steps = np.arange(-angle_tolerance, angle_tolerance + step_degrees / 2.0, step_degrees)
-            for offset in nudge_steps:
-                n_res = test_single_angle(angle_deg + offset)
-                if n_res is not None and n_res[2] > best_nudge_margin:
-                    best_nudge_margin = n_res[2]
-                    best_nudge = n_res
-            if best_nudge is not None:
+    evaluated_candidates = []
+    for a in test_angles:
+        res = evaluate_single_angle(a)
+        if explicit_candidate_list and angle_tolerance > 0.0:
+            if not allow_bosses and res["needs_boss"]:
+                # Try to nudge to a 0-boss position
+                best_nudge = None
+                best_margin = -float("inf")
+                nudge_steps = np.arange(
+                    -angle_tolerance, angle_tolerance + step_degrees / 2.0, step_degrees
+                )
+                for offset in nudge_steps:
+                    n_res = evaluate_single_angle(a + offset)
+                    if not n_res["needs_boss"] and n_res["margin"] > best_margin:
+                        best_margin = n_res["margin"]
+                        best_nudge = n_res
+                if best_nudge is not None:
+                    res = best_nudge
+            elif allow_bosses and res["needs_boss"]:
+                # Try to nudge to a 0-boss or smaller protrusion position
+                best_nudge = res
+                best_cost = (
+                    (10000.0 if res["needs_boss"] else 0.0)
+                    + res["protrusion"] * 100.0
+                    - res["margin"]
+                )
+                nudge_steps = np.arange(
+                    -angle_tolerance, angle_tolerance + step_degrees / 2.0, step_degrees
+                )
+                for offset in nudge_steps:
+                    n_res = evaluate_single_angle(a + offset)
+                    cost = (
+                        (10000.0 if n_res["needs_boss"] else 0.0)
+                        + n_res["protrusion"] * 100.0
+                        - n_res["margin"]
+                    )
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_nudge = n_res
                 res = best_nudge
 
-        if res is not None:
-            a_w, center, margin = res
-            if a_w not in valid_centers:
-                valid_angles.append(a_w)
-                valid_centers[a_w] = center
-                valid_margins[a_w] = margin
+        if not allow_bosses and res["needs_boss"]:
+            continue
+        evaluated_candidates.append(res)
 
-    if not valid_angles:
+    if not evaluated_candidates:
         raise ValueError(
             f"Globe shell is too thin to fit magnets of enclosing radius {r_enc:.2f} mm "
             f"without adding bosses at any candidate position. "
             f"Min inner radius: {min_inner_radius:.2f} mm, Max outer radius: {max_outer_radius:.2f} mm."
         )
 
-    # If explicit candidate angles were passed and all matched, preserve their order
-    if explicit_candidate_list and len(valid_angles) == len(test_angles):
-        chosen_subset = valid_angles
-        centers = [valid_centers[angle] for angle in chosen_subset]
+    if explicit_candidate_list:
+        if len(evaluated_candidates) < len(test_angles):
+            raise ValueError(
+                f"Could not fit all requested candidate angles without adding bosses."
+            )
+        chosen_subset = [c["angle"] for c in evaluated_candidates]
+        centers = [c["center"] for c in evaluated_candidates]
+        boss_flags = [c["needs_boss"] for c in evaluated_candidates]
+        if return_details:
+            return centers, chosen_subset, boss_flags
         return centers, chosen_subset
 
+    zero_boss_cands = [c for c in evaluated_candidates if not c["needs_boss"]]
+    zero_boss_angles = [c["angle"] for c in zero_boss_cands]
+    margins_map = {c["angle"]: c["margin"] for c in evaluated_candidates}
+    centers_map = {c["angle"]: c["center"] for c in evaluated_candidates}
+    boss_map = {c["angle"]: c["needs_boss"] for c in evaluated_candidates}
+
     chosen_subset = None
+
     for k in range(n_magnets, min_magnets - 1, -1):
-        if placement_strategy == "cluster_peaks":
-            clusters = _group_circular_clusters(valid_angles, step_degrees)
-            if len(clusters) >= k:
-                peak_angles = [max(cl, key=lambda a: valid_margins[a]) for cl in clusters]
-                subset = _find_optimal_spacing(peak_angles, k, min_angular_spacing)
-                if subset is not None:
-                    chosen_subset = subset
+        # Stage 1: Try placing k magnets with 0 bosses
+        if len(zero_boss_angles) >= k:
+            if placement_strategy == "cluster_peaks":
+                clusters = _group_circular_clusters(zero_boss_angles, step_degrees)
+                if len(clusters) >= k:
+                    peak_angles = [max(cl, key=lambda a: margins_map[a]) for cl in clusters]
+                    sub = _find_optimal_spacing(peak_angles, k, min_angular_spacing)
+                    if sub is not None:
+                        chosen_subset = sub
+                        break
+                sub = _find_optimal_spacing(zero_boss_angles, k, min_angular_spacing)
+                if sub is not None:
+                    chosen_subset = sub
                     break
-            # Fallback to uniform if cluster peaks couldn't space k magnets
-            subset = _find_optimal_spacing(valid_angles, k, min_angular_spacing)
-            if subset is not None:
-                chosen_subset = subset
-                break
-        elif placement_strategy == "margin_weighted":
-            subset = _find_margin_weighted_spacing(valid_angles, valid_margins, k, min_angular_spacing)
-            if subset is not None:
-                chosen_subset = subset
-                break
-        else:  # "uniform"
-            subset = _find_optimal_spacing(valid_angles, k, min_angular_spacing)
-            if subset is not None:
-                chosen_subset = subset
+            elif placement_strategy == "margin_weighted":
+                sub = _find_margin_weighted_spacing(
+                    zero_boss_angles, margins_map, k, min_angular_spacing
+                )
+                if sub is not None:
+                    chosen_subset = sub
+                    break
+            else:  # "uniform"
+                sub = _find_optimal_spacing(zero_boss_angles, k, min_angular_spacing)
+                if sub is not None:
+                    chosen_subset = sub
+                    break
+
+        # Stage 2: If no 0-boss combination satisfies spacing, allow bosses if permitted
+        if allow_bosses:
+            best_cost = (float("inf"), float("inf"), float("inf"))
+            best_sub = None
+            target_gap = 360.0 / k
+            all_cands = sorted(evaluated_candidates, key=lambda c: c["angle"])
+
+            def backtrack(curr, start_idx, curr_bosses, curr_protrusion, curr_margin):
+                nonlocal best_cost, best_sub
+                if curr_bosses > best_cost[0]:
+                    return
+                if curr_bosses == best_cost[0] and curr_protrusion > best_cost[1]:
+                    return
+                if len(curr) == k:
+                    gap_last = 360.0 + curr[0]["angle"] - curr[-1]["angle"]
+                    if gap_last < min_angular_spacing:
+                        return
+                    gaps = [curr[i + 1]["angle"] - curr[i]["angle"] for i in range(k - 1)] + [gap_last]
+                    spacing_cost = sum((g - target_gap) ** 2 for g in gaps)
+                    cost = (
+                        curr_bosses,
+                        round(curr_protrusion, 4),
+                        spacing_cost - 0.1 * curr_margin,
+                    )
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_sub = [c["angle"] for c in curr]
+                    return
+
+                rem = k - len(curr)
+                for i in range(start_idx, len(all_cands)):
+                    c = all_cands[i]
+                    if c["angle"] - curr[-1]["angle"] < min_angular_spacing:
+                        continue
+                    if (360.0 + curr[0]["angle"] - c["angle"]) < rem * min_angular_spacing:
+                        continue
+                    curr.append(c)
+                    backtrack(
+                        curr,
+                        i + 1,
+                        curr_bosses + (1 if c["needs_boss"] else 0),
+                        curr_protrusion + c["protrusion"],
+                        curr_margin + c["margin"],
+                    )
+                    curr.pop()
+
+            for idx in range(len(all_cands) - k + 1):
+                c0 = all_cands[idx]
+                backtrack(
+                    [c0],
+                    idx + 1,
+                    1 if c0["needs_boss"] else 0,
+                    c0["protrusion"],
+                    c0["margin"],
+                )
+
+            if best_sub is not None:
+                chosen_subset = best_sub
                 break
 
     if chosen_subset is None:
         raise ValueError(
             f"Could not place at least {min_magnets} magnet pairs satisfying "
-            f"the min_angular_spacing of {min_angular_spacing} degrees and containment constraints. "
-            f"Found {len(valid_angles)} valid candidate angles."
+            f"the min_angular_spacing of {min_angular_spacing} degrees and containment constraints."
         )
 
-    centers = [valid_centers[angle] for angle in chosen_subset]
+    centers = [centers_map[a] for a in chosen_subset]
+    boss_flags = [boss_map[a] for a in chosen_subset]
+    if return_details:
+        return centers, chosen_subset, boss_flags
     return centers, chosen_subset
+
+
+find_optimized_magnet_positions = find_valid_magnet_positions_no_bosses
 
 
 def insert_magnets_into_hemispheres(
@@ -558,7 +699,7 @@ def insert_magnets_into_hemispheres(
     vertical_offset=0.20,
     min_thickness=1.5,
     engine=None,
-    add_bosses=True,
+    allow_bosses=True,
     min_magnets=2,
     min_angular_spacing=60.0,
     step_degrees=2,
@@ -567,10 +708,12 @@ def insert_magnets_into_hemispheres(
     settings=None,
     placement_strategy="cluster_peaks",
     angle_tolerance=0.0,
+    add_bosses=None,
 ):
     """Inserts magnet voids and optionally enclosing material (bosses) into the hemispheres.
 
     Can be configured either via keyword parameters or by passing a MagnetSettings object.
+    When bosses are allowed, minimizes the number of bosses needed and the material added.
 
     Args:
         top_mesh (trimesh.Trimesh): Capped, hollow top hemisphere mesh.
@@ -586,17 +729,20 @@ def insert_magnets_into_hemispheres(
         vertical_offset (float, optional): Distance between magnet void and cut plane. Defaults to 0.20.
         min_thickness (float, optional): Minimum surrounding plastic thickness in mm. Defaults to 1.5.
         engine (str, optional): Boolean engine for trimesh. Defaults to None.
-        add_bosses (bool, optional): If True, add surrounding plastic bosses. If False, only subtract voids. Defaults to True.
+        allow_bosses (bool, optional): If True, allows adding bosses when the shell is too thin,
+            minimizing the number of bosses and the protrusion into the cavity. If False, magnets
+            must fit entirely within the solid shell wall without adding any bosses. Defaults to True.
         min_magnets (int, optional): Minimum required magnet pairs. Defaults to 2.
         min_angular_spacing (float, optional): Minimum spacing in degrees between magnet pairs. Defaults to 60.0.
         step_degrees (float, optional): Longitude step size for search. Defaults to 2.
         inner_vertices (numpy.ndarray or trimesh.Trimesh, optional): Inner shell vertices or pre-built inner Trimesh. Defaults to None.
         inner_faces (numpy.ndarray, optional): Inner shell face indices. Defaults to None.
         settings (MagnetSettings, optional): A MagnetSettings instance containing configuration values. Defaults to None.
-        placement_strategy (str, optional): Strategy for selecting angles when add_bosses=False ('cluster_peaks',
+        placement_strategy (str, optional): Strategy for selecting angles ('cluster_peaks',
             'uniform', or 'margin_weighted'). Defaults to 'cluster_peaks'.
         angle_tolerance (float, optional): Maximum angular search window in degrees around candidate
             angles when explicit positions are specified. Defaults to 0.0.
+        add_bosses (bool, optional): Deprecated alias for ``allow_bosses``. Defaults to None.
 
     Returns:
         tuple: (top_mesh_with_magnets, bottom_mesh_with_magnets) as trimesh.Trimesh objects.
@@ -610,12 +756,14 @@ def insert_magnets_into_hemispheres(
         vertical_tolerance = settings.vertical_tolerance
         vertical_offset = settings.vertical_offset
         min_thickness = settings.min_thickness
-        add_bosses = settings.add_bosses
+        allow_bosses = getattr(settings, "allow_bosses", getattr(settings, "add_bosses", True))
         min_magnets = settings.min_magnets
         min_angular_spacing = settings.min_angular_spacing
         step_degrees = settings.step_degrees
         placement_strategy = getattr(settings, "placement_strategy", placement_strategy)
         angle_tolerance = getattr(settings, "angle_tolerance", angle_tolerance)
+    elif add_bosses is not None:
+        allow_bosses = bool(add_bosses)
 
     r_void = diameter / 2.0 + horizontal_tolerance
     h_void = height + vertical_tolerance
@@ -629,7 +777,9 @@ def insert_magnets_into_hemispheres(
         outer_mesh = trimesh.Trimesh(vertices=outer_vertices, faces=outer_faces)
         outer_mesh.fix_normals()
 
-    if add_bosses:
+    if inner_vertices is None:
+        if not allow_bosses:
+            raise ValueError("inner_vertices must be provided for magnet placement without adding bosses.")
         if isinstance(position, (int, float, np.integer, np.floating)):
             longitudes = [position + i * (360.0 / n_magnets) for i in range(n_magnets)]
         else:
@@ -643,9 +793,8 @@ def insert_magnets_into_hemispheres(
             r_enc=r_enc,
             h_boss=h_boss,
         )
+        boss_flags = [True] * len(centers)
     else:
-        if inner_vertices is None:
-            raise ValueError("inner_vertices must be provided for magnet placement without adding bosses.")
         if isinstance(inner_vertices, trimesh.Trimesh):
             inner_mesh = inner_vertices
         else:
@@ -661,7 +810,7 @@ def insert_magnets_into_hemispheres(
             n_mag = len(cand_angles)
             min_mag = len(cand_angles)
 
-        centers, chosen_lons = find_valid_magnet_positions_no_bosses(
+        centers, chosen_lons, boss_flags = find_valid_magnet_positions_no_bosses(
             outer_mesh=outer_mesh,
             inner_mesh=inner_mesh,
             r_enc=r_enc,
@@ -673,6 +822,8 @@ def insert_magnets_into_hemispheres(
             candidate_angles=cand_angles,
             placement_strategy=placement_strategy,
             angle_tolerance=angle_tolerance,
+            allow_bosses=allow_bosses,
+            return_details=True,
         )
 
     top_bosses = []
@@ -680,20 +831,19 @@ def insert_magnets_into_hemispheres(
     bottom_bosses = []
     bottom_voids = []
 
-    for x, y in centers:
-        if add_bosses:
+    for (x, y), needs_boss in zip(centers, boss_flags):
+        if needs_boss:
             tb = trimesh.creation.cylinder(radius=r_enc, height=h_boss)
             tb.apply_translation([x, y, h_boss / 2.0])
             top_bosses.append(tb)
 
-        tv = trimesh.creation.cylinder(radius=r_void, height=h_void)
-        tv.apply_translation([x, y, vertical_offset + h_void / 2.0])
-        top_voids.append(tv)
-
-        if add_bosses:
             bb = trimesh.creation.cylinder(radius=r_enc, height=h_boss)
             bb.apply_translation([x, y, -h_boss / 2.0])
             bottom_bosses.append(bb)
+
+        tv = trimesh.creation.cylinder(radius=r_void, height=h_void)
+        tv.apply_translation([x, y, vertical_offset + h_void / 2.0])
+        top_voids.append(tv)
 
         bv = trimesh.creation.cylinder(radius=r_void, height=h_void)
         bv.apply_translation([x, y, -(vertical_offset + h_void / 2.0)])
@@ -703,7 +853,7 @@ def insert_magnets_into_hemispheres(
     if engine is not None:
         bool_kwargs['engine'] = engine
 
-    if add_bosses:
+    if top_bosses:
         top_with_bosses = trimesh.boolean.union([top_mesh] + top_bosses, **bool_kwargs)
         if top_with_bosses is None:
             raise ValueError("Boolean union of top hemisphere and magnet bosses failed.")
@@ -714,7 +864,7 @@ def insert_magnets_into_hemispheres(
     if top_final is None:
         raise ValueError("Boolean subtraction of top magnet voids failed.")
 
-    if add_bosses:
+    if bottom_bosses:
         bottom_with_bosses = trimesh.boolean.union([bottom_mesh] + bottom_bosses, **bool_kwargs)
         if bottom_with_bosses is None:
             raise ValueError("Boolean union of bottom hemisphere and magnet bosses failed.")

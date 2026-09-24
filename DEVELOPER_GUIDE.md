@@ -280,31 +280,39 @@ For each target longitude on the equatorial cut plane, this function uses a bise
 - Uses `outer_mesh.contains(global_pts)` to perform fast and precise geometric containment checks directly on the watertight displaced outer mesh.
 - Returns a list of optimized `(x, y)` center coordinates.
 
-**`find_valid_magnet_positions_no_bosses(outer_mesh, inner_mesh, r_enc, h_boss, step_degrees=2, n_magnets=3, min_magnets=2, min_angular_spacing=60.0, placement_strategy='cluster_peaks', angle_tolerance=0.0, ...)`**
+**`find_valid_magnet_positions_no_bosses(outer_mesh, inner_mesh, r_enc, h_boss, step_degrees=2, n_magnets=3, min_magnets=2, min_angular_spacing=60.0, placement_strategy='cluster_peaks', angle_tolerance=0.0, allow_bosses=False, return_details=False, ...)`**
+*(Also aliased as `find_optimized_magnet_positions`)*
 
-Evaluates candidate longitudes on the equatorial cut-plane ($Z = 0$) and tests containment of a candidate magnet void completely within the solid shell of the hollowed globe (inside `outer_mesh` and outside `inner_mesh`).
-- **Dual-Bisection Search**: Uses independent monotonic bisections for inner shell clearance ($d_{min}$) and outer shell containment ($d_{max}$). If $d_{min} \le d_{max}$, the void fits within the shell, and the magnet is centered at $d = (d_{min} + d_{max}) / 2$ to maximize clearance from both walls.
+Evaluates candidate longitudes on the equatorial cut-plane ($Z = 0$) and tests containment of candidate magnet voids within the hollowed globe (inside `outer_mesh` and outside `inner_mesh`).
+- **Dual-Bisection Search**: Uses independent monotonic bisections for inner shell clearance ($d_{min}$) and outer shell containment ($d_{max}$).
+  - If $d_{min} \le d_{max}$, the void fits cleanly within the natural shell thickness without adding a boss, and the magnet is centered at $d = (d_{min} + d_{max}) / 2$ to maximize clearance from both walls.
+  - If $d_{min} > d_{max}$ and `allow_bosses=True`, the void is placed at $d = d_{max}$ to push the magnet as far outward into the outer shell as possible, minimizing cavity intrusion depth (and minimizing added plastic material).
+- **Boss Minimization (`allow_bosses=True`)**:
+  - **Stage 1**: The algorithm first attempts to place the requested magnets using **zero bosses** across the valid shell locations.
+  - **Stage 2**: If the shell cannot accommodate all magnets without bosses, a branch-and-bound backtracking optimizer selects angles that **minimizes the number of bosses**, **minimizes the protrusion into the cavity** (material added), and balances angular spacing uniformity.
 - **Placement Strategies**:
   - `'cluster_peaks'` (default): Groups contiguous valid longitudes into continental clusters (handling circular 360° wraparound) and selects the peak wall clearance point in each cluster, prioritizing structural strength. Falls back to uniform spacing if fewer clusters exist than requested magnets.
   - `'uniform'`: Backtracks across all valid angles to maximize angular spacing uniformity (minimizing variance from $360^\circ / k$).
   - `'margin_weighted'`: Optimizes a combined objective balancing angular spacing uniformity and wall clearance margin.
-- **Angle Nudging**: If explicit candidate angles are passed via `candidate_angles` (or `position`) and an angle is slightly outside the solid shell, `angle_tolerance` allows searching within a local window $[\theta - \Delta, \theta + \Delta]$ to find the nearest valid position.
-- Raises `ValueError` if no valid candidate positions fit the void, or if fewer than `min_magnets` can be placed respecting `min_angular_spacing`.
+- **Angle Nudging**: If explicit candidate angles are passed via `candidate_angles` (or `position`) and an angle is slightly outside the solid shell, `angle_tolerance` allows searching within a local window $[\theta - \Delta, \theta + \Delta]$ to find the nearest valid position (or minimize protrusion).
+- Raises `ValueError` if `allow_bosses=False` and no candidate positions fit the void, or if fewer than `min_magnets` can be placed respecting `min_angular_spacing`.
 
 #### Magnet Insertion
 
-**`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, outer_vertices, outer_faces, diameter, height, n_magnets, position, ...)`**
+**`insert_magnets_into_hemispheres(top_mesh, bottom_mesh, outer_vertices, outer_faces, diameter, height, n_magnets, position, allow_bosses=True, ...)`**
 
 Orchestrates the boolean modification of the top and bottom hollow hemispheres:
-1. Determines longitudes for the magnets (either a single start longitude with `n_magnets` spaced evenly, or a custom list of positions).
+1. Determines longitudes for the magnets (either a start longitude or explicit positions).
 2. Optimizes the magnet centers on the XY cut plane:
-   - If `add_bosses=True`, utilizes `optimize_magnet_positions`.
-   - If `add_bosses=False` (magnet placement without adding material/bosses), utilizes `find_valid_magnet_positions_no_bosses` to find positions directly in the solid shell.
-3. Generates the boss cylinders (if `add_bosses=True`) and void cylinders for each position:
-   - For the top hemisphere, bosses are unioned (if added) and voids are subtracted from the solid shell.
-   - For the bottom hemisphere, the same coordinate bosses are unioned (if added) and corresponding voids are subtracted.
-4. Performs these boolean operations using the `trimesh` boolean module.
-5. Returns a tuple of `(top_mesh_with_magnets, bottom_mesh_with_magnets)`.
+   - When inner shell geometry is provided, calls `find_valid_magnet_positions_no_bosses(..., allow_bosses=allow_bosses, return_details=True)`.
+   - When `allow_bosses=True`, automatically minimizes the number of bosses needed and avoids adding bosses where the natural shell is thick enough.
+   - If `inner_vertices is None` (e.g. solid globe core), uses `optimize_magnet_positions` directly.
+3. Generates the boss cylinders and void cylinders:
+   - Boss cylinders are **only generated for the specific magnets that require bosses** (`needs_boss == True`). If no magnets require bosses (or `allow_bosses=False`), the boolean union operation is skipped entirely, keeping the inner cavity smooth and accelerating processing.
+   - For the top hemisphere, any needed bosses are unioned and voids are subtracted.
+   - For the bottom hemisphere, corresponding bosses are unioned and voids are subtracted.
+4. Performs boolean operations using the `trimesh` boolean engine (e.g., `'manifold'`).
+5. Returns a tuple of `(top_mesh_with_magnets, bottom_mesh_with_magnets)`. Note: `add_bosses` is supported as a backward-compatible alias for `allow_bosses`.
 
 #### Calibration Test Piece
 

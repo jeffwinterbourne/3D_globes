@@ -11,7 +11,8 @@ from globe3d.magnets import (
     insert_magnets_into_hemispheres,
     generate_magnet_test_piece,
     _find_optimal_spacing,
-    find_valid_magnet_positions_no_bosses
+    find_valid_magnet_positions_no_bosses,
+    find_optimized_magnet_positions,
 )
 
 
@@ -381,4 +382,127 @@ def test_candidate_angles_with_tolerance_nudge():
     )
     assert len(centers) == 1
     assert abs(chosen_angles[0] - 90.0) > 0.1
+
+
+def test_magnet_settings_allow_bosses_alias():
+    """Verify that allow_bosses and add_bosses alias work symmetrically in MagnetSettings."""
+    # Default is allow_bosses=True
+    s1 = MagnetSettings()
+    assert s1.allow_bosses is True
+    assert s1.add_bosses is True
+
+    # allow_bosses=False
+    s2 = MagnetSettings(allow_bosses=False)
+    assert s2.allow_bosses is False
+    assert s2.add_bosses is False
+
+    # add_bosses=False (backward compatibility alias)
+    s3 = MagnetSettings(add_bosses=False)
+    assert s3.allow_bosses is False
+    assert s3.add_bosses is False
+
+    # add_bosses=True overrides allow_bosses if explicitly specified
+    s4 = MagnetSettings(allow_bosses=False, add_bosses=True)
+    assert s4.allow_bosses is True
+    assert s4.add_bosses is True
+
+
+def test_allow_bosses_thin_shell():
+    """Verify that allow_bosses=True places bosses on thin shells while allow_bosses=False raises ValueError."""
+    ov, of = generate_sphere_points_fibonacci(300, 40.0)
+    iv, if_ = generate_sphere_points_fibonacci(300, 39.0)
+    om = trimesh.Trimesh(vertices=ov, faces=of)
+    im = trimesh.Trimesh(vertices=iv, faces=if_)
+
+    # allow_bosses=False must raise ValueError on thin shell
+    with pytest.raises(ValueError, match="too thin"):
+        find_valid_magnet_positions_no_bosses(
+            om, im, r_enc=3.45, h_boss=3.10, n_magnets=3, allow_bosses=False
+        )
+
+    # allow_bosses=True must succeed and flag all magnets as requiring bosses
+    centers, angles, boss_flags = find_valid_magnet_positions_no_bosses(
+        om, im, r_enc=3.45, h_boss=3.10, n_magnets=3, min_angular_spacing=60.0,
+        allow_bosses=True, return_details=True
+    )
+    assert len(centers) == 3
+    assert len(angles) == 3
+    assert all(boss_flags)  # All 3 require bosses in a 1mm shell
+
+
+def test_allow_bosses_minimizes_boss_count_and_protrusion():
+    """Verify that allow_bosses minimizes the number of bosses needed and protrusion depth.
+
+    Tests variable-thickness model:
+    - For n_magnets=2: both fit in thick regions, so 0 bosses are needed.
+    - For n_magnets=3: requires 1 boss in thin region, so exactly 1 boss is created.
+    """
+    outer_radius = 45.0
+    ov, of = generate_sphere_points_fibonacci(500, outer_radius)
+
+    # Shell is thick around x > 0 (inner radius 32mm) and thin around x < 0 (inner radius 41mm)
+    iv, if_ = generate_sphere_points_fibonacci(500, 36.5)
+    r_in = np.linalg.norm(iv, axis=1)
+    unit_iv = iv / r_in[:, None]
+    var_r_in = 36.5 - 4.5 * unit_iv[:, 0]
+    iv = unit_iv * var_r_in[:, None]
+
+    om = trimesh.Trimesh(vertices=ov, faces=of)
+    im = trimesh.Trimesh(vertices=iv, faces=if_)
+
+    r_enc = 3.45
+    h_boss = 3.10
+
+    # 1. When n_magnets=2 with min_angular_spacing=30: fits with 0 bosses
+    centers2, angles2, boss_flags2 = find_optimized_magnet_positions(
+        om, im, r_enc=r_enc, h_boss=h_boss, step_degrees=5.0,
+        n_magnets=2, min_magnets=2, min_angular_spacing=30.0,
+        allow_bosses=True, return_details=True
+    )
+    assert len(centers2) == 2
+    assert sum(boss_flags2) == 0
+
+    # 2. When n_magnets=3 with min_angular_spacing=110: cannot fit all 3 in thick region (half-sphere)
+    # The algorithm must pick exactly 1 boss in the thin region and 2 zero-boss magnets in the thick region
+    centers3, angles3, boss_flags3 = find_optimized_magnet_positions(
+        om, im, r_enc=r_enc, h_boss=h_boss, step_degrees=5.0,
+        n_magnets=3, min_magnets=3, min_angular_spacing=110.0,
+        allow_bosses=True, return_details=True
+    )
+    assert len(centers3) == 3
+    assert sum(boss_flags3) == 1
+
+
+def test_insert_magnets_with_allow_bosses_pipeline():
+    """Verify that insert_magnets_into_hemispheres works end-to-end with allow_bosses."""
+    outer_radius = 42.0
+    inner_radius = 35.0
+    ov, of = generate_sphere_points_fibonacci(500, outer_radius)
+    iv, if_ = generate_sphere_points_fibonacci(300, inner_radius)
+
+    top, bottom = create_hollow_hemispheres(ov, of, iv, if_, engine='manifold')
+
+    # Configure with allow_bosses=True (thick enough for 0 bosses)
+    settings_no_boss = MagnetSettings(
+        n_magnets=3,
+        diameter=4.0,
+        height=1.5,
+        min_thickness=1.0,
+        allow_bosses=True,
+    )
+    top_res, bot_res = insert_magnets_into_hemispheres(
+        top_mesh=top,
+        bottom_mesh=bottom,
+        outer_vertices=ov,
+        outer_faces=of,
+        inner_vertices=iv,
+        inner_faces=if_,
+        settings=settings_no_boss,
+        engine='manifold',
+    )
+    assert top_res.is_watertight
+    assert bot_res.is_watertight
+    assert top_res.volume > 0
+    assert bot_res.volume > 0
+
 
