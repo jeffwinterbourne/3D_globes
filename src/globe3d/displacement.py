@@ -20,7 +20,8 @@ def _wrap_longitude(lats, lons, grid):
 
     Ensures that the longitude axis extends beyond both -180° and +180° by copying
     data from the opposite edge, allowing RegularGridInterpolator to return valid
-    values at every longitude in [-180, 180]. It also repairs NaN edge columns.
+    values at every longitude in [-180, 180]. It also normalizes [0, 360] grids to
+    [-180, 180] and repairs NaN edge columns.
 
     Args:
         lats (numpy.ndarray): 1D array of latitude coordinates.
@@ -35,6 +36,17 @@ def _wrap_longitude(lats, lons, grid):
 
     lons = np.asarray(lons, dtype=np.float64)
     grid = np.array(grid, copy=True)
+
+    # Normalize [0, 360] longitude grids to [-180, 180]
+    if lons.min() >= -0.1 and lons.max() > 180.0:
+        if np.isclose(lons[-1] - lons[0], 360.0):
+            lons = lons[:-1]
+            grid = grid[:, :-1]
+        lons = np.where(lons > 180.0, lons - 360.0, lons)
+        sort_idx = np.argsort(lons)
+        lons = lons[sort_idx]
+        grid = grid[:, sort_idx]
+
     step = abs(lons[1] - lons[0])
 
     first_all_nan = np.all(np.isnan(grid[:, 0]))
