@@ -314,6 +314,45 @@ class TestExport:
 
         assert os.path.exists(top_path)
 
+    def test_export_3mf(self, tmp_path):
+        """export() with .3mf extension creates valid 3MF archive with colors and settings."""
+        import zipfile
+        import json
+        model = GlobeModel(n_points=100, radius=20.0)
+        colourer = ConstantColourer([0.1, 0.4, 0.8])
+        model.colour(colourer)
+
+        out_path = str(tmp_path / "model.3mf")
+        base_filaments = [
+            {"name": "Blue", "color": [25, 100, 204], "td": 2.0},
+        ]
+        model.export(out_path, base_filaments=base_filaments)
+
+        assert os.path.exists(out_path)
+        with zipfile.ZipFile(out_path, "r") as zf:
+            assert "3D/3dmodel.model" in zf.namelist()
+            assert "Metadata/project_settings.config" in zf.namelist()
+            cfg = json.loads(zf.read("Metadata/project_settings.config"))
+            assert len(cfg["filament_colour"]) >= 1
+
+    def test_export_hemispheres_3mf(self, tmp_path):
+        """export_hemispheres() writes .3mf files for both halves."""
+        import zipfile
+        model = GlobeModel(n_points=200, radius=20.0, hollow=True, inner_n_points=50)
+        colourer = ConstantColourer([0.2, 0.7, 0.3])
+        model.colour(colourer, selection='outward_facing')
+
+        top_path = str(tmp_path / "north.3mf")
+        bot_path = str(tmp_path / "south.3mf")
+        model.export_hemispheres(top_path, bot_path, engine='manifold')
+
+        assert os.path.exists(top_path)
+        assert os.path.exists(bot_path)
+        with zipfile.ZipFile(top_path, "r") as zf:
+            assert "3D/3dmodel.model" in zf.namelist()
+            assert "Metadata/project_settings.config" in zf.namelist()
+
+
 
 # ---------------------------------------------------------------------------
 # calculate_displacement_scale with grid_units

@@ -20,13 +20,15 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Vector SVG stamping & image prep | `image.py` | `add_svg_symbol_spherical(...)`, `add_pole_markers(...)`, `undo_hillshading(...)`, `simplify_colors(...)`, `simplify_image_median(...)` |
 | Filament optical mixing & palettes | `filaments.py` | `mix_filament_pair(...)`, `mix_filaments(...)`, `create_filament_palette(...)`, `match_filament_color(...)` |
 | Banded colormaps for 3D slicing | `filaments.py` / `image.py` | `create_banded_colormap(...)`, `create_elevation_banded_colormap(...)`, `apply_banded_colormap(...)` |
+| Domain presets & spool libraries | `presets.py` | `FILAMENT_PRESETS`, `DEFAULT_ELEVATION_BANDS`, `DEFAULT_ELEVATION_BOUNDARIES` |
+| Interactive Jupyter widgets & GUI | `widgets.py` | `InteractiveColormapBuilder(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
 | Vertex coloring (grid, image, symbols, poles) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `SymbolColourer` (SVG/shapes, `modern`/`paleo`), `PoleLabelColourer` (undistorted 'N'/'S'), `ConstantColourer` |
 | Displacement scale (unit-aware) | `displacement.py` | `calculate_displacement_scale(model_radius_mm, grid_units=...)` |
 | Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
 | Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
-| File export (STL & OBJ with vertex colors) | `mesh.py` / `GlobeModel` | `model.export(...)`, `model.export_hemispheres(...)`, `model.write_stl`, `model.write_obj` |
+| File export (STL, OBJ & OrcaSlicer 3MF) | `mesh.py` / `io.py` | `model.export(...)`, `model.export_hemispheres(...)`, `model.write_3mf(...)`, `write_3mf(...)`, `model.write_stl`, `model.write_obj` |
 | Visual QA & 3D Preview | `plot.py` / `filaments.py` | `plot_globe_preview(...)`, `plot_vertex_distribution(...)`, `plot_filament_palette(...)`, `plot_banded_colormap_preview(...)` |
 
 ---
@@ -50,10 +52,12 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 │       ├── displacement.py    # Vertex displacement & coloring
 │       ├── reconstruction.py  # GPlately/PyGPlates deep-time plate reconstructions
 │       ├── image.py           # Spherical SVG stamping & texture preprocessors
-│       ├── filaments.py       # Full-spectrum optical filament mixing & banded colormaps
+│       ├── filaments.py       # Full-spectrum optical filament mixing & banded colormaps (Headless Backend)
+│       ├── presets.py         # Domain presets, base filament libraries & default elevation bands
+│       ├── widgets.py         # Interactive Jupyter widgets & frontend GUI (InteractiveColormapBuilder)
 │       ├── datasets.py        # Modern Earth/planetary/geophysics & paleo datasets
 │       ├── magnets.py         # Optimization & insertion of magnets
-│       ├── io.py              # STL & OBJ export
+│       ├── io.py              # STL, OBJ & multi-color 3MF export (OrcaSlicer filament mixing)
 │       ├── plot.py            # Matplotlib visual checks & 3D mesh preview
 │       └── assets/            # Builtin SVGs (N, S, star), map metadata & filament weights
 ├── tests/
@@ -342,7 +346,7 @@ Generates a simple cylinder containing a single magnet void. Useful for test-pri
 
 ### `io.py` — File Export
 
-Two export formats (~96 lines), chosen based on whether vertex colors are needed:
+Three export formats chosen based on printer hardware, slicer capabilities, and color requirements:
 
 #### `write_stl_binary(filename, vertices, faces)`
 
@@ -351,6 +355,14 @@ Writes a standard binary STL. Each triangle is stored with its computed face nor
 #### `write_obj_with_vertex_colors(filename, vertices, faces, colors, center, fix_normals)`
 
 Writes an OBJ file using the vertex-color extension (`v x y z r g b`). OBJ indices are 1-based.
+
+#### `write_3mf(filename, vertices, faces, colors, base_filaments, palette, object_name, ...)`
+
+Generates a standards-compliant Open Packaging Conventions (OPC) 3MF package with full Materials & Properties Extension support (`xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"`) and native **OrcaSlicer / Bambu Studio multi-filament mixing compatibility**:
+- **Geometry & Colorgroups**: Generates `3D/3dmodel.model` declaring `<m:colorgroup id="1">` with exact sRGB hex colors (`#RRGGBBAA`) mapped directly to mesh triangles via `pid="1" p1="{idx}"` (and per-vertex `p2`, `p3` across band boundaries).
+- **OrcaSlicer Multi-Material Project Config**: Embeds `Metadata/project_settings.config` with physical base filament spools (`base_filaments`), optical transmission distances (`td`), virtual mixed slots, and micro-layer mixing recipes in `filament_notes`.
+- **Model Metadata**: Embeds `Metadata/model_settings.config` linking the object and plate hierarchy.
+- **Round-Trip Compatibility**: Files can be opened directly in OrcaSlicer or Bambu Studio with all slots pre-configured, or imported into CAD tools like Blender, FreeCAD, and standard 3MF viewers.
 
 > [!IMPORTANT]
 > The `fix_normals` parameter defaults to **False**.  For manifold meshes from boolean operations (e.g. `create_hollow_hemispheres`), normals are already correct and must **not** be overridden — `fix_face_chirality` would flip the inner shell's faces outward, destroying the manifold and causing slicers to fill the hollow.  Set `fix_normals=True` only for simple convex meshes.
@@ -361,15 +373,31 @@ Writes an OBJ file using the vertex-color extension (`v x y z r g b`). OBJ indic
 
 ---
 
-### `filaments.py` — Optical Filament Mixing & Banded Colormaps
+### `filaments.py` — Optical Filament Mixing & Banded Colormaps (Headless Backend)
 
-This module simulates physical multi-material 3D printing optical layer mixing and manages discrete banded hypsometric colormaps:
+This module operates strictly as a headless backend for simulating physical multi-material 3D printing optical layer mixing and hypsometric elevation categorization:
 - **Optical Mixing Engine**: Degree-4 Kubelka-Munk polynomial model predicting perceived optical color blending across semi-translucent base filaments with transmission distances (`td`).
-- **`create_filament_palette`**: Generates printable discrete mixtures across loaded base spools (supports both strict N-layer blends e.g. `total_layers=4` and custom ratio lists).
+- **`create_filament_palette`**: Generates printable discrete mixtures across loaded base spools (supports strict N-layer blends e.g. `total_layers=4` and custom ratio lists).
 - **`create_banded_colormap` / `apply_banded_colormap`**: Generates and applies discrete segmented hypsometric colormaps with automatic latitude axis orientation (`flip_y=True` by default for equirectangular grids with North at the top).
 - **`plot_filament_palette`**: Visualizes palette swatches with bold, luminance-aware integer index labeling (`show_index=True`) for easy reference in colormaps.
 - **`plot_banded_colormap_preview`**: Renders discrete horizontal colorbars with uniform segment spacing (`spacing="uniform"`) so narrow elevation zones remain distinct and readable.
-- **`InteractiveColormapBuilder`**: Interactive `ipywidgets` GUI providing live dropdown selection of filament mixtures, threshold inputs, and real-time dual previews of both the colorbar and the 2D equirectangular map.
+
+---
+
+### `presets.py` — Centralized Domain Presets & Spool Libraries
+
+Houses domain defaults and presets so that core calculation modules remain clean and unencumbered by hardcoded configurations:
+- **`FILAMENT_PRESETS`**: Preconfigured physical spool bundles (`TERRAIN_4`, `CMYKW`, `RBYKW`) with calibrated optical transmission distances (`td`).
+- **`DEFAULT_ELEVATION_BOUNDARIES`**: Default geological threshold values (e.g. `[-1500, -250, 0, 150, 450, 950, 1500]` meters).
+- **`DEFAULT_ELEVATION_BANDS`**: Default zone metadata, naming, and 4-layer optical recipes.
+
+---
+
+### `widgets.py` — Interactive Jupyter Widgets & GUI (Frontend)
+
+Keeps frontend interactive code strictly isolated from backend computational logic:
+- **`InteractiveColormapBuilder`**: Interactive `ipywidgets` GUI providing live dropdown selection of filament mixtures, threshold inputs, dynamic addition and removal of elevation bands, and real-time dual previews of both the colorbar and the 2D equirectangular map.
+
 
 ---
 

@@ -56,15 +56,26 @@ from .filaments import (
     apply_banded_colormap,
     plot_filament_palette,
     plot_banded_colormap_preview,
-    InteractiveColormapBuilder,
-    FILAMENT_PRESETS,
 )
+from .presets import (
+    FILAMENT_PRESETS,
+    DEFAULT_ELEVATION_BANDS,
+    DEFAULT_ELEVATION_BOUNDARIES,
+)
+from .widgets import InteractiveColormapBuilder
+from .io import write_3mf, write_stl_binary, write_obj_with_vertex_colors
 from . import datasets
 from . import image
 from . import reconstruction
 from . import filaments
+from . import presets
+from . import widgets
+from . import io
 
 __all__ = [
+    "write_3mf",
+    "write_stl_binary",
+    "write_obj_with_vertex_colors",
     "GeographicGrid",
     "Displacer",
     "ConstantDisplacer",
@@ -117,9 +128,14 @@ __all__ = [
     "plot_banded_colormap_preview",
     "InteractiveColormapBuilder",
     "FILAMENT_PRESETS",
+    "DEFAULT_ELEVATION_BANDS",
+    "DEFAULT_ELEVATION_BOUNDARIES",
     "datasets",
     "image",
     "reconstruction",
     "filaments",
+    "presets",
+    "widgets",
+    "io",
 ]
 

@@ -980,21 +980,32 @@ class GlobeModel:
     # ------------------------------------------------------------------
 
     def export(self, filename: str, part: str = "outer", include_color: bool = True,
-               fix_normals: bool = False):
+               fix_normals: bool = False, base_filaments=None, palette=None,
+               object_name: str = "globe_model", **kwargs):
         """Exports the model to disk.  File format is inferred from the extension.
 
-        Supported formats: ``.stl`` (binary STL, no color), ``.obj`` (OBJ
-        with vertex colors when *include_color* is ``True``).
+        Supported formats:
+        - ``.stl``: Binary STL format (geometry only).
+        - ``.obj``: Wavefront OBJ format (with vertex colors when *include_color* is ``True``).
+        - ``.3mf``: 3D Manufacturing Format archive (with multi-color filament mixing and
+          OrcaSlicer / Bambu Studio project metadata).
 
         Args:
-            filename (str): Output file path (must end with ``.stl`` or ``.obj``).
+            filename (str): Output file path (must end with ``.stl``, ``.obj``, or ``.3mf``).
             part (str, optional): Part to export — ``'outer'``, ``'inner'``,
                 or ``'combined'``. Defaults to ``'outer'``.
-            include_color (bool, optional): Embed vertex colors (OBJ only).
+            include_color (bool, optional): Embed vertex colors (OBJ and 3MF).
                 Defaults to ``True``.
             fix_normals (bool, optional): Force outward-facing normals via
                 chirality fix (only for simple convex meshes).
                 Defaults to ``False``.
+            base_filaments (sequence, optional): List of physical base filaments loaded in the
+                printer (3MF only). Defaults to None.
+            palette (sequence, optional): Virtual palette or discrete banded elevation records
+                (3MF only). Defaults to None.
+            object_name (str, optional): Name of the 3D model object (3MF only).
+                Defaults to 'globe_model'.
+            **kwargs: Additional parameters forwarded to format-specific writers (e.g. ``color_tolerance``).
 
         Raises:
             ValueError: If the file extension is not supported.
@@ -1006,9 +1017,20 @@ class GlobeModel:
             self.write_stl(filename, part=part)
         elif ext == '.obj':
             self.write_obj(filename, part=part, fix_normals=fix_normals)
+        elif ext == '.3mf':
+            return self.write_3mf(
+                filename,
+                part=part,
+                include_color=include_color,
+                fix_normals=fix_normals,
+                base_filaments=base_filaments,
+                palette=palette,
+                object_name=object_name,
+                **kwargs,
+            )
         else:
             raise ValueError(
-                f"Unsupported file extension '{ext}'. Use '.stl' or '.obj'."
+                f"Unsupported file extension '{ext}'. Use '.stl', '.obj', or '.3mf'."
             )
 
     def export_hemispheres(
@@ -1021,6 +1043,9 @@ class GlobeModel:
         engine: str = 'manifold',
         plane_normal=(0, 0, 1),
         plane_origin=(0, 0, 0),
+        base_filaments=None,
+        palette=None,
+        **kwargs,
     ):
         """Splits, hollows, colors, and exports both hemispheres in one call.
 
@@ -1028,10 +1053,13 @@ class GlobeModel:
         split → hollow → color → write pipeline so the user never needs to
         manually extract colors or import internal writers.
 
+        Supported formats: ``.stl``, ``.obj``, and ``.3mf`` (with OrcaSlicer multi-filament
+        compatibility).
+
         Args:
             top_filename (str): Output path for the top hemisphere.
             bottom_filename (str): Output path for the bottom hemisphere.
-            include_color (bool, optional): Embed vertex colors (OBJ only).
+            include_color (bool, optional): Embed vertex colors (OBJ and 3MF).
                 Defaults to ``True``.
             hollow (bool, optional): Hollow the hemispheres.
                 Defaults to ``True``.
@@ -1042,12 +1070,18 @@ class GlobeModel:
                 Defaults to ``(0, 0, 1)``.
             plane_origin (array-like, optional): Cutting plane origin.
                 Defaults to ``(0, 0, 0)``.
+            base_filaments (sequence, optional): Physical base filaments loaded in the printer
+                (3MF only). Defaults to None.
+            palette (sequence, optional): Virtual palette or discrete banded elevation records
+                (3MF only). Defaults to None.
+            **kwargs: Additional parameters forwarded to format writers (e.g. ``color_tolerance``).
 
         Raises:
             RuntimeError: If hemisphere generation fails.
+            ValueError: If an unsupported file extension is used.
         """
         import os as _os
-        from globe3d.io import write_stl_binary, write_obj_with_vertex_colors
+        from globe3d.io import write_stl_binary, write_obj_with_vertex_colors, write_3mf
 
         top_half, bottom_half = self.generate_hemispheres(
             plane_normal=plane_normal,
@@ -1075,13 +1109,29 @@ class GlobeModel:
                 else:
                     colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
                 write_obj_with_vertex_colors(fname, mesh.vertices, mesh.faces, colors)
+            elif ext == '.3mf':
+                if include_color and hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                    colors = mesh.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
+                else:
+                    colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
+                part_name = _os.path.splitext(_os.path.basename(fname))[0]
+                write_3mf(
+                    fname,
+                    mesh.vertices,
+                    mesh.faces,
+                    colors=colors,
+                    base_filaments=base_filaments,
+                    palette=palette,
+                    object_name=part_name,
+                    **kwargs,
+                )
             else:
                 raise ValueError(
-                    f"Unsupported file extension '{ext}'. Use '.stl' or '.obj'."
+                    f"Unsupported file extension '{ext}'. Use '.stl', '.obj', or '.3mf'."
                 )
 
     # ------------------------------------------------------------------
-    # Legacy export helpers
+    # Export helpers
     # ------------------------------------------------------------------
 
     def write_stl(self, filename: str, part: str = "outer"):
@@ -1097,7 +1147,7 @@ class GlobeModel:
         write_stl_binary(filename, mesh.vertices, mesh.faces)
 
     def write_obj(self, filename: str, part: str = "outer",
-                  center=(0.0, 0.0, 0.0), fix_normals=False):
+                  center=(0.0, 0.0, 0.0), fix_normals: bool = False):
         """Exports the model geometry with vertex colors to an OBJ file.
 
         Args:
@@ -1117,6 +1167,59 @@ class GlobeModel:
             colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
 
         write_obj_with_vertex_colors(filename, mesh.vertices, mesh.faces, colors, center=center, fix_normals=fix_normals)
+
+    def write_3mf(self, filename: str, part: str = "outer",
+                  include_color: bool = True,
+                  base_filaments=None, palette=None,
+                  object_name: str = "globe_model",
+                  fix_normals: bool = False,
+                  center=(0.0, 0.0, 0.0),
+                  color_tolerance: int = 2):
+        """Exports the model geometry and multi-filament colors to a 3MF file.
+
+        Compatible with standard 3MF viewers and OrcaSlicer's multi-filament color mixing.
+
+        Args:
+            filename (str): Path to export the 3MF.
+            part (str, optional): Part to export (``'outer'``, ``'inner'``,
+                or ``'combined'``). Defaults to ``'outer'``.
+            include_color (bool, optional): Embed vertex colors. Defaults to ``True``.
+            base_filaments (sequence, optional): Physical base filaments loaded in the printer.
+                Defaults to None.
+            palette (sequence, optional): Virtual palette or discrete banded elevation records.
+                Defaults to None.
+            object_name (str, optional): Name of the 3D model object. Defaults to ``'globe_model'``.
+            fix_normals (bool, optional): If ``True``, corrects face normals winding order.
+                Defaults to ``False``.
+            center (array-like, optional): Center point for normal correction.
+                Defaults to ``(0, 0, 0)``.
+            color_tolerance (int, optional): Maximum difference per RGB channel (0-255) when matching
+                mesh colors to registered filament slots. Defaults to 2.
+
+        Returns:
+            list of dict: Registered filament slots embedded in the 3MF package.
+        """
+        mesh = self.to_trimesh(part=part)
+        from globe3d.io import write_3mf
+
+        if include_color and hasattr(mesh.visual, "vertex_colors") and mesh.visual.vertex_colors is not None:
+            colors = mesh.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
+        else:
+            colors = np.ones((len(mesh.vertices), 3), dtype=np.float64)
+
+        return write_3mf(
+            filename=filename,
+            vertices=mesh.vertices,
+            faces=mesh.faces,
+            colors=colors,
+            base_filaments=base_filaments,
+            palette=palette,
+            object_name=object_name,
+            fix_normals=fix_normals,
+            center=center,
+            color_tolerance=color_tolerance,
+        )
+
 
 
 

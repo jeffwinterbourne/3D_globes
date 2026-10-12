@@ -94,3 +94,136 @@ def test_write_obj_with_vertex_colors(tmp_path):
     assert lines[2] == "v 1.000000 0.000000 0.000000 0.000000 1.000000 0.000000"
     assert lines[3] == "v 0.000000 1.000000 0.000000 0.000000 0.000000 1.000000"
     assert lines[4] == "f 1 2 3"
+
+
+def test_write_3mf_basic(tmp_path):
+    """write_3mf creates a valid OPC 3MF archive with XML model and OrcaSlicer configs."""
+    import zipfile
+    import json
+    import trimesh
+    from globe3d.io import write_3mf
+
+    filename = tmp_path / "test.3mf"
+    vertices = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    faces = np.array([
+        [0, 1, 2],
+        [0, 2, 3],
+    ])
+    colors = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ])
+
+    slots = write_3mf(str(filename), vertices, faces, colors=colors, object_name="my_model")
+    assert filename.exists()
+    assert len(slots) > 0
+
+    with zipfile.ZipFile(filename, "r") as zf:
+        names = zf.namelist()
+        assert "[Content_Types].xml" in names
+        assert "_rels/.rels" in names
+        assert "3D/3dmodel.model" in names
+        assert "Metadata/project_settings.config" in names
+        assert "Metadata/model_settings.config" in names
+
+        # Validate project settings JSON
+        cfg = json.loads(zf.read("Metadata/project_settings.config"))
+        assert "filament_colour" in cfg
+        assert "filament_transmission_distance" in cfg
+        assert "filament_notes" in cfg
+        assert len(cfg["filament_colour"]) == len(slots)
+
+        # Validate model XML
+        model_xml = zf.read("3D/3dmodel.model").decode("utf-8")
+        assert "<m:colorgroup id=\"1\">" in model_xml
+        assert "my_model" in model_xml
+        assert "<vertex " in model_xml
+        assert "<triangle " in model_xml
+
+    # Verify trimesh can load it
+    mesh = trimesh.load(str(filename))
+    assert mesh is not None
+
+
+def test_write_3mf_with_filaments_and_palette(tmp_path):
+    """write_3mf embeds base filament spools and virtual palette recipes into OrcaSlicer metadata."""
+    import zipfile
+    import json
+    from globe3d.io import write_3mf
+
+    filename = tmp_path / "filaments_test.3mf"
+    vertices = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ])
+    faces = np.array([[0, 1, 2]])
+    colors = np.array([[30, 85, 45], [20, 40, 95], [245, 245, 245]], dtype=np.uint8)
+
+    base_spools = [
+        {"name": "Brown", "color": [90, 50, 30], "td": 2.5},
+        {"name": "Dark Blue", "color": [20, 40, 95], "td": 3.0},
+        {"name": "White", "color": [245, 245, 245], "td": 5.0},
+        {"name": "Dark Green", "color": [30, 85, 45], "td": 2.8},
+    ]
+
+    palette = [
+        {"name": "Shelf", "color": [63, 110, 149], "recipe": "2/4 Dark Blue + 2/4 White", "td": 4.0},
+    ]
+
+    slots = write_3mf(
+        str(filename),
+        vertices,
+        faces,
+        colors=colors,
+        base_filaments=base_spools,
+        palette=palette,
+        object_name="paleo_globe",
+    )
+
+    # Base spools are registered in primary slots
+    assert slots[0]["name"] == "Brown"
+    assert slots[0]["is_base"] is True
+    assert slots[1]["name"] == "Dark Blue"
+    assert slots[2]["name"] == "White"
+    assert slots[3]["name"] == "Dark Green"
+
+    with zipfile.ZipFile(filename, "r") as zf:
+        cfg = json.loads(zf.read("Metadata/project_settings.config"))
+        assert cfg["filament_colour"][0] == "#5A321E"
+        assert cfg["filament_colour"][1] == "#14285F"
+        assert cfg["filament_colour"][2] == "#F5F5F5"
+        assert cfg["filament_colour"][3] == "#1E552D"
+
+
+def test_write_3mf_face_colors(tmp_path):
+    """write_3mf supports per-face color arrays."""
+    from globe3d.io import write_3mf
+
+    filename = tmp_path / "face_colors.3mf"
+    vertices = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    faces = np.array([
+        [0, 1, 2],
+        [0, 2, 3],
+    ])
+    face_colors = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+
+    slots = write_3mf(str(filename), vertices, faces, colors=face_colors)
+    assert filename.exists()
+    assert len(slots) == 2
+
