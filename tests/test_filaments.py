@@ -304,6 +304,31 @@ def test_interactive_colormap_builder():
     cmap2, norm2, colors2, thresholds2, band_names2 = builder.get_colormap()
     assert colors2[0] == palette[3]["color"]
 
+    # Verify single-image preview widget
+    assert hasattr(builder, "preview_image")
+    assert len(builder.preview_image.value) > 0
+
+    # Test Add Band
+    builder._on_add_band(None)
+    assert len(builder.bands_config) == 9
+    assert len(builder.rows) == 9
+    assert len(builder.preview_image.value) > 0
+
+    # Test Delete Band
+    builder._delete_band(2)
+    assert len(builder.bands_config) == 8
+    assert len(builder.rows) == 8
+
+    # Test Sort Bands
+    builder.thresh_inputs[0].value = 8000
+    builder._on_sort_bands(None)
+    assert builder.bands_config[-2]["threshold"] == 8000
+
+    # Test Reset Bands
+    builder._on_reset_bands(None)
+    assert len(builder.bands_config) == 8
+    assert builder.bands_config[0]["threshold"] == -3500
+
     # Test custom bands
     custom_bands = [
         {"index": 0, "threshold": 0, "name": "Sea"},
