@@ -73,6 +73,12 @@ class GeographicGrid:
             self.lons = self.lons[idx]
             self.grid = self.grid[:, idx]
 
+    @property
+    def data(self) -> np.ndarray:
+        """numpy.ndarray: Convenient alias for the 2D grid values array (self.grid)."""
+        return self.grid
+
+
     @classmethod
     def from_netcdf(cls, filename, lat_var='lat', lon_var='lon', data_var='z'):
         """Loads a geographic grid from a NetCDF file.

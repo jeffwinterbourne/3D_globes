@@ -18,6 +18,8 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Deep-time plate reconstructions | `reconstruction.py` / `PlateModel` | `PlateModel(...)`, `reconstruct_points(...)`, `reconstruct_grid(...)` |
 | Paleo datasets & epoch catalog | `datasets.py` / `datasets.paleo` | `datasets.paleo.scotese(...)`, `datasets.paleo.scotese_plate_model(...)`, `datasets.paleo.list_scotese_maps()` |
 | Vector SVG stamping & image prep | `image.py` | `add_svg_symbol_spherical(...)`, `add_pole_markers(...)`, `undo_hillshading(...)`, `simplify_colors(...)`, `simplify_image_median(...)` |
+| Filament optical mixing & palettes | `filaments.py` | `mix_filament_pair(...)`, `mix_filaments(...)`, `create_filament_palette(...)`, `match_filament_color(...)` |
+| Banded colormaps for 3D slicing | `filaments.py` / `image.py` | `create_banded_colormap(...)`, `create_elevation_banded_colormap(...)`, `apply_banded_colormap(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
 | Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `ConstantColourer` |
@@ -25,7 +27,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
 | Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
 | File export (STL & OBJ with vertex colors) | `mesh.py` / `GlobeModel` | `model.export(...)`, `model.export_hemispheres(...)`, `model.write_stl`, `model.write_obj` |
-| Visual QA | `plot.py` | `plot_vertex_distribution` |
+| Visual QA & 3D Preview | `plot.py` / `filaments.py` | `plot_globe_preview(...)`, `plot_vertex_distribution(...)`, `plot_filament_palette(...)`, `plot_banded_colormap_preview(...)` |
 
 ---
 
@@ -48,11 +50,12 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 │       ├── displacement.py    # Vertex displacement & coloring
 │       ├── reconstruction.py  # GPlately/PyGPlates deep-time plate reconstructions
 │       ├── image.py           # Spherical SVG stamping & texture preprocessors
+│       ├── filaments.py       # Full-spectrum optical filament mixing & banded colormaps
 │       ├── datasets.py        # Modern Earth/planetary/geophysics & paleo datasets
 │       ├── magnets.py         # Optimization & insertion of magnets
 │       ├── io.py              # STL & OBJ export
-│       ├── plot.py            # Matplotlib visual checks
-│       └── assets/            # Builtin SVGs (N, S, star) & map catalog metadata
+│       ├── plot.py            # Matplotlib visual checks & 3D mesh preview
+│       └── assets/            # Builtin SVGs (N, S, star), map metadata & filament weights
 ├── tests/
 │   ├── test_mesh.py
 │   ├── test_model_api.py
@@ -62,6 +65,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 │   ├── test_reconstruction.py
 │   ├── test_image.py
 │   ├── test_paleo_datasets.py
+│   ├── test_filaments.py
 │   └── test_notebooks.py
 └── examples/
     ├── example_1_basic_globe.ipynb

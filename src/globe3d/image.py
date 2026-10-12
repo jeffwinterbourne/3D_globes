@@ -660,3 +660,22 @@ def render_2d_array_as_rgb(
     out = palette[indices]
 
     return out
+
+
+def create_banded_colormap(*args, **kwargs):
+    """Creates a discrete ListedColormap and BoundaryNorm for multi-color slicing.
+
+    See :func:`globe3d.filaments.create_banded_colormap` for full documentation.
+    """
+    from .filaments import create_banded_colormap as _cb
+    return _cb(*args, **kwargs)
+
+
+def apply_banded_colormap(*args, **kwargs):
+    """Applies a banded colormap to a 2D scalar array, returning an RGB uint8 image.
+
+    See :func:`globe3d.filaments.apply_banded_colormap` for full documentation.
+    """
+    from .filaments import apply_banded_colormap as _ab
+    return _ab(*args, **kwargs)
+

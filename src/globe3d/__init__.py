@@ -28,7 +28,7 @@ from .displacement import (
 )
 from .magnets import MagnetSettings, generate_magnet_test_piece
 from .mesh import GlobeModel
-from .plot import plot_vertex_distribution
+from .plot import plot_vertex_distribution, plot_globe_preview
 from .reconstruction import PlateModel, reconstruct_points, reconstruct_grid
 from .image import (
     add_svg_symbol_spherical,
@@ -39,9 +39,27 @@ from .image import (
     simplify_colors,
     render_2d_array_as_rgb,
 )
+from .filaments import (
+    parse_color,
+    color_to_hex,
+    rgb_to_lab,
+    delta_e_lab,
+    mix_filament_pair,
+    mix_filaments,
+    mix_filament_pairs_vectorized,
+    create_filament_palette,
+    match_filament_color,
+    create_banded_colormap,
+    create_elevation_banded_colormap,
+    apply_banded_colormap,
+    plot_filament_palette,
+    plot_banded_colormap_preview,
+    FILAMENT_PRESETS,
+)
 from . import datasets
 from . import image
 from . import reconstruction
+from . import filaments
 
 __all__ = [
     "GeographicGrid",
@@ -67,6 +85,7 @@ __all__ = [
     "generate_magnet_test_piece",
     "GlobeModel",
     "plot_vertex_distribution",
+    "plot_globe_preview",
     "PlateModel",
     "reconstruct_points",
     "reconstruct_grid",
@@ -77,7 +96,24 @@ __all__ = [
     "simplify_image_bilateral",
     "simplify_colors",
     "render_2d_array_as_rgb",
+    "parse_color",
+    "color_to_hex",
+    "rgb_to_lab",
+    "delta_e_lab",
+    "mix_filament_pair",
+    "mix_filaments",
+    "mix_filament_pairs_vectorized",
+    "create_filament_palette",
+    "match_filament_color",
+    "create_banded_colormap",
+    "create_elevation_banded_colormap",
+    "apply_banded_colormap",
+    "plot_filament_palette",
+    "plot_banded_colormap_preview",
+    "FILAMENT_PRESETS",
     "datasets",
     "image",
     "reconstruction",
+    "filaments",
 ]
+
