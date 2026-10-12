@@ -355,10 +355,10 @@ def mix_filaments(
 # Standard base filament libraries
 FILAMENT_PRESETS: Dict[str, List[Dict[str, Union[str, Tuple[int, int, int], float]]]] = {
     "TERRAIN_4": [
-        {"name": "Brown", "color": (140, 75, 35), "td": 0.8},
-        {"name": "Dark Blue", "color": (20, 55, 125), "td": 1.0},
+        {"name": "Brown", "color": (142, 68, 28), "td": 0.8},
+        {"name": "Dark Blue", "color": (18, 52, 120), "td": 1.0},
         {"name": "White", "color": (250, 250, 250), "td": 1.5},
-        {"name": "Dark Green", "color": (30, 85, 40), "td": 0.9},
+        {"name": "Dark Green", "color": (32, 95, 42), "td": 0.9},
     ],
     "CMYKW": [
         {"name": "Cyan", "color": (0, 255, 255), "td": 1.0},
@@ -383,6 +383,8 @@ FILAMENT_PRESETS: Dict[str, List[Dict[str, Union[str, Tuple[int, int, int], floa
     ],
 }
 FILAMENT_PRESETS["EARTH_4"] = FILAMENT_PRESETS["TERRAIN_4"]
+FILAMENT_PRESETS["TERRAIN"] = FILAMENT_PRESETS["TERRAIN_4"]
+FILAMENT_PRESETS["EARTH"] = FILAMENT_PRESETS["TERRAIN_4"]
 
 
 def create_filament_palette(
@@ -646,7 +648,8 @@ def create_elevation_banded_colormap(
             dark blue, white, dark green; or 'CMYKW') or custom spool sequence.
             Defaults to 'TERRAIN_4'.
         boundaries (sequence of float, optional): Custom 7 internal threshold values in meters.
-            Defaults to [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0].
+            Defaults to [-1500.0, -250.0, 0.0, 150.0, 450.0, 950.0, 1500.0] for TERRAIN_4,
+            or [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0] for CMYKW.
         name (str, optional): Colormap identifier. Defaults to 'elevation_filament_bands'.
 
     Returns:
@@ -656,17 +659,17 @@ def create_elevation_banded_colormap(
             - band_info: List of dicts specifying zone label, elevation range, RGB color, hex,
               and filament mix recipe for each band.
     """
-    if boundaries is None:
-        thresh = [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0]
-    else:
-        thresh = [float(b) for b in boundaries]
-
-    if len(thresh) != 7:
-        raise ValueError(f"Standard elevation banded colormap requires 7 thresholds, got {len(thresh)}.")
-
     is_cmyk = isinstance(palette, str) and palette.upper() == "CMYKW"
 
     if is_cmyk:
+        if boundaries is None:
+            thresh = [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0]
+        else:
+            thresh = [float(b) for b in boundaries]
+
+        if len(thresh) != 7:
+            raise ValueError(f"Standard elevation banded colormap requires 7 thresholds, got {len(thresh)}.")
+
         c = (0, 255, 255)
         m = (255, 0, 255)
         y = (255, 255, 0)
@@ -724,9 +727,9 @@ def create_elevation_banded_colormap(
         ]
     else:
         # Default 4 base filaments: Brown, Dark Blue, White, Dark Green
-        dark_blue = (20, 55, 125)
-        dark_green = (30, 85, 40)
-        brown = (140, 75, 35)
+        dark_blue = (18, 52, 120)
+        dark_green = (32, 95, 42)
+        brown = (142, 68, 28)
         white = (250, 250, 250)
 
         # If custom spool list provided, match by name or index
@@ -744,6 +747,14 @@ def create_elevation_banded_colormap(
             if "white" in spool_map:
                 white = spool_map["white"]
 
+        if boundaries is None:
+            thresh = [-1500.0, -250.0, 0.0, 150.0, 450.0, 950.0, 1500.0]
+        else:
+            thresh = [float(b) for b in boundaries]
+
+        if len(thresh) != 7:
+            raise ValueError(f"Standard elevation banded colormap requires 7 thresholds, got {len(thresh)}.")
+
         band_specs = [
             {
                 "name": "Abyssal Plain",
@@ -752,40 +763,40 @@ def create_elevation_banded_colormap(
                 "recipe": [("Dark Blue", 1.0)],
             },
             {
-                "name": "Deep Ocean",
+                "name": "Continental Slope",
                 "range": f"{thresh[0]:.0f} to {thresh[1]:.0f} m",
-                "color": mix_filaments([dark_blue, dark_green], [0.80, 0.20]),
-                "recipe": [("Dark Blue", 0.80), ("Dark Green", 0.20)],
+                "color": mix_filaments([dark_blue, dark_green, white], [0.65, 0.15, 0.20]),
+                "recipe": [("Dark Blue", 0.65), ("Dark Green", 0.15), ("White", 0.20)],
             },
             {
-                "name": "Continental Shelf",
+                "name": "Continental Shelf & Shallow Seas",
                 "range": f"{thresh[1]:.0f} to {thresh[2]:.0f} m",
-                "color": mix_filaments([dark_blue, white], [0.60, 0.40]),
-                "recipe": [("Dark Blue", 0.60), ("White", 0.40)],
+                "color": mix_filaments([dark_blue, dark_green, white], [0.30, 0.10, 0.60]),
+                "recipe": [("Dark Blue", 0.30), ("Dark Green", 0.10), ("White", 0.60)],
             },
             {
-                "name": "Shallow Coastal Seas",
+                "name": "Coastal Lowlands",
                 "range": f"{thresh[2]:.0f} to {thresh[3]:.0f} m",
-                "color": mix_filaments([dark_blue, dark_green, white], [0.35, 0.25, 0.40]),
-                "recipe": [("Dark Blue", 0.35), ("Dark Green", 0.25), ("White", 0.40)],
+                "color": mix_filaments([dark_green, brown, white], [0.75, 0.15, 0.10]),
+                "recipe": [("Dark Green", 0.75), ("Brown", 0.15), ("White", 0.10)],
             },
             {
-                "name": "Lowland Plains",
+                "name": "Interior Savanna & Plains",
                 "range": f"{thresh[3]:.0f} to {thresh[4]:.0f} m",
-                "color": mix_filaments([dark_green, white], [0.60, 0.40]),
-                "recipe": [("Dark Green", 0.60), ("White", 0.40)],
+                "color": mix_filaments([dark_green, brown, white], [0.40, 0.35, 0.25]),
+                "recipe": [("Dark Green", 0.40), ("Brown", 0.35), ("White", 0.25)],
             },
             {
-                "name": "Midlands / Hills",
+                "name": "Midlands & Plateaus",
                 "range": f"{thresh[4]:.0f} to {thresh[5]:.0f} m",
-                "color": mix_filaments([dark_green, brown], [0.50, 0.50]),
-                "recipe": [("Dark Green", 0.50), ("Brown", 0.50)],
+                "color": mix_filaments([brown, white, dark_green], [0.55, 0.25, 0.20]),
+                "recipe": [("Brown", 0.55), ("White", 0.25), ("Dark Green", 0.20)],
             },
             {
-                "name": "Highlands / Mountains",
+                "name": "Mountain Ranges",
                 "range": f"{thresh[5]:.0f} to {thresh[6]:.0f} m",
-                "color": brown,
-                "recipe": [("Brown", 1.0)],
+                "color": mix_filaments([brown, white], [0.85, 0.15]),
+                "recipe": [("Brown", 0.85), ("White", 0.15)],
             },
             {
                 "name": "Alpine High Peaks",
