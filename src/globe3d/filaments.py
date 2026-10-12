@@ -674,14 +674,14 @@ def create_elevation_banded_colormap(
     standard 5-spool CMYKW:
 
     TERRAIN_4 Zones (default):
-    1. Abyssal Plain (< -1500 m): 4/4 Dark Blue (Pure)
-    2. Continental Slope (-1500 to -250 m): 2/4 Dark Blue + 1/4 Dark Green + 1/4 White
-    3. Continental Shelf & Shallow Seas (-250 to 0 m): 2/4 Dark Blue + 2/4 White
-    4. Lowland Plains (0 to 150 m): 4/4 Dark Green (Pure Dark Green)
-    5. Interior Savanna & Plains (150 to 450 m): 2/4 Dark Green + 1/4 Brown + 1/4 White
-    6. Midlands & Plateaus (450 to 950 m): 2/4 Brown + 1/4 Dark Green + 1/4 White
-    7. Mountain Ranges (950 to 1500 m): 4/4 Brown (Pure)
-    8. Alpine High Peaks (> 1500 m): 4/4 White (Pure)
+    1. Abyssal (< -2500 m): 4/4 Dark Blue (Pure)
+    2. Deep sea (-2500 to -200 m): 2/4 Dark Blue + 2/4 White
+    3. Continental Shelf (-200 to 0 m): 3/4 White + 1/4 Dark Blue
+    4. Lowlands (0 to 300 m): 4/4 Dark Green (Pure Dark Green)
+    5. High ground (300 to 600 m): 2/4 Dark Green + 1/4 Brown + 1/4 White
+    6. Low mountains (600 to 1000 m): 2/4 White + 1/4 Brown + 1/4 Dark Green
+    7. High mountains (1000 to 1500 m): 3/4 Brown + 1/4 White
+    8. Very high (> 1500 m): 4/4 White (Pure)
 
     CMYKW Zones:
     1. Abyssal Plain (< -4000 m): 2/4 Cyan + 1/4 Magenta + 1/4 Black
@@ -698,7 +698,7 @@ def create_elevation_banded_colormap(
             dark blue, white, dark green; or 'CMYKW') or custom spool sequence.
             Defaults to 'TERRAIN_4'.
         boundaries (sequence of float, optional): Custom 7 internal threshold values in meters.
-            Defaults to [-1500.0, -250.0, 0.0, 150.0, 450.0, 950.0, 1500.0] for TERRAIN_4,
+            Defaults to [-2500.0, -200.0, 0.0, 300.0, 600.0, 1000.0, 1500.0] for TERRAIN_4,
             or [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0] for CMYKW.
         name (str, optional): Colormap identifier. Defaults to 'elevation_filament_bands'.
 
@@ -815,56 +815,56 @@ def create_elevation_banded_colormap(
 
         band_specs = [
             {
-                "name": "Abyssal Plain",
+                "name": "Abyssal",
                 "range": f"< {thresh[0]:.0f} m",
                 "color": dark_blue,
                 "recipe": [("Dark Blue", 1.0)],
                 "layers": "4/4 Dark Blue",
             },
             {
-                "name": "Continental Slope",
+                "name": "Deep sea",
                 "range": f"{thresh[0]:.0f} to {thresh[1]:.0f} m",
-                "color": mix_filaments([dark_blue, dark_green, white], [0.50, 0.25, 0.25]),
-                "recipe": [("Dark Blue", 0.50), ("Dark Green", 0.25), ("White", 0.25)],
-                "layers": "2/4 Dark Blue + 1/4 Dark Green + 1/4 White",
-            },
-            {
-                "name": "Continental Shelf & Shallow Seas",
-                "range": f"{thresh[1]:.0f} to {thresh[2]:.0f} m",
                 "color": mix_filaments([dark_blue, white], [0.50, 0.50]),
                 "recipe": [("Dark Blue", 0.50), ("White", 0.50)],
                 "layers": "2/4 Dark Blue + 2/4 White",
             },
             {
-                "name": "Lowland Plains",
+                "name": "Continental Shelf",
+                "range": f"{thresh[1]:.0f} to {thresh[2]:.0f} m",
+                "color": mix_filaments([white, dark_blue], [0.75, 0.25]),
+                "recipe": [("White", 0.75), ("Dark Blue", 0.25)],
+                "layers": "3/4 White + 1/4 Dark Blue",
+            },
+            {
+                "name": "Lowlands",
                 "range": f"{thresh[2]:.0f} to {thresh[3]:.0f} m",
                 "color": dark_green,
                 "recipe": [("Dark Green", 1.0)],
                 "layers": "4/4 Dark Green",
             },
             {
-                "name": "Interior Savanna & Plains",
+                "name": "High ground",
                 "range": f"{thresh[3]:.0f} to {thresh[4]:.0f} m",
                 "color": mix_filaments([dark_green, brown, white], [0.50, 0.25, 0.25]),
                 "recipe": [("Dark Green", 0.50), ("Brown", 0.25), ("White", 0.25)],
                 "layers": "2/4 Dark Green + 1/4 Brown + 1/4 White",
             },
             {
-                "name": "Midlands & Plateaus",
+                "name": "Low mountains",
                 "range": f"{thresh[4]:.0f} to {thresh[5]:.0f} m",
-                "color": mix_filaments([brown, dark_green, white], [0.50, 0.25, 0.25]),
-                "recipe": [("Brown", 0.50), ("Dark Green", 0.25), ("White", 0.25)],
-                "layers": "2/4 Brown + 1/4 Dark Green + 1/4 White",
+                "color": mix_filaments([white, brown, dark_green], [0.50, 0.25, 0.25]),
+                "recipe": [("White", 0.50), ("Brown", 0.25), ("Dark Green", 0.25)],
+                "layers": "2/4 White + 1/4 Brown + 1/4 Dark Green",
             },
             {
-                "name": "Mountain Ranges",
+                "name": "High mountains",
                 "range": f"{thresh[5]:.0f} to {thresh[6]:.0f} m",
-                "color": brown,
-                "recipe": [("Brown", 1.0)],
-                "layers": "4/4 Brown",
+                "color": mix_filaments([brown, white], [0.75, 0.25]),
+                "recipe": [("Brown", 0.75), ("White", 0.25)],
+                "layers": "3/4 Brown + 1/4 White",
             },
             {
-                "name": "Alpine High Peaks",
+                "name": "Very high",
                 "range": f"> {thresh[6]:.0f} m",
                 "color": white,
                 "recipe": [("White", 1.0)],

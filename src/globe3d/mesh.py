@@ -1013,6 +1013,18 @@ class GlobeModel:
         import os as _os
         ext = _os.path.splitext(filename)[1].lower()
 
+        if part in ("hemispheres", "split") or kwargs.get("split_hemispheres", False):
+            kwargs_copy = dict(kwargs)
+            kwargs_copy.pop("split_hemispheres", None)
+            return self.export_hemispheres(
+                top_filename=filename,
+                bottom_filename=None,
+                include_color=include_color,
+                base_filaments=base_filaments,
+                palette=palette,
+                **kwargs_copy,
+            )
+
         if ext == '.stl':
             self.write_stl(filename, part=part)
         elif ext == '.obj':
@@ -1036,7 +1048,7 @@ class GlobeModel:
     def export_hemispheres(
         self,
         top_filename: str,
-        bottom_filename: str,
+        bottom_filename: str = None,
         include_color: bool = True,
         hollow: bool = True,
         thickness: float = 1.5,
@@ -1045,20 +1057,24 @@ class GlobeModel:
         plane_origin=(0, 0, 0),
         base_filaments=None,
         palette=None,
+        flip_bottom: bool = True,
+        offset_distance: float = None,
         **kwargs,
     ):
-        """Splits, hollows, colors, and exports both hemispheres in one call.
+        """Splits, hollows, colors, and exports hemispheres.
 
-        This is the highest-level export helper — it performs the entire
-        split → hollow → color → write pipeline so the user never needs to
-        manually extract colors or import internal writers.
+        Can export both hemispheres packaged into a single ``.3mf`` project (when ``bottom_filename``
+        is omitted), or into two separate files (when both ``top_filename`` and ``bottom_filename``
+        are specified).
 
         Supported formats: ``.stl``, ``.obj``, and ``.3mf`` (with OrcaSlicer multi-filament
         compatibility).
 
         Args:
-            top_filename (str): Output path for the top hemisphere.
-            bottom_filename (str): Output path for the bottom hemisphere.
+            top_filename (str): Output path for the top hemisphere, or the single 3MF package
+                containing both hemispheres if ``bottom_filename`` is None.
+            bottom_filename (str, optional): Output path for the bottom hemisphere. If None,
+                both hemispheres are packaged into ``top_filename`` (3MF only). Defaults to None.
             include_color (bool, optional): Embed vertex colors (OBJ and 3MF).
                 Defaults to ``True``.
             hollow (bool, optional): Hollow the hemispheres.
@@ -1074,7 +1090,15 @@ class GlobeModel:
                 (3MF only). Defaults to None.
             palette (sequence, optional): Virtual palette or discrete banded elevation records
                 (3MF only). Defaults to None.
+            flip_bottom (bool, optional): When exporting a combined 3MF, whether to rotate the
+                southern hemisphere 180° around the X axis so its flat equatorial face rests on the
+                print bed (Z=0). Defaults to True.
+            offset_distance (float, optional): When exporting a combined 3MF, lateral spacing
+                along X to place both hemispheres side-by-side without collision. Defaults to 1.15 * radius.
             **kwargs: Additional parameters forwarded to format writers (e.g. ``color_tolerance``).
+
+        Returns:
+            str or tuple of str: The single exported file path or ``(top_filename, bottom_filename)``.
 
         Raises:
             RuntimeError: If hemisphere generation fails.
@@ -1094,8 +1118,68 @@ class GlobeModel:
         if top_half is None or bottom_half is None:
             raise RuntimeError("Hemisphere generation failed.")
 
+        # Single-file export (combining both halves into one 3MF package)
+        if bottom_filename is None:
+            ext = _os.path.splitext(top_filename)[1].lower()
+            if ext != '.3mf':
+                raise ValueError(
+                    f"Single-file hemisphere export is only supported for '.3mf' packages, "
+                    f"got '{ext}'. For separate files, provide both top_filename and bottom_filename."
+                )
+
+            top_v = top_half.vertices.copy()
+            top_f = top_half.faces
+            if include_color and hasattr(top_half.visual, 'vertex_colors') and top_half.visual.vertex_colors is not None:
+                top_colors = top_half.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
+            else:
+                top_colors = np.ones((len(top_v), 3), dtype=np.float64)
+
+            bot_v = bottom_half.vertices.copy()
+            bot_f = bottom_half.faces
+            if include_color and hasattr(bottom_half.visual, 'vertex_colors') and bottom_half.visual.vertex_colors is not None:
+                bot_colors = bottom_half.visual.vertex_colors[:, :3].astype(np.float64) / 255.0
+            else:
+                bot_colors = np.ones((len(bot_v), 3), dtype=np.float64)
+
+            # Flip bottom hemisphere upside down so equatorial cut rests on the bed (Z=0)
+            if flip_bottom:
+                bot_v[:, 1] = -bot_v[:, 1]
+                bot_v[:, 2] = -bot_v[:, 2]
+
+            # Place both side-by-side along X
+            if offset_distance is None:
+                r = float(np.max(np.linalg.norm(top_half.vertices, axis=1)))
+                offset_distance = r * 1.15
+
+            top_v[:, 0] -= offset_distance
+            bot_v[:, 0] += offset_distance
+
+            objects = [
+                {
+                    "name": "Northern_Hemisphere",
+                    "vertices": top_v,
+                    "faces": top_f,
+                    "colors": top_colors,
+                },
+                {
+                    "name": "Southern_Hemisphere",
+                    "vertices": bot_v,
+                    "faces": bot_f,
+                    "colors": bot_colors,
+                },
+            ]
+
+            write_3mf(
+                top_filename,
+                objects=objects,
+                base_filaments=base_filaments,
+                palette=palette,
+                **kwargs,
+            )
+            return top_filename
+
+        # Two-file export (separate files for top and bottom)
         for fname, mesh in [(top_filename, top_half), (bottom_filename, bottom_half)]:
-            # Ensure output directory exists
             out_dir = _os.path.dirname(fname)
             if out_dir:
                 _os.makedirs(out_dir, exist_ok=True)
@@ -1117,8 +1201,8 @@ class GlobeModel:
                 part_name = _os.path.splitext(_os.path.basename(fname))[0]
                 write_3mf(
                     fname,
-                    mesh.vertices,
-                    mesh.faces,
+                    vertices=mesh.vertices,
+                    faces=mesh.faces,
                     colors=colors,
                     base_filaments=base_filaments,
                     palette=palette,
@@ -1129,6 +1213,8 @@ class GlobeModel:
                 raise ValueError(
                     f"Unsupported file extension '{ext}'. Use '.stl', '.obj', or '.3mf'."
                 )
+
+        return (top_filename, bottom_filename)
 
     # ------------------------------------------------------------------
     # Export helpers

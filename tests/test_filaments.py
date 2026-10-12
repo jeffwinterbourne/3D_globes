@@ -295,8 +295,8 @@ def test_interactive_colormap_builder():
     assert len(colors) == 8
     assert len(thresholds) == 7
     assert len(band_names) == 8
-    assert band_names[0] == "Abyssal Ocean"
-    assert thresholds[0] == -3500
+    assert band_names[0] == "Abyssal"
+    assert thresholds[0] == -2500
 
     # Test changing a dropdown value
     builder.color_dropdowns[0].value = 3
@@ -327,7 +327,7 @@ def test_interactive_colormap_builder():
     # Test Reset Bands
     builder._on_reset_bands(None)
     assert len(builder.bands_config) == 8
-    assert builder.bands_config[0]["threshold"] == -3500
+    assert builder.bands_config[0]["threshold"] == -2500
 
     # Test custom bands
     custom_bands = [

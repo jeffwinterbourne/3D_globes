@@ -42,18 +42,18 @@ FILAMENT_PRESETS["EARTH"] = FILAMENT_PRESETS["TERRAIN_4"]
 
 # Default internal elevation boundaries in meters for standard banded colormaps
 DEFAULT_ELEVATION_BOUNDARIES: Dict[str, List[float]] = {
-    "TERRAIN_4": [-1500.0, -250.0, 0.0, 150.0, 450.0, 950.0, 1500.0],
+    "TERRAIN_4": [-2500.0, -200.0, 0.0, 300.0, 600.0, 1000.0, 1500.0],
     "CMYKW": [-4000.0, -2000.0, -200.0, 0.0, 500.0, 1500.0, 3000.0],
 }
 
 # Default 8-band hypsometric configuration for InteractiveColormapBuilder and paleo models
 DEFAULT_ELEVATION_BANDS: List[Dict[str, Union[int, float, str, None]]] = [
-    {"index": 1,  "threshold": -3500, "name": "Abyssal Ocean"},
-    {"index": 27, "threshold": -200,  "name": "Continental Slope"},
-    {"index": 13, "threshold": 0,     "name": "Continental Shelf"},
-    {"index": 3,  "threshold": 300,   "name": "Lowland Plains"},
-    {"index": 32, "threshold": 1000,  "name": "Savannas & Plateaus"},
-    {"index": 6,  "threshold": 2200,  "name": "Highlands"},
-    {"index": 0,  "threshold": 4000,  "name": "Mountain Ranges"},
-    {"index": 2,  "threshold": None,  "name": "Glaciers & High Peaks"},
+    {"index": 1,  "threshold": -2500, "name": "Abyssal"},
+    {"index": 13, "threshold": -200,  "name": "Deep sea"},
+    {"index": 16, "threshold": 0,     "name": "Continental Shelf"},
+    {"index": 3,  "threshold": 300,   "name": "Lowlands"},
+    {"index": 32, "threshold": 600,   "name": "High ground"},
+    {"index": 29, "threshold": 1000,  "name": "Low mountains"},
+    {"index": 5,  "threshold": 1500,  "name": "High mountains"},
+    {"index": 2,  "threshold": None,  "name": "Very high"},
 ]

@@ -352,6 +352,57 @@ class TestExport:
             assert "3D/3dmodel.model" in zf.namelist()
             assert "Metadata/project_settings.config" in zf.namelist()
 
+    def test_export_hemispheres_single_3mf(self, tmp_path):
+        """export_hemispheres() with bottom_filename=None packages both halves into a single .3mf file."""
+        import zipfile
+        import json
+        model = GlobeModel(n_points=200, radius=20.0, hollow=True, inner_n_points=50)
+        colourer = ConstantColourer([0.2, 0.7, 0.3])
+        model.colour(colourer, selection='outward_facing')
+
+        single_3mf = str(tmp_path / "globe_hemispheres.3mf")
+        base_filaments = [
+            {"name": "Brown", "color": [90, 50, 30], "td": 2.5},
+            {"name": "Dark Blue", "color": [20, 40, 95], "td": 3.0},
+            {"name": "White", "color": [245, 245, 245], "td": 5.0},
+            {"name": "Dark Green", "color": [30, 85, 45], "td": 2.8},
+        ]
+        palette = [
+            {"name": "Shelf", "color": [63, 110, 149], "recipe": "2/4 Dark Blue + 2/4 White", "td": 4.0},
+        ]
+
+        result_path = model.export_hemispheres(
+            single_3mf,
+            bottom_filename=None,
+            base_filaments=base_filaments,
+            palette=palette,
+            engine="manifold",
+        )
+
+        assert result_path == single_3mf
+        assert os.path.exists(single_3mf)
+        with zipfile.ZipFile(single_3mf, "r") as zf:
+            assert "3D/3dmodel.model" in zf.namelist()
+            assert "Metadata/project_settings.config" in zf.namelist()
+            assert "Metadata/model_settings.config" in zf.namelist()
+
+            # Both hemisphere objects must be defined in the 3D model
+            model_xml = zf.read("3D/3dmodel.model").decode("utf-8")
+            assert 'name="Northern_Hemisphere"' in model_xml
+            assert 'name="Southern_Hemisphere"' in model_xml
+
+            # Check project settings: strictly 4 physical filaments
+            cfg = json.loads(zf.read("Metadata/project_settings.config"))
+            assert len(cfg["filament_colour"]) == 4
+            assert cfg["filament_colour"] == ["#5A321E", "#14285F", "#F5F5F5", "#1E552D"]
+            assert "mixed_filament_definitions" in cfg
+            assert len(cfg["mixed_filament_definitions"]) > 0
+
+            # Check model settings: both objects present on plate
+            model_cfg = zf.read("Metadata/model_settings.config").decode("utf-8")
+            assert 'value="Northern_Hemisphere"' in model_cfg
+            assert 'value="Southern_Hemisphere"' in model_cfg
+
 
 
 # ---------------------------------------------------------------------------

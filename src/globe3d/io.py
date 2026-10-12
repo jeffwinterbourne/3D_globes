@@ -88,11 +88,109 @@ def write_obj_with_vertex_colors(filename, vertices, faces, colors,
         np.savetxt(f, f_data, fmt='f %d %d %d')
 
 
+def build_orca_mixed_definitions(palette, base_filaments):
+    """Builds OrcaSlicer / Snapmaker Orca mixed_filament_definitions string for virtual slots.
+
+    Each virtual mixed filament row follows the FullSpectrum specification:
+    component_a,component_b,enabled,custom,mix_b_percent,pointillism,g<ids>,w<weights>,m<mode>,d<deleted>,o<origin>,u<stable_id>[,manual_pattern]
+    """
+    if not palette or not base_filaments:
+        return ""
+
+    spool_name_to_id = {f["name"].lower(): i + 1 for i, f in enumerate(base_filaments)}
+
+    def get_seq(p):
+        recipe = p.get("recipe", []) if isinstance(p, dict) else []
+        seq = []
+        if isinstance(recipe, list):
+            for item in recipe:
+                if isinstance(item, dict):
+                    spool_name = item.get("spool", "").lower()
+                    sid = spool_name_to_id.get(spool_name)
+                    if sid is None:
+                        for sname, s_id in spool_name_to_id.items():
+                            if sname in spool_name or spool_name in sname:
+                                sid = s_id
+                                break
+                    seq.extend([sid if sid is not None else 1] * max(1, item.get("layers", int(round(item.get("weight", 1.0) * 4)))))
+                elif isinstance(item, tuple) and len(item) == 2:
+                    spool_name = str(item[0]).lower()
+                    sid = spool_name_to_id.get(spool_name)
+                    if sid is None:
+                        for sname, s_id in spool_name_to_id.items():
+                            if sname in spool_name or spool_name in sname:
+                                sid = s_id
+                                break
+                    weight = float(item[1])
+                    layers = int(round(weight * 4))
+                    seq.extend([sid if sid is not None else 1] * max(1, layers))
+        elif isinstance(recipe, str) and recipe.strip():
+            import re
+            parts = [part.strip() for part in recipe.split("+") if part.strip()]
+            for part in parts:
+                m = re.match(r"^(?:(\d+)\s*/\s*(\d+)|(\d+)\s*%)?\s*(.*)$", part)
+                if m:
+                    num, denom, pct, name = m.groups()
+                    name = name.strip().lower()
+                    sid = spool_name_to_id.get(name)
+                    if sid is None:
+                        for sname, s_id in spool_name_to_id.items():
+                            if sname in name or name in sname:
+                                sid = s_id
+                                break
+                    if sid is None:
+                        sid = 1
+                    if num and denom:
+                        layers = max(1, int(round(int(num) / int(denom) * 4)))
+                    elif pct:
+                        layers = max(1, int(round(int(pct) / 100.0 * 4)))
+                    else:
+                        layers = 1
+                    seq.extend([sid] * layers)
+        if not seq:
+            seq = [1]
+        return seq
+
+    rows = []
+    for i, p in enumerate(palette):
+        seq = get_seq(p)
+        if not seq:
+            continue
+        stable_id = 1000 + i
+        unique_ids = list(dict.fromkeys(int(c) for c in seq))
+        n_unique = len(unique_ids)
+        if n_unique <= 1:
+            fid = unique_ids[0] if unique_ids else 1
+            row = f"{fid},{fid},1,1,0,0,g,w,m2,d0,o0,u{stable_id}"
+        elif n_unique == 2:
+            fid_a, fid_b = unique_ids[0], unique_ids[1]
+            count_a = seq.count(fid_a)
+            count_b = seq.count(fid_b)
+            total = count_a + count_b
+            mix_b_pct = round(count_b / total * 100) if total > 0 else 50
+            row = f"{fid_a},{fid_b},1,1,{mix_b_pct},0,g,w,m2,d0,o0,u{stable_id}"
+        else:
+            grad_ids = "".join(str(x) for x in unique_ids)
+            total = len(seq)
+            weights = [round(seq.count(fid) / total * 100) for fid in unique_ids]
+            diff = 100 - sum(weights)
+            if diff != 0:
+                weights[0] += diff
+            grad_w = "/".join(str(w) for w in weights)
+            pattern = ",".join(str(x) for x in seq)
+            fid_a, fid_b = unique_ids[0], unique_ids[-1]
+            mix_b_pct = weights[-1]
+            row = f"{fid_a},{fid_b},1,1,{mix_b_pct},0,g{grad_ids},w{grad_w},m2,d0,o0,u{stable_id},{pattern}"
+        rows.append(row)
+    return ";".join(rows)
+
+
 def write_3mf(
     filename,
-    vertices,
-    faces,
+    vertices=None,
+    faces=None,
     colors=None,
+    objects=None,
     base_filaments=None,
     palette=None,
     object_name="globe_model",
@@ -100,29 +198,34 @@ def write_3mf(
     center=(0.0, 0.0, 0.0),
     color_tolerance=2,
 ):
-    """Writes a mesh with multi-filament colors to a 3MF package compatible with OrcaSlicer.
+    """Writes one or more meshes with multi-filament colors to a 3MF package compatible with OrcaSlicer.
 
     Generates a standards-compliant 3MF package (Core Specification and Materials & Properties
     Extension) containing `<m:colorgroup>` definitions mapped to mesh triangles. In addition,
-    embeds OrcaSlicer / Bambu Studio project configuration metadata
+    embeds OrcaSlicer / Snapmaker Orca project configuration metadata
     (`Metadata/project_settings.config` and `Metadata/model_settings.config`) specifying physical
-    base filament spools, virtual mixed filament slots, transmission distances (`td`), and
-    micro-layer mixing recipes.
+    base filament spools in `filament_colour`, virtual mixed filament slots in `mixed_filament_definitions`,
+    transmission distances (`td`), and micro-layer mixing recipes.
 
     Args:
         filename (str): Output file path (must end with .3mf).
-        vertices (numpy.ndarray): Array of shape (n_points, 3) representing vertex coordinates.
-        faces (numpy.ndarray): Array of shape (n_faces, 3) representing face vertex indices.
+        vertices (numpy.ndarray, optional): Array of shape (n_points, 3) representing vertex coordinates.
+        faces (numpy.ndarray, optional): Array of shape (n_faces, 3) representing face vertex indices.
         colors (numpy.ndarray, optional): Array of shape (n_points, 3/4) or (n_faces, 3/4)
             representing RGB or RGBA colors in either [0, 1] float or [0, 255] uint8.
             If None, all faces default to white. Defaults to None.
+        objects (list of dict, optional): List of object dictionaries, each containing:
+            ``'name'`` (str), ``'vertices'`` (ndarray), ``'faces'`` (ndarray), and optionally
+            ``'colors'`` (ndarray). Used for packaging multiple meshes (e.g. both hemispheres).
+            Defaults to None.
         base_filaments (sequence, optional): List of physical base filaments loaded in the printer
             (e.g. from `FILAMENT_PRESETS` or custom filament dictionaries). These are mapped
             to the primary physical AMS/extruder slots. Defaults to None.
         palette (sequence, optional): List of virtual palette entries or discrete elevation band
             records (from `create_filament_palette` or `create_elevation_banded_colormap`).
             Defaults to None.
-        object_name (str, optional): Name of the 3D model object. Defaults to 'globe_model'.
+        object_name (str, optional): Name of the 3D model object when `objects` is None.
+            Defaults to 'globe_model'.
         fix_normals (bool, optional): If True, applies `fix_face_chirality` to force face normals
             to point away from `center`. Defaults to False.
         center (array-like, optional): Center of the mesh for normal correction.
@@ -143,43 +246,61 @@ def write_3mf(
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    vertices = np.asarray(vertices, dtype=np.float64)
-    faces = np.asarray(faces, dtype=np.int32)
-
-    if fix_normals:
-        faces_out = fix_face_chirality(vertices, faces, center)
+    # 1. Normalize objects
+    if objects is None:
+        if vertices is None or faces is None:
+            raise ValueError("Either 'objects' or both 'vertices' and 'faces' must be provided.")
+        raw_objects = [{
+            "name": object_name,
+            "vertices": vertices,
+            "faces": faces,
+            "colors": colors,
+        }]
     else:
-        faces_out = faces
+        raw_objects = list(objects)
 
-    n_vertices = len(vertices)
-    n_faces = len(faces_out)
+    processed_objects = []
+    for idx, obj in enumerate(raw_objects):
+        obj_name = obj.get("name", f"object_{idx + 1}")
+        v = np.asarray(obj["vertices"], dtype=np.float64)
+        f = np.asarray(obj["faces"], dtype=np.int32)
+        if fix_normals:
+            f = fix_face_chirality(v, f, center)
 
-    # 1. Normalize colors into uint8 RGB array (N x 3)
-    if colors is None:
-        c_array = np.full((n_vertices, 3), 255, dtype=np.uint8)
-        color_per_vertex = True
-    else:
-        c_arr = np.asarray(colors)
-        if c_arr.dtype in (np.float32, np.float64):
-            if c_arr.max() <= 1.0 + 1e-4:
-                c_arr = np.clip(np.round(c_arr * 255.0), 0, 255).astype(np.uint8)
-            else:
-                c_arr = np.clip(np.round(c_arr), 0, 255).astype(np.uint8)
-        elif c_arr.dtype != np.uint8:
-            c_arr = np.clip(np.round(c_arr), 0, 255).astype(np.uint8)
-
-        if c_arr.ndim == 2 and c_arr.shape[-1] >= 3:
-            c_arr = c_arr[:, :3]
-
-        if len(c_arr) == n_vertices:
+        c = obj.get("colors")
+        n_v = len(v)
+        n_f = len(f)
+        if c is None:
+            c_arr = np.full((n_v, 3), 255, dtype=np.uint8)
             color_per_vertex = True
-            c_array = c_arr
-        elif len(c_arr) == n_faces:
-            color_per_vertex = False
-            c_array = c_arr
         else:
-            color_per_vertex = True
-            c_array = np.full((n_vertices, 3), 255, dtype=np.uint8)
+            c_arr = np.asarray(c)
+            if c_arr.dtype in (np.float32, np.float64):
+                if c_arr.max() <= 1.0 + 1e-4:
+                    c_arr = np.clip(np.round(c_arr * 255.0), 0, 255).astype(np.uint8)
+                else:
+                    c_arr = np.clip(np.round(c_arr), 0, 255).astype(np.uint8)
+            elif c_arr.dtype != np.uint8:
+                c_arr = np.clip(np.round(c_arr), 0, 255).astype(np.uint8)
+
+            if c_arr.ndim == 2 and c_arr.shape[-1] >= 3:
+                c_arr = c_arr[:, :3]
+
+            if len(c_arr) == n_v:
+                color_per_vertex = True
+            elif len(c_arr) == n_f:
+                color_per_vertex = False
+            else:
+                color_per_vertex = True
+                c_arr = np.full((n_v, 3), 255, dtype=np.uint8)
+
+        processed_objects.append({
+            "name": obj_name,
+            "vertices": v,
+            "faces": f,
+            "colors": c_arr,
+            "color_per_vertex": color_per_vertex,
+        })
 
     # 2. Build filament and color slot registry
     slots = []  # list of dicts: {'name', 'color': (R,G,B), 'hex', 'td', 'recipe', 'is_base'}
@@ -188,9 +309,9 @@ def write_3mf(
     def _find_or_add_slot(name, rgb, td=1.0, recipe=None, is_base=False):
         rgb_tuple = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
         # Check if matching slot exists within color_tolerance
-        for idx, (existing_rgb, s) in enumerate(zip(registered_rgbs, slots)):
-            if max(abs(rgb_tuple[c] - existing_rgb[c]) for c in range(3)) <= color_tolerance:
-                return idx
+        for s_idx, (existing_rgb, s) in enumerate(zip(registered_rgbs, slots)):
+            if max(abs(rgb_tuple[ch] - existing_rgb[ch]) for ch in range(3)) <= color_tolerance:
+                return s_idx
 
         hex_c = color_to_hex(rgb_tuple)
         rec_str = str(recipe) if recipe is not None else (f"100% {name}" if is_base else "Direct Color")
@@ -202,10 +323,10 @@ def write_3mf(
             "recipe": rec_str,
             "is_base": is_base,
         }
-        idx = len(slots)
+        s_idx = len(slots)
         slots.append(slot_info)
         registered_rgbs.append(rgb_tuple)
-        return idx
+        return s_idx
 
     # Register physical base spools first
     if base_filaments:
@@ -231,8 +352,13 @@ def write_3mf(
                 if isinstance(recipe_data, list):
                     parts = []
                     for r in recipe_data:
-                        sp = r.get("spool", "Spool")
-                        w = r.get("weight", 1.0)
+                        if isinstance(r, dict):
+                            sp = r.get("spool", "Spool")
+                            w = r.get("weight", 1.0)
+                        elif isinstance(r, tuple) and len(r) == 2:
+                            sp, w = str(r[0]), float(r[1])
+                        else:
+                            sp, w = str(r), 1.0
                         parts.append(f"{w:.0%} {sp}" if w <= 1.0 else f"{w} {sp}")
                     recipe_str = " + ".join(parts)
                 else:
@@ -245,40 +371,48 @@ def write_3mf(
             _find_or_add_slot(name, rgb, td=td, recipe=recipe_str, is_base=False)
 
     # Register any remaining mesh colors not covered by base spools or palette
-    unique_mesh_colors = np.unique(c_array, axis=0)
-    for rgb in unique_mesh_colors:
-        hex_c = color_to_hex(rgb)
-        _find_or_add_slot(f"Color {hex_c}", rgb, td=1.0, recipe="Direct Vertex Color", is_base=False)
-
-    # 3. Map mesh colors to slot indices
-    if color_per_vertex:
-        v_indices = np.zeros(n_vertices, dtype=np.int32)
+    for p_obj in processed_objects:
+        unique_mesh_colors = np.unique(p_obj["colors"], axis=0)
         for rgb in unique_mesh_colors:
-            idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
-            mask = np.all(c_array == rgb, axis=1)
-            v_indices[mask] = idx
+            hex_c = color_to_hex(rgb)
+            _find_or_add_slot(f"Color {hex_c}", rgb, td=1.0, recipe="Direct Vertex Color", is_base=False)
 
-        f_p1 = v_indices[faces_out[:, 0]]
-        f_p2 = v_indices[faces_out[:, 1]]
-        f_p3 = v_indices[faces_out[:, 2]]
-    else:
-        f_indices = np.zeros(n_faces, dtype=np.int32)
-        for rgb in unique_mesh_colors:
-            idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
-            mask = np.all(c_array == rgb, axis=1)
-            f_indices[mask] = idx
-        f_p1 = f_indices
-        f_p2 = f_indices
-        f_p3 = f_indices
+    # 3. Map each object's colors to slot indices
+    for p_obj in processed_objects:
+        v = p_obj["vertices"]
+        f = p_obj["faces"]
+        c_arr = p_obj["colors"]
+        unique_mesh_colors = np.unique(c_arr, axis=0)
+
+        if p_obj["color_per_vertex"]:
+            v_indices = np.zeros(len(v), dtype=np.int32)
+            for rgb in unique_mesh_colors:
+                slot_idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
+                mask = np.all(c_arr == rgb, axis=1)
+                v_indices[mask] = slot_idx
+
+            p_obj["f_p1"] = v_indices[f[:, 0]]
+            p_obj["f_p2"] = v_indices[f[:, 1]]
+            p_obj["f_p3"] = v_indices[f[:, 2]]
+        else:
+            f_indices = np.zeros(len(f), dtype=np.int32)
+            for rgb in unique_mesh_colors:
+                slot_idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
+                mask = np.all(c_arr == rgb, axis=1)
+                f_indices[mask] = slot_idx
+            p_obj["f_p1"] = f_indices
+            p_obj["f_p2"] = f_indices
+            p_obj["f_p3"] = f_indices
 
     # 4. Assemble 3D/3dmodel.model XML
+    main_title = processed_objects[0]["name"] if len(processed_objects) == 1 else "globe_hemispheres"
     model_xml_parts = [
         '<?xml version="1.0" encoding="UTF-8"?>\n',
         '<model unit="millimeter" xml:lang="en-US" '
         'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
         'xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">\n',
-        f'  <metadata name="Title">{object_name}</metadata>\n',
-        '  <metadata name="Application">globe3d</metadata>\n',
+        f'  <metadata name="Title">{main_title}</metadata>\n',
+        '  <metadata name="Application">OrcaSlicer</metadata>\n',
         '  <resources>\n',
         '    <m:colorgroup id="1">\n',
     ]
@@ -289,38 +423,45 @@ def write_3mf(
             hex_c = "#" + hex_c
         model_xml_parts.append(f'      <m:color color="{hex_c}FF"/>\n')
 
-    model_xml_parts.extend([
-        '    </m:colorgroup>\n',
-        f'    <object id="2" name="{object_name}" type="model">\n',
-        '      <mesh>\n',
-        '        <vertices>\n',
-    ])
+    model_xml_parts.append('    </m:colorgroup>\n')
 
-    for v in vertices:
-        model_xml_parts.append(f'          <vertex x="{v[0]:.4f}" y="{v[1]:.4f}" z="{v[2]:.4f}"/>\n')
+    for i, p_obj in enumerate(processed_objects):
+        obj_id = 2 + i
+        model_xml_parts.extend([
+            f'    <object id="{obj_id}" name="{p_obj["name"]}" type="model">\n',
+            '      <mesh>\n',
+            '        <vertices>\n',
+        ])
 
-    model_xml_parts.extend([
-        '        </vertices>\n',
-        '        <triangles>\n',
-    ])
+        for v in p_obj["vertices"]:
+            model_xml_parts.append(f'          <vertex x="{v[0]:.4f}" y="{v[1]:.4f}" z="{v[2]:.4f}"/>\n')
 
-    same_mask = (f_p1 == f_p2) & (f_p2 == f_p3)
-    for (v1, v2, v3), is_same, p1, p2, p3 in zip(faces_out, same_mask, f_p1, f_p2, f_p3):
-        if is_same:
-            model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}"/>\n')
-        else:
-            model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}" p2="{p2}" p3="{p3}"/>\n')
+        model_xml_parts.extend([
+            '        </vertices>\n',
+            '        <triangles>\n',
+        ])
 
-    model_xml_parts.extend([
-        '        </triangles>\n',
-        '      </mesh>\n',
-        '    </object>\n',
-        '  </resources>\n',
-        '  <build>\n',
-        '    <item objectid="2"/>\n',
-        '  </build>\n',
-        '</model>',
-    ])
+        f = p_obj["faces"]
+        f_p1 = p_obj["f_p1"]
+        f_p2 = p_obj["f_p2"]
+        f_p3 = p_obj["f_p3"]
+        same_mask = (f_p1 == f_p2) & (f_p2 == f_p3)
+        for (v1, v2, v3), is_same, p1, p2, p3 in zip(f, same_mask, f_p1, f_p2, f_p3):
+            if is_same:
+                model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}"/>\n')
+            else:
+                model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}" p2="{p2}" p3="{p3}"/>\n')
+
+        model_xml_parts.extend([
+            '        </triangles>\n',
+            '      </mesh>\n',
+            '    </object>\n',
+        ])
+
+    model_xml_parts.append('  </resources>\n  <build>\n')
+    for i in range(len(processed_objects)):
+        model_xml_parts.append(f'    <item objectid="{2 + i}"/>\n')
+    model_xml_parts.append('  </build>\n</model>')
 
     model_xml_str = "".join(model_xml_parts)
 
@@ -343,55 +484,95 @@ def write_3mf(
         '</Relationships>'
     )
 
-    filament_colours = [s["hex"].upper() for s in slots]
-    filament_types = ["PLA"] * len(slots)
-    filament_tds = [f"{s['td']:.2f}" for s in slots]
-    filament_notes = [
-        f"{s['name']} | {s['recipe']} | TD: {s['td']:.2f}mm" for s in slots
-    ]
+    # In OrcaSlicer / Snapmaker Orca:
+    # `filament_colour` defines physical spools loaded in AMS/toolchanger.
+    # Virtual blends are defined in `mixed_filament_definitions`.
+    if base_filaments:
+        phys_slots = [s for s in slots if s["is_base"]]
+        filament_colours = [s["hex"].upper() for s in phys_slots]
+        filament_types = ["PLA"] * len(phys_slots)
+        filament_tds = [f"{s['td']:.2f}" for s in phys_slots]
+        filament_notes = [
+            f"{s['name']} (Physical Spool {idx+1}) | TD: {s['td']:.2f}mm"
+            for idx, s in enumerate(phys_slots)
+        ]
+        filament_vendors = ["Generic"] * len(phys_slots)
+        filament_densities = ["1.24"] * len(phys_slots)
+        defs_str = build_orca_mixed_definitions(palette, base_filaments)
+    else:
+        disp_slots = slots[:16]
+        filament_colours = [s["hex"].upper() for s in disp_slots]
+        filament_types = ["PLA"] * len(disp_slots)
+        filament_tds = [f"{s['td']:.2f}" for s in disp_slots]
+        filament_notes = [f"{s['name']}" for s in disp_slots]
+        filament_vendors = ["Generic"] * len(disp_slots)
+        filament_densities = ["1.24"] * len(disp_slots)
+        defs_str = ""
 
     project_settings = {
-        "version": "1.0.0",
+        "version": "01.09.04.52",
+        "name": "OrcaSlicer FullSpectrum Project",
+        "from": "project",
         "filament_colour": filament_colours,
         "filament_type": filament_types,
         "filament_transmission_distance": filament_tds,
         "filament_notes": filament_notes,
-        "filament_vendor": ["Generic"] * len(slots),
-        "filament_density": ["1.24"] * len(slots),
-        "color_mix": {
-            "slots": [
-                {
-                    "slot_id": i + 1,
-                    "name": s["name"],
-                    "color": s["hex"],
-                    "td": s["td"],
-                    "recipe": s["recipe"],
-                    "is_base": s["is_base"],
-                }
-                for i, s in enumerate(slots)
-            ]
-        },
+        "filament_vendor": filament_vendors,
+        "filament_density": filament_densities,
+    }
+
+    if defs_str:
+        project_settings["mixed_filament_definitions"] = defs_str
+        project_settings["mixed_color_layer_height_a"] = "0.08"
+        project_settings["mixed_color_layer_height_b"] = "0.08"
+        project_settings["dithering_z_step_size"] = "0.08"
+        project_settings["dithering_step_size"] = "0.08"
+        project_settings["dithering_cadence_height_a"] = "0.08"
+        project_settings["dithering_cadence_height_b"] = "0.08"
+        project_settings["dithering_local_z_mode"] = "1"
+        project_settings["dithering_step_painted_zones_only"] = "1"
+        project_settings["mixed_filament_advanced_dithering"] = "0"
+        project_settings["mixed_filament_gradient_mode"] = "0"
+        project_settings["mixed_filament_height_lower_bound"] = "0.04"
+        project_settings["mixed_filament_height_upper_bound"] = "0.32"
+
+    project_settings["color_mix"] = {
+        "physical_spools": [
+            {"slot_id": i + 1, "name": s["name"], "color": s["hex"], "td": s["td"]}
+            for i, s in enumerate(slots) if s["is_base"]
+        ],
+        "virtual_slots": [
+            {"virtual_id": 5 + i, "name": s["name"], "color": s["hex"], "td": s["td"], "recipe": s["recipe"]}
+            for i, s in enumerate(slots) if not s["is_base"]
+        ]
     }
     project_settings_json = json.dumps(project_settings, indent=2)
 
-    model_settings_xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<config>\n'
-        '  <plate>\n'
-        '    <metadata key="plater_id" value="1"/>\n'
-        '    <metadata key="plater_name" value="Plate 1"/>\n'
-        '  </plate>\n'
-        '  <object id="2">\n'
-        f'    <metadata key="name" value="{object_name}"/>\n'
-        '    <metadata key="extruder" value="1"/>\n'
-        '    <part id="1" subtype="normal_part">\n'
-        f'      <metadata key="name" value="{object_name}_part"/>\n'
-        '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n'
-        f'      <metadata key="source_file" value="{object_name}.3mf"/>\n'
-        '    </part>\n'
-        '  </object>\n'
-        '</config>'
-    )
+    base_name = os.path.basename(filename)
+    model_settings_lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n',
+        '<config>\n',
+        '  <plate>\n',
+        '    <metadata key="plater_id" value="1"/>\n',
+        '    <metadata key="plater_name" value="Plate 1"/>\n',
+        '  </plate>\n',
+    ]
+    for i, p_obj in enumerate(processed_objects):
+        obj_id = 2 + i
+        name = p_obj["name"]
+        model_settings_lines.extend([
+            f'  <object id="{obj_id}">\n',
+            f'    <metadata key="name" value="{name}"/>\n',
+            '    <metadata key="extruder" value="1"/>\n',
+            '    <part id="1" subtype="normal_part">\n',
+            f'      <metadata key="name" value="{name}_part"/>\n',
+            '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n',
+            f'      <metadata key="source_file" value="{base_name}"/>\n',
+            '    </part>\n',
+            '  </object>\n',
+        ])
+    model_settings_lines.append('</config>')
+    model_settings_xml = "".join(model_settings_lines)
 
     with zipfile.ZipFile(filename, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types)
