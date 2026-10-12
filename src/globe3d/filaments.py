@@ -66,17 +66,20 @@ def parse_color(color: Union[str, Sequence[Union[int, float]], Dict]) -> Tuple[i
         hex_str = color.lstrip("#").strip()
         if len(hex_str) == 3:
             hex_str = "".join(c * 2 for c in hex_str)
-        if len(hex_str) == 6:
-            r = int(hex_str[0:2], 16)
-            g = int(hex_str[2:4], 16)
-            b = int(hex_str[4:6], 16)
-            return (r, g, b)
-        if len(hex_str) == 8:
-            r = int(hex_str[0:2], 16)
-            g = int(hex_str[2:4], 16)
-            b = int(hex_str[4:6], 16)
-            return (r, g, b)
-        raise ValueError(f"Invalid hex color string: '{color}'")
+        if len(hex_str) in (6, 8):
+            try:
+                r = int(hex_str[0:2], 16)
+                g = int(hex_str[2:4], 16)
+                b = int(hex_str[4:6], 16)
+                return (r, g, b)
+            except ValueError:
+                pass
+        try:
+            from matplotlib.colors import to_rgb
+            rf, gf, bf = to_rgb(color)
+            return (int(round(rf * 255.0)), int(round(gf * 255.0)), int(round(bf * 255.0)))
+        except Exception:
+            raise ValueError(f"Invalid color string: '{color}'")
 
     if isinstance(color, (list, tuple, np.ndarray)):
         if len(color) < 3:
@@ -959,15 +962,18 @@ def plot_filament_palette(
     palette: Sequence[Dict],
     title: str = "Filament Palette",
     max_swatches: int = 40,
+    show_index: bool = True,
     figsize: Optional[Tuple[float, float]] = None,
     ax: Optional[plt.Axes] = None,
 ) -> plt.Axes:
-    """Renders a visual swatch preview of a filament palette with recipe annotations.
+    """Renders a visual swatch preview of a filament palette with index or recipe annotations.
 
     Args:
         palette (sequence of dict): Palette items from create_filament_palette or band_specs.
         title (str, optional): Plot title. Defaults to 'Filament Palette'.
         max_swatches (int, optional): Maximum number of swatches to display. Defaults to 40.
+        show_index (bool, optional): Whether to display swatch index numbers (0, 1, 2, ...)
+            inside each bar instead of hex strings. Defaults to True.
         figsize (tuple, optional): Matplotlib figure dimensions. Defaults to dynamic sizing.
         ax (plt.Axes, optional): Target matplotlib axes. Defaults to None.
 
@@ -993,16 +999,17 @@ def plot_filament_palette(
         norm_c = [c / 255.0 for c in rgb]
         ax.bar(idx, 1.0, color=norm_c, edgecolor="black", linewidth=0.8, width=0.9)
 
-        # Label hex with luminance-based text contrast
+        # Label index with luminance-based text contrast
         lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+        label_text = str(idx) if show_index else hex_code
         ax.text(
             idx,
             0.5,
-            hex_code,
+            label_text,
             ha="center",
             va="center",
-            rotation=90,
-            fontsize=7.5,
+            rotation=0 if show_index else 90,
+            fontsize=9.5 if show_index else 7.5,
             fontweight="bold",
             color="white" if lum < 130 else "black",
         )
@@ -1024,6 +1031,7 @@ def plot_banded_colormap_preview(
     boundaries: Sequence[float],
     band_labels: Optional[Sequence[str]] = None,
     title: str = "Banded Colormap Preview",
+    spacing: str = "uniform",
     figsize: Tuple[float, float] = (10.0, 2.0),
     ax: Optional[plt.Axes] = None,
 ) -> plt.Axes:
@@ -1036,6 +1044,8 @@ def plot_banded_colormap_preview(
         band_labels (sequence of str, optional): Optional labels for each discrete band.
             Defaults to None.
         title (str, optional): Title for the colorbar preview. Defaults to 'Banded Colormap Preview'.
+        spacing (str, optional): Spacing of colorbar segments ('uniform' or 'proportional').
+            Defaults to 'uniform' so narrow bands remain distinct and visible.
         figsize (tuple, optional): Dimensions of the figure. Defaults to (10.0, 2.0).
         ax (plt.Axes, optional): Target matplotlib axes. Defaults to None.
 
@@ -1050,30 +1060,223 @@ def plot_banded_colormap_preview(
         cax=ax,
         orientation="horizontal",
         ticks=boundaries,
+        spacing=spacing,
     )
     cbar.set_label(title, fontsize=10, fontweight="bold", labelpad=8)
     cbar.ax.tick_params(labelsize=8)
 
     if band_labels and len(band_labels) == cmap.N:
-        # Place centered labels inside each band
         b_extended = norm.boundaries
         for i, label in enumerate(band_labels):
-            mid_val = 0.5 * (b_extended[i] + b_extended[i + 1])
-            # Determine contrasting text color
+            if spacing == "uniform":
+                x_pos = (i + 0.5) / cmap.N
+                transform = cbar.ax.transAxes
+            else:
+                x_pos = 0.5 * (b_extended[i] + b_extended[i + 1])
+                transform = cbar.ax.get_xaxis_transform()
+
             r, g, b, _ = cmap(i)
             lum = 0.299 * r + 0.587 * g + 0.114 * b
             txt_col = "black" if lum > 0.5 else "white"
             ax.text(
-                mid_val,
+                x_pos,
                 0.5,
                 label,
                 ha="center",
                 va="center",
-                fontsize=7,
+                fontsize=7.5,
                 fontweight="bold",
                 color=txt_col,
-                transform=cbar.ax.get_xaxis_transform(),
+                transform=transform,
             )
 
     plt.tight_layout()
     return ax
+
+
+class InteractiveColormapBuilder:
+    """Interactive Jupyter Widget for designing banded colormaps from physical filaments.
+
+    Allows interactive selection of filament mixtures from an available palette,
+    custom threshold boundary adjustment, and live dual preview of both the discrete
+    colorbar and the 2D equirectangular terrain map.
+    """
+
+    def __init__(
+        self,
+        palette: Sequence[Dict],
+        dem_grid: Optional[object] = None,
+        default_bands: Optional[Sequence[Dict]] = None,
+    ):
+        """Initializes an InteractiveColormapBuilder widget.
+
+        Args:
+            palette (sequence of dict): Palette items from create_filament_palette.
+            dem_grid (GeographicGrid or np.ndarray, optional): Terrain grid for live map preview.
+                Defaults to None.
+            default_bands (sequence of dict, optional): Initial bands configuration.
+                Defaults to rich 8-band geological hypsometric defaults.
+        """
+        try:
+            import ipywidgets as widgets
+        except ImportError:
+            raise ImportError(
+                "InteractiveColormapBuilder requires 'ipywidgets'. "
+                "Please install it via Conda or pip: conda install -c conda-forge ipywidgets"
+            )
+
+        self._widgets = widgets
+        self.palette = list(palette)
+        self.dem_grid = dem_grid
+
+        if default_bands is None:
+            # Rich, authentic geological defaults
+            self.bands_config = [
+                {"index": 1,  "threshold": -3500, "name": "Abyssal Ocean"},
+                {"index": 27, "threshold": -200,  "name": "Continental Slope"},
+                {"index": 13, "threshold": 0,     "name": "Continental Shelf"},
+                {"index": 3,  "threshold": 300,   "name": "Lowland Plains"},
+                {"index": 32, "threshold": 1000,  "name": "Savannas & Plateaus"},
+                {"index": 6,  "threshold": 2200,  "name": "Highlands"},
+                {"index": 0,  "threshold": 4000,  "name": "Mountain Ranges"},
+                {"index": 2,  "threshold": None,  "name": "Glaciers & High Peaks"},
+            ]
+        else:
+            self.bands_config = list(default_bands)
+
+        self._options = [
+            (f"[{i:02d}] {p['name']} ({p.get('hex', '')})", i)
+            for i, p in enumerate(self.palette)
+        ]
+        self._build_ui()
+
+    def _build_ui(self):
+        widgets = self._widgets
+        self.rows = []
+        self.color_dropdowns = []
+        self.thresh_inputs = []
+        self.name_inputs = []
+        self.swatch_htmls = []
+
+        for i, b in enumerate(self.bands_config):
+            name_w = widgets.Text(
+                value=b["name"],
+                layout=widgets.Layout(width="180px"),
+            )
+            color_w = widgets.Dropdown(
+                options=self._options,
+                value=b["index"],
+                layout=widgets.Layout(width="280px"),
+            )
+            hex_c = self.palette[b["index"]]["hex"]
+            swatch_w = widgets.HTML(
+                value=f'<div style="width:24px;height:24px;background-color:{hex_c};border:1px solid #333;border-radius:3px;"></div>',
+                layout=widgets.Layout(width="35px"),
+            )
+
+            is_last = (i == len(self.bands_config) - 1)
+            thresh_val = b["threshold"] if b["threshold"] is not None else 0
+            thresh_w = widgets.IntText(
+                value=thresh_val,
+                disabled=is_last,
+                layout=widgets.Layout(width="100px"),
+            )
+
+            color_w.observe(self._on_change, names="value")
+            thresh_w.observe(self._on_change, names="value")
+            name_w.observe(self._on_change, names="value")
+
+            self.color_dropdowns.append(color_w)
+            self.thresh_inputs.append(thresh_w)
+            self.name_inputs.append(name_w)
+            self.swatch_htmls.append(swatch_w)
+
+            thresh_label = "Upper (m):" if not is_last else "(Top zone)"
+            row = widgets.HBox([
+                widgets.Label(f"Band {i+1}:", layout=widgets.Layout(width="60px")),
+                name_w,
+                color_w,
+                swatch_w,
+                widgets.Label(thresh_label, layout=widgets.Layout(width="80px")),
+                thresh_w,
+            ])
+            self.rows.append(row)
+
+        self.preview_out = widgets.Output()
+        self.container = widgets.VBox([
+            widgets.HTML("<h4>🎨 Interactive Banded Colormap Builder</h4><p>Select filament mixtures from the palette and adjust elevation thresholds:</p>"),
+            widgets.VBox(self.rows),
+            self.preview_out,
+        ])
+        self._update_preview()
+
+    def _on_change(self, change):
+        for i, (drop, swatch) in enumerate(zip(self.color_dropdowns, self.swatch_htmls)):
+            hex_c = self.palette[drop.value]["hex"]
+            swatch.value = f'<div style="width:24px;height:24px;background-color:{hex_c};border:1px solid #333;border-radius:3px;"></div>'
+        self._update_preview()
+
+    def get_colormap(self) -> Tuple[ListedColormap, BoundaryNorm, List[Tuple[int, int, int]], List[float], List[str]]:
+        """Returns the currently configured colormap, norm, colors, thresholds, and labels.
+
+        Returns:
+            tuple: (cmap, norm, selected_colors, thresholds, band_names).
+        """
+        colors = [self.palette[d.value]["color"] for d in self.color_dropdowns]
+        thresholds = [t.value for t in self.thresh_inputs[:-1]]
+        band_names = [n.value for n in self.name_inputs]
+        cmap, norm = create_banded_colormap(colors, thresholds)
+        return cmap, norm, colors, thresholds, band_names
+
+    def _update_preview(self):
+        from IPython.display import clear_output
+        with self.preview_out:
+            clear_output(wait=True)
+            cmap, norm, colors, thresholds, band_names = self.get_colormap()
+
+            has_grid = self.dem_grid is not None
+            fig_rows = 2 if has_grid else 1
+            fig, axes = plt.subplots(fig_rows, 1, figsize=(14, 3.5 if has_grid else 1.8))
+            if not has_grid:
+                ax_cbar = axes
+            else:
+                ax_cbar, ax_map = axes[0], axes[1]
+
+            plot_banded_colormap_preview(
+                cmap, norm, thresholds, band_labels=band_names, ax=ax_cbar, title="Interactive Banded Colorbar"
+            )
+
+            if has_grid:
+                if isinstance(self.dem_grid, np.ndarray):
+                    raw_arr = self.dem_grid
+                elif hasattr(self.dem_grid, "data") and isinstance(self.dem_grid.data, np.ndarray):
+                    raw_arr = self.dem_grid.data
+                else:
+                    raw_arr = np.asarray(self.dem_grid)
+
+                step_y = max(1, raw_arr.shape[0] // 200)
+                step_x = max(1, raw_arr.shape[1] // 400)
+                sub = raw_arr[::step_y, ::step_x]
+                img = apply_banded_colormap(sub, colors, thresholds, flip_y=True)
+                ax_map.imshow(img)
+                ax_map.set_title("Live 2D Map Preview (North at Top)", fontsize=9, fontweight="bold")
+                ax_map.axis("off")
+
+            plt.tight_layout()
+            backend = plt.get_backend().lower()
+            if any(k in backend for k in ["inline", "ipympl", "widget"]):
+                plt.show()
+            elif "agg" in backend and "tk" not in backend:
+                plt.close(fig)
+            else:
+                plt.show(block=False)
+                plt.close(fig)
+
+    def show(self):
+        """Displays the interactive widget in the Jupyter notebook."""
+        from IPython.display import display
+        display(self.container)
+
+    def _ipython_display_(self):
+        from IPython.display import display
+        display(self.container)

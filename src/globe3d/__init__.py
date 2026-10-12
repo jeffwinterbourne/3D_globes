@@ -56,6 +56,7 @@ from .filaments import (
     apply_banded_colormap,
     plot_filament_palette,
     plot_banded_colormap_preview,
+    InteractiveColormapBuilder,
     FILAMENT_PRESETS,
 )
 from . import datasets
@@ -114,6 +115,7 @@ __all__ = [
     "apply_banded_colormap",
     "plot_filament_palette",
     "plot_banded_colormap_preview",
+    "InteractiveColormapBuilder",
     "FILAMENT_PRESETS",
     "datasets",
     "image",

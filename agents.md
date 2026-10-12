@@ -36,7 +36,7 @@ pip install -e .
     - `reconstruction.py`: `PlateModel` (`gplately`/`pygplates` integration), deep-time coordinate and raster reconstruction (`reconstruct_points()`, `reconstruct_grid()`).
     - `image.py`: Spherical vector symbol rendering (`add_svg_symbol_spherical()`, `add_pole_markers()`), texture preprocessing for 3D printing (`undo_hillshading()`, `simplify_image_median()`, `simplify_image_bilateral()`, `simplify_colors()`, `render_2d_array_as_rgb()`).
     - `datasets.py`: Builtin catalog and fetchers for Earth, planetary, geophysics, and `datasets.paleo` (Scotese PALEOMAP PaleoDEMs, PaleoAtlas textures, plate models).
-    - `filaments.py`: Full-spectrum optical filament mixing (`mix_filament_pair()`, `mix_filaments()`, `create_filament_palette()`, `match_filament_color()`), banded hypsometric colormaps (`create_banded_colormap()`, `create_elevation_banded_colormap()`, `apply_banded_colormap()`), swatch and colorbar plotting.
+    - `filaments.py`: Full-spectrum optical filament mixing (`mix_filament_pair()`, `mix_filaments()`, `create_filament_palette()`, `match_filament_color()`), banded hypsometric colormaps (`create_banded_colormap()`, `create_elevation_banded_colormap()`, `apply_banded_colormap()`), swatch and colorbar plotting (`plot_filament_palette()`, `plot_banded_colormap_preview()`), and interactive Jupyter widget GUI (`InteractiveColormapBuilder`).
     - `magnets.py`: `MagnetSettings` (`allow_bosses`), multi-objective optimization and insertion of magnet voids with boss count and material minimization.
     - `io.py`: Low-level STL & OBJ file export (called internally by `GlobeModel.export`).
     - `plot.py`: Visualization (`plot_vertex_distribution()`, `plot_globe_preview()`).

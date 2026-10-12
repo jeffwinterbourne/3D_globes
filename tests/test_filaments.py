@@ -2,6 +2,8 @@
 
 import numpy as np
 import pytest
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import trimesh
 from globe3d.filaments import (
@@ -19,6 +21,7 @@ from globe3d.filaments import (
     apply_banded_colormap,
     plot_filament_palette,
     plot_banded_colormap_preview,
+    InteractiveColormapBuilder,
     FILAMENT_PRESETS,
 )
 from globe3d.plot import plot_globe_preview
@@ -256,3 +259,59 @@ def test_create_filament_palette_strict_4_layer():
     assert "Dark Blue" in names
     assert "White" in names
     assert "Dark Green" in names
+
+
+def test_plot_filament_palette_show_index():
+    palette = create_filament_palette("TERRAIN_4", total_layers=4)[:4]
+
+    # Test with show_index=True (default)
+    fig, ax = plt.subplots()
+    plot_filament_palette(palette, show_index=True, ax=ax)
+    texts_idx = [t.get_text() for t in ax.texts]
+    assert texts_idx == ["0", "1", "2", "3"]
+    plt.close("all")
+
+    # Test with show_index=False (shows hex code)
+    fig, ax = plt.subplots()
+    plot_filament_palette(palette, show_index=False, ax=ax)
+    texts_hex = [t.get_text() for t in ax.texts]
+    assert all(h.startswith("#") for h in texts_hex)
+    plt.close("all")
+
+
+def test_interactive_colormap_builder():
+    palette = create_filament_palette("TERRAIN_4", total_layers=4)
+    dem_dummy = np.linspace(-5000, 5000, 400).reshape((20, 20))
+
+    # Initialize builder
+    builder = InteractiveColormapBuilder(palette, dem_grid=dem_dummy)
+    assert builder.container is not None
+    assert len(builder.color_dropdowns) == 8
+    assert len(builder.thresh_inputs) == 8
+
+    # Verify get_colormap returns correct structures
+    cmap, norm, colors, thresholds, band_names = builder.get_colormap()
+    assert cmap.N == 8
+    assert len(colors) == 8
+    assert len(thresholds) == 7
+    assert len(band_names) == 8
+    assert band_names[0] == "Abyssal Ocean"
+    assert thresholds[0] == -3500
+
+    # Test changing a dropdown value
+    builder.color_dropdowns[0].value = 3
+    builder._on_change(None)
+    cmap2, norm2, colors2, thresholds2, band_names2 = builder.get_colormap()
+    assert colors2[0] == palette[3]["color"]
+
+    # Test custom bands
+    custom_bands = [
+        {"index": 0, "threshold": 0, "name": "Sea"},
+        {"index": 1, "threshold": None, "name": "Land"},
+    ]
+    custom_builder = InteractiveColormapBuilder(palette, default_bands=custom_bands)
+    cmap_c, norm_c, colors_c, thresh_c, names_c = custom_builder.get_colormap()
+    assert cmap_c.N == 2
+    assert len(thresh_c) == 1
+    assert names_c == ["Sea", "Land"]
+    plt.close("all")

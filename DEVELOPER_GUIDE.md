@@ -361,6 +361,18 @@ Writes an OBJ file using the vertex-color extension (`v x y z r g b`). OBJ indic
 
 ---
 
+### `filaments.py` — Optical Filament Mixing & Banded Colormaps
+
+This module simulates physical multi-material 3D printing optical layer mixing and manages discrete banded hypsometric colormaps:
+- **Optical Mixing Engine**: Degree-4 Kubelka-Munk polynomial model predicting perceived optical color blending across semi-translucent base filaments with transmission distances (`td`).
+- **`create_filament_palette`**: Generates printable discrete mixtures across loaded base spools (supports both strict N-layer blends e.g. `total_layers=4` and custom ratio lists).
+- **`create_banded_colormap` / `apply_banded_colormap`**: Generates and applies discrete segmented hypsometric colormaps with automatic latitude axis orientation (`flip_y=True` by default for equirectangular grids with North at the top).
+- **`plot_filament_palette`**: Visualizes palette swatches with bold, luminance-aware integer index labeling (`show_index=True`) for easy reference in colormaps.
+- **`plot_banded_colormap_preview`**: Renders discrete horizontal colorbars with uniform segment spacing (`spacing="uniform"`) so narrow elevation zones remain distinct and readable.
+- **`InteractiveColormapBuilder`**: Interactive `ipywidgets` GUI providing live dropdown selection of filament mixtures, threshold inputs, and real-time dual previews of both the colorbar and the 2D equirectangular map.
+
+---
+
 ### `plot.py` — Visual QA
 
 A single utility function (~31 lines):
@@ -375,8 +387,9 @@ Converts vertex positions to `(lat, lon)` and plots them as a scatter plot. For 
 
 Re-exports the core OOP interface classes and helpers:
 
-- **Classes**: `GeographicGrid`, `GlobeModel`, `MagnetSettings`, `Displacer`, `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `Colourer`, `GridColourer`, `ImageColourer`, `ConstantColourer`
-- **Helpers & Registries**: `calculate_displacement_scale`, `select_inward_facing`, `select_outward_facing`, `register_selection_function`, `cartesian_to_spherical`, `plot_vertex_distribution`, `generate_magnet_test_piece`
+- **Classes**: `GeographicGrid`, `GlobeModel`, `MagnetSettings`, `Displacer`, `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `Colourer`, `GridColourer`, `ImageColourer`, `ConstantColourer`, `SymbolColourer`, `PoleLabelColourer`, `PlateModel`, `InteractiveColormapBuilder`
+- **Helpers & Registries**: `calculate_displacement_scale`, `select_inward_facing`, `select_outward_facing`, `register_selection_function`, `cartesian_to_spherical`, `plot_vertex_distribution`, `plot_globe_preview`, `generate_magnet_test_piece`, `create_filament_palette`, `create_banded_colormap`, `create_elevation_banded_colormap`, `apply_banded_colormap`, `plot_filament_palette`, `plot_banded_colormap_preview`, `reconstruct_points`, `reconstruct_grid`
+- **Subpackages**: `datasets`, `image`, `reconstruction`, `filaments`
 
 Internal helpers (`_MeshProxy`, `_UNIT_TO_METERS`, `_wrap_longitude`, etc.) are not exported and should not be imported directly by users.
 
@@ -633,6 +646,7 @@ The test suite lives in `tests/` and uses `pytest`.
 | `test_magnets.py` | `magnets.py` | `optimize_magnet_positions`, `insert_magnets_into_hemispheres`, `generate_magnet_test_piece` |
 | `test_reconstruction.py` | `reconstruction.py` | `PlateModel` loading and validation, point reconstruction across deep time, grid reconstruction |
 | `test_image.py` | `image.py` | Spherical SVG symbol projection, pole markers, hillshade suppression, median and bilateral filtering, color palette quantization, scalar-to-RGB conversion |
+| `test_filaments.py` | `filaments.py` | Kubelka-Munk optical mixing, `create_filament_palette` (strict 4-layer / custom ratios), `create_banded_colormap`, `apply_banded_colormap`, `plot_filament_palette` (index labels), `InteractiveColormapBuilder` widget |
 | `test_paleo_datasets.py` | `datasets.py`, `mesh.py` | Scotese map catalog listing, `GridDisplacer` coastline step, in-memory `ImageColourer`, `GlobeModel.from_paleo` end-to-end creation |
 | `test_notebooks.py` | `examples/` | End-to-end execution of all example notebooks |
 
