@@ -406,7 +406,7 @@ def create_filament_palette(
         spools (str or sequence, optional): Preset name ('CMYKW', 'RBYKW', 'EARTH_TERRAIN')
             or sequence of filament dicts/colors. Defaults to 'CMYKW'.
         ratios (sequence of float, optional): Mixing ratio intervals between 0 and 1.
-            Defaults to [0.2, 0.33, 0.5, 0.67, 0.8].
+            Defaults to [0.25, 0.5, 0.75] (corresponding to 1/4, 2/4, and 3/4 layer fractions).
         include_tints (bool, optional): Whether to include 50% white tints. Defaults to True.
         include_shades (bool, optional): Whether to include 50% black shades. Defaults to True.
 
@@ -443,7 +443,7 @@ def create_filament_palette(
         clean_spools.append({"name": name, "color": c, "td": td, "hex": color_to_hex(c)})
 
     if ratios is None:
-        mix_ratios = [0.2, 0.33, 0.5, 0.67, 0.8]
+        mix_ratios = [0.25, 0.5, 0.75]
     else:
         mix_ratios = [float(r) for r in ratios if 0.0 < r < 1.0]
 
@@ -632,16 +632,30 @@ def create_elevation_banded_colormap(
     """Creates an authentic hypsometric/bathymetric banded colormap mixed from physical filaments.
 
     Generates 8 standard geological elevation zones from abyssal ocean depths to glaciated
-    high peaks, mixed using Full Spectrum optical blending. Supports either a 4-filament base
-    bundle (Brown, Dark Blue, White, Dark Green) or standard 5-spool CMYKW:
-    1. Abyssal Plain (< -4000 m): Deep Navy Blue
-    2. Deep Ocean (-4000 to -2000 m): Oceanic Blue / Basin Blue
-    3. Continental Shelf (-2000 to -200 m): Coastal Turquoise / Shelf Blue
-    4. Shallow Coastal Seas (-200 to 0 m): Shallow Lagoon Cyan
-    5. Lowland Plains (0 to 500 m): Lush Meadow Green
-    6. Midlands / Uplands (500 to 1500 m): Warm Olive Green / Savanna
-    7. Highlands / Mountain Ranges (1500 to 3000 m): Mountain Brown / Terracotta
-    8. Alpine High Peaks (> 3000 m): Snow White
+    high peaks, mixed using Full Spectrum optical blending discretised into strict 1/4 layer
+    ratios (multiples of 0.25 corresponding to 4 physical layers at 0.10 mm layer height).
+    Supports either a 4-filament base bundle (Brown, Dark Blue, White, Dark Green) or
+    standard 5-spool CMYKW:
+
+    TERRAIN_4 Zones (default):
+    1. Abyssal Plain (< -1500 m): 4/4 Dark Blue (Pure)
+    2. Continental Slope (-1500 to -250 m): 2/4 Dark Blue + 1/4 Dark Green + 1/4 White
+    3. Continental Shelf & Shallow Seas (-250 to 0 m): 2/4 Dark Blue + 2/4 White
+    4. Lowland Plains (0 to 150 m): 4/4 Dark Green (Pure Dark Green)
+    5. Interior Savanna & Plains (150 to 450 m): 2/4 Dark Green + 1/4 Brown + 1/4 White
+    6. Midlands & Plateaus (450 to 950 m): 2/4 Brown + 1/4 Dark Green + 1/4 White
+    7. Mountain Ranges (950 to 1500 m): 4/4 Brown (Pure)
+    8. Alpine High Peaks (> 1500 m): 4/4 White (Pure)
+
+    CMYKW Zones:
+    1. Abyssal Plain (< -4000 m): 2/4 Cyan + 1/4 Magenta + 1/4 Black
+    2. Deep Ocean (-4000 to -2000 m): 3/4 Cyan + 1/4 Magenta
+    3. Continental Shelf (-2000 to -200 m): 2/4 Cyan + 1/4 Yellow + 1/4 White
+    4. Shallow Coastal Seas (-200 to 0 m): 2/4 Cyan + 2/4 White
+    5. Lowland Plains (0 to 500 m): 2/4 Yellow + 1/4 Cyan + 1/4 White
+    6. Midlands / Hills (500 to 1500 m): 2/4 Yellow + 1/4 Cyan + 1/4 Magenta
+    7. Highlands / Mountains (1500 to 3000 m): 2/4 Yellow + 1/4 Magenta + 1/4 White
+    8. Alpine High Peaks (> 3000 m): 4/4 White (Pure)
 
     Args:
         palette (str or sequence, optional): Base spools preset name ('TERRAIN_4' for brown,
@@ -679,50 +693,58 @@ def create_elevation_banded_colormap(
             {
                 "name": "Abyssal Plain",
                 "range": f"< {thresh[0]:.0f} m",
-                "color": mix_filaments([c, m, k], [0.45, 0.45, 0.10]),
-                "recipe": [("Cyan", 0.45), ("Magenta", 0.45), ("Black", 0.10)],
+                "color": mix_filaments([c, m, k], [0.50, 0.25, 0.25]),
+                "recipe": [("Cyan", 0.50), ("Magenta", 0.25), ("Black", 0.25)],
+                "layers": "2/4 Cyan + 1/4 Magenta + 1/4 Black",
             },
             {
                 "name": "Deep Ocean",
                 "range": f"{thresh[0]:.0f} to {thresh[1]:.0f} m",
-                "color": mix_filaments([c, m], [0.65, 0.35]),
-                "recipe": [("Cyan", 0.65), ("Magenta", 0.35)],
+                "color": mix_filaments([c, m], [0.75, 0.25]),
+                "recipe": [("Cyan", 0.75), ("Magenta", 0.25)],
+                "layers": "3/4 Cyan + 1/4 Magenta",
             },
             {
                 "name": "Continental Shelf",
                 "range": f"{thresh[1]:.0f} to {thresh[2]:.0f} m",
-                "color": mix_filaments([c, y, w], [0.70, 0.15, 0.15]),
-                "recipe": [("Cyan", 0.70), ("Yellow", 0.15), ("White", 0.15)],
+                "color": mix_filaments([c, y, w], [0.50, 0.25, 0.25]),
+                "recipe": [("Cyan", 0.50), ("Yellow", 0.25), ("White", 0.25)],
+                "layers": "2/4 Cyan + 1/4 Yellow + 1/4 White",
             },
             {
                 "name": "Shallow Coastal Seas",
                 "range": f"{thresh[2]:.0f} to {thresh[3]:.0f} m",
-                "color": mix_filaments([c, w], [0.60, 0.40]),
-                "recipe": [("Cyan", 0.60), ("White", 0.40)],
+                "color": mix_filaments([c, w], [0.50, 0.50]),
+                "recipe": [("Cyan", 0.50), ("White", 0.50)],
+                "layers": "2/4 Cyan + 2/4 White",
             },
             {
                 "name": "Lowland Plains",
                 "range": f"{thresh[3]:.0f} to {thresh[4]:.0f} m",
-                "color": mix_filaments([c, y, w], [0.35, 0.50, 0.15]),
-                "recipe": [("Cyan", 0.35), ("Yellow", 0.50), ("White", 0.15)],
+                "color": mix_filaments([y, c, w], [0.50, 0.25, 0.25]),
+                "recipe": [("Yellow", 0.50), ("Cyan", 0.25), ("White", 0.25)],
+                "layers": "2/4 Yellow + 1/4 Cyan + 1/4 White",
             },
             {
                 "name": "Midlands / Hills",
                 "range": f"{thresh[4]:.0f} to {thresh[5]:.0f} m",
-                "color": mix_filaments([y, c, m], [0.60, 0.25, 0.15]),
-                "recipe": [("Yellow", 0.60), ("Cyan", 0.25), ("Magenta", 0.15)],
+                "color": mix_filaments([y, c, m], [0.50, 0.25, 0.25]),
+                "recipe": [("Yellow", 0.50), ("Cyan", 0.25), ("Magenta", 0.25)],
+                "layers": "2/4 Yellow + 1/4 Cyan + 1/4 Magenta",
             },
             {
                 "name": "Highlands / Mountains",
                 "range": f"{thresh[5]:.0f} to {thresh[6]:.0f} m",
-                "color": mix_filaments([y, m, w], [0.55, 0.35, 0.10]),
-                "recipe": [("Yellow", 0.55), ("Magenta", 0.35), ("White", 0.10)],
+                "color": mix_filaments([y, m, w], [0.50, 0.25, 0.25]),
+                "recipe": [("Yellow", 0.50), ("Magenta", 0.25), ("White", 0.25)],
+                "layers": "2/4 Yellow + 1/4 Magenta + 1/4 White",
             },
             {
                 "name": "Alpine High Peaks",
                 "range": f"> {thresh[6]:.0f} m",
                 "color": w,
                 "recipe": [("White", 1.0)],
+                "layers": "4/4 White",
             },
         ]
     else:
@@ -778,11 +800,11 @@ def create_elevation_banded_colormap(
                 "layers": "2/4 Dark Blue + 2/4 White",
             },
             {
-                "name": "Coastal Lowlands",
+                "name": "Lowland Plains",
                 "range": f"{thresh[2]:.0f} to {thresh[3]:.0f} m",
-                "color": mix_filaments([dark_green, white], [0.75, 0.25]),
-                "recipe": [("Dark Green", 0.75), ("White", 0.25)],
-                "layers": "3/4 Dark Green + 1/4 White",
+                "color": dark_green,
+                "recipe": [("Dark Green", 1.0)],
+                "layers": "4/4 Dark Green",
             },
             {
                 "name": "Interior Savanna & Plains",
