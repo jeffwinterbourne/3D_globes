@@ -228,3 +228,31 @@ def test_plot_globe_preview():
     ax = plot_globe_preview(sphere, elev=15.0, azim=45.0, sample_size=50)
     assert ax is not None
     plt.close("all")
+
+
+def test_create_filament_palette_strict_4_layer():
+    palette = create_filament_palette("TERRAIN_4", total_layers=4)
+    # 4 spools combined across 4 layers = binom(4+4-1, 4) = binom(7,4) = 35 combinations
+    assert len(palette) == 35
+
+    for item in palette:
+        assert "name" in item
+        assert "layers" in item
+        assert "color" in item
+        assert "hex" in item
+        assert "recipe" in item
+
+        # Verify integer layer sums
+        total_layers = sum(r.get("layers", 0) for r in item["recipe"])
+        assert total_layers == 4
+
+        # Verify weight sums to 1.0
+        total_weight = sum(r["weight"] for r in item["recipe"])
+        assert abs(total_weight - 1.0) < 1e-4
+
+    # Verify pure spools exist
+    names = [item["name"] for item in palette]
+    assert "Brown" in names
+    assert "Dark Blue" in names
+    assert "White" in names
+    assert "Dark Green" in names

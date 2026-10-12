@@ -7,6 +7,7 @@ It also provides tools to construct discrete banded colormaps for hypsometric an
 terrain models.
 """
 
+import itertools
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
@@ -389,33 +390,44 @@ FILAMENT_PRESETS["EARTH"] = FILAMENT_PRESETS["TERRAIN_4"]
 
 def create_filament_palette(
     spools: Optional[Union[str, Sequence[Union[str, Sequence[Union[int, float]], Dict]]]] = "CMYKW",
+    total_layers: int = 4,
     ratios: Optional[Sequence[float]] = None,
     include_tints: bool = True,
     include_shades: bool = True,
 ) -> List[Dict]:
     """Generates a comprehensive virtual mixing palette from physical filament spools.
 
-    As in Full Spectrum 3D online, this helper takes a set of loaded physical spools
-    and computes:
-    1. Pure base spools (100% individual filament).
-    2. Discrete pairwise mixes across chromatic spools at specified ratio intervals.
-    3. Tints (50/50 mix with White spool, if available).
-    4. Shades (50/50 mix with Black spool, if available).
+    In physical FDM 3D printing (e.g. at 0.10 mm layer height), optical color mixing
+    is constrained to discrete integer layer counts summing to `total_layers` (default 4).
+    This helper computes all physically realizable discrete mixtures:
+    - Pure base spools (4/4 layers).
+    - Discrete 2-spool blends (3/4 + 1/4, 2/4 + 2/4).
+    - Discrete 3-spool blends (2/4 + 1/4 + 1/4).
+    - Discrete 4-spool blends (1/4 + 1/4 + 1/4 + 1/4).
+
+    Every generated color recipe maps directly to an exact layer swap schedule in slicers
+    with zero fractional layer artifacts.
 
     Args:
-        spools (str or sequence, optional): Preset name ('CMYKW', 'RBYKW', 'EARTH_TERRAIN')
+        spools (str or sequence, optional): Preset name ('TERRAIN_4', 'CMYKW', 'RBYKW')
             or sequence of filament dicts/colors. Defaults to 'CMYKW'.
-        ratios (sequence of float, optional): Mixing ratio intervals between 0 and 1.
-            Defaults to [0.25, 0.5, 0.75] (corresponding to 1/4, 2/4, and 3/4 layer fractions).
-        include_tints (bool, optional): Whether to include 50% white tints. Defaults to True.
-        include_shades (bool, optional): Whether to include 50% black shades. Defaults to True.
+        total_layers (int, optional): Total number of discrete physical layers to blend.
+            Defaults to 4 (e.g. 0.40 mm optical thickness at 0.10 mm layer height).
+        ratios (sequence of float, optional): Optional override for legacy pairwise ratio
+            mixing. If provided and not all ratios are multiples of 1/total_layers,
+            pairwise interpolation is performed. Defaults to None.
+        include_tints (bool, optional): Legacy parameter retained for backwards compatibility.
+            Defaults to True.
+        include_shades (bool, optional): Legacy parameter retained for backwards compatibility.
+            Defaults to True.
 
     Returns:
         list of dict: List of palette entries, each containing:
-            - 'name': Descriptive name of the mix.
+            - 'name': Descriptive name of the mix (e.g. '3/4 Brown + 1/4 Dark Green').
+            - 'layers': Formatted layer swap string.
             - 'color': (R, G, B) integer tuple.
             - 'hex': '#rrggbb' string.
-            - 'recipe': List of dicts specifying spools and weights.
+            - 'recipe': List of dicts specifying spools, weights, and layer counts.
     """
     if isinstance(spools, str):
         if spools.upper() not in FILAMENT_PRESETS:
@@ -442,99 +454,153 @@ def create_filament_palette(
             td = 1.0
         clean_spools.append({"name": name, "color": c, "td": td, "hex": color_to_hex(c)})
 
-    if ratios is None:
-        mix_ratios = [0.25, 0.5, 0.75]
-    else:
+    n = len(clean_spools)
+
+    # If arbitrary non-discrete ratios are explicitly passed, use legacy pairwise mode
+    is_custom_ratios = ratios is not None and any(
+        abs(r * total_layers - round(r * total_layers)) > 1e-4 for r in ratios
+    )
+
+    if is_custom_ratios:
         mix_ratios = [float(r) for r in ratios if 0.0 < r < 1.0]
 
-    # Identify white and black spools for tints/shades
-    white_spool = None
-    black_spool = None
-    chromatic_spools = []
+        # Identify white and black spools for tints/shades
+        white_spool = None
+        black_spool = None
+        chromatic_spools = []
 
-    for s in clean_spools:
-        c = s["color"]
-        # Achromatic test (saturation near zero)
-        is_neutral = (max(c) - min(c)) <= 15
-        if is_neutral and np.mean(c) > 200:
-            white_spool = s
-        elif is_neutral and np.mean(c) < 50:
-            black_spool = s
-        else:
-            chromatic_spools.append(s)
+        for s in clean_spools:
+            c = s["color"]
+            is_neutral = (max(c) - min(c)) <= 15
+            if is_neutral and np.mean(c) > 200:
+                white_spool = s
+            elif is_neutral and np.mean(c) < 50:
+                black_spool = s
+            else:
+                chromatic_spools.append(s)
+
+        palette: List[Dict] = []
+        seen_hex = set()
+
+        def _add_entry(name: str, rgb: Tuple[int, int, int], recipe: List[Dict]):
+            hex_code = color_to_hex(rgb)
+            if hex_code not in seen_hex:
+                seen_hex.add(hex_code)
+                palette.append({
+                    "name": name,
+                    "layers": name,
+                    "color": rgb,
+                    "hex": hex_code,
+                    "recipe": recipe,
+                })
+
+        for s in clean_spools:
+            _add_entry(s["name"], s["color"], [{"spool": s["name"], "weight": 1.0, "layers": total_layers}])
+
+        chrom_mixes = []
+        n_chrom = len(chromatic_spools)
+        for i in range(n_chrom):
+            for j in range(i + 1, n_chrom):
+                s1 = chromatic_spools[i]
+                s2 = chromatic_spools[j]
+                for r in mix_ratios:
+                    mixed_rgb = mix_filament_pair(s1["color"], s2["color"], r)
+                    mix_name = f"{s1['name']} {int(round((1-r)*100))}% / {s2['name']} {int(round(r*100))}%"
+                    mix_recipe = [
+                        {"spool": s1["name"], "weight": round(1.0 - r, 2)},
+                        {"spool": s2["name"], "weight": round(r, 2)},
+                    ]
+                    _add_entry(mix_name, mixed_rgb, mix_recipe)
+                    chrom_mixes.append((mix_name, mixed_rgb, mix_recipe))
+
+        if include_tints and white_spool is not None:
+            for s in chromatic_spools:
+                tint_rgb = mix_filament_pair(s["color"], white_spool["color"], 0.5)
+                _add_entry(
+                    f"{s['name']} Tint (50% White)",
+                    tint_rgb,
+                    [{"spool": s["name"], "weight": 0.5}, {"spool": white_spool["name"], "weight": 0.5}],
+                )
+            for mix_name, mix_rgb, mix_recipe in chrom_mixes:
+                tint_rgb = mix_filament_pair(mix_rgb, white_spool["color"], 0.5)
+                tinted_recipe = [
+                    {"spool": r["spool"], "weight": round(r["weight"] * 0.5, 2)}
+                    for r in mix_recipe
+                ]
+                tinted_recipe.append({"spool": white_spool["name"], "weight": 0.5})
+                _add_entry(f"{mix_name} Tint", tint_rgb, tinted_recipe)
+
+        if include_shades and black_spool is not None:
+            for s in chromatic_spools:
+                shade_rgb = mix_filament_pair(s["color"], black_spool["color"], 0.5)
+                _add_entry(
+                    f"{s['name']} Shade (50% Black)",
+                    shade_rgb,
+                    [{"spool": s["name"], "weight": 0.5}, {"spool": black_spool["name"], "weight": 0.5}],
+                )
+            for mix_name, mix_rgb, mix_recipe in chrom_mixes:
+                shade_rgb = mix_filament_pair(mix_rgb, black_spool["color"], 0.5)
+                shaded_recipe = [
+                    {"spool": r["spool"], "weight": round(r["weight"] * 0.5, 2)}
+                    for r in mix_recipe
+                ]
+                shaded_recipe.append({"spool": black_spool["name"], "weight": 0.5})
+                _add_entry(f"{mix_name} Shade", shade_rgb, shaded_recipe)
+
+        return palette
+
+    # Strict discrete layer combinations summing to total_layers
+    raw_combos = [
+        c for c in itertools.product(range(total_layers + 1), repeat=n)
+        if sum(c) == total_layers
+    ]
+
+    # Sort combos: pure spools first, then 2-spool blends, then 3-spool, etc.
+    def sort_key(combo):
+        num_spools = sum(1 for count in combo if count > 0)
+        dominant = max(range(n), key=lambda i: (combo[i], -i))
+        return (num_spools, dominant, [-c for c in combo])
+
+    raw_combos.sort(key=sort_key)
 
     palette: List[Dict] = []
     seen_hex = set()
+    for combo in raw_combos:
+        parts = [(clean_spools[i], combo[i]) for i in range(n) if combo[i] > 0]
+        parts.sort(key=lambda p: p[1], reverse=True)
 
-    def _add_entry(name: str, rgb: Tuple[int, int, int], recipe: List[Dict]):
-        hex_code = color_to_hex(rgb)
+        weights = [count / float(total_layers) for _, count in parts]
+        colors = [s["color"] for s, _ in parts]
+        tds = [s["td"] for s, _ in parts]
+
+        mixed_rgb = mix_filaments(colors, weights, transmission_distances=tds)
+        hex_code = color_to_hex(mixed_rgb)
+
+        if len(parts) == 1:
+            name = parts[0][0]["name"]
+            layers_str = f"{total_layers}/{total_layers} {name}"
+        else:
+            name = " + ".join(f"{count}/{total_layers} {s['name']}" for s, count in parts)
+            layers_str = name
+
+        recipe = [
+            {
+                "spool": s["name"],
+                "weight": round(count / float(total_layers), 2),
+                "layers": count,
+            }
+            for s, count in parts
+        ]
+
         if hex_code not in seen_hex:
             seen_hex.add(hex_code)
             palette.append({
                 "name": name,
-                "color": rgb,
+                "layers": layers_str,
+                "color": mixed_rgb,
                 "hex": hex_code,
                 "recipe": recipe,
             })
-
-    # 1. Pure base spools
-    for s in clean_spools:
-        _add_entry(s["name"], s["color"], [{"spool": s["name"], "weight": 1.0}])
-
-    # 2. Pairwise mixtures of chromatic spools
-    chrom_mixes = []
-    n_chrom = len(chromatic_spools)
-    for i in range(n_chrom):
-        for j in range(i + 1, n_chrom):
-            s1 = chromatic_spools[i]
-            s2 = chromatic_spools[j]
-            for r in mix_ratios:
-                mixed_rgb = mix_filament_pair(s1["color"], s2["color"], r)
-                mix_name = f"{s1['name']} {int(round((1-r)*100))}% / {s2['name']} {int(round(r*100))}%"
-                mix_recipe = [
-                    {"spool": s1["name"], "weight": round(1.0 - r, 2)},
-                    {"spool": s2["name"], "weight": round(r, 2)},
-                ]
-                _add_entry(mix_name, mixed_rgb, mix_recipe)
-                chrom_mixes.append((mix_name, mixed_rgb, mix_recipe))
-
-    # 3. Tints with White
-    if include_tints and white_spool is not None:
-        # Tint pure chromatics
-        for s in chromatic_spools:
-            tint_rgb = mix_filament_pair(s["color"], white_spool["color"], 0.5)
-            _add_entry(
-                f"{s['name']} Tint (50% White)",
-                tint_rgb,
-                [{"spool": s["name"], "weight": 0.5}, {"spool": white_spool["name"], "weight": 0.5}],
-            )
-        # Tint pairwise mixes
-        for mix_name, mix_rgb, mix_recipe in chrom_mixes:
-            tint_rgb = mix_filament_pair(mix_rgb, white_spool["color"], 0.5)
-            tinted_recipe = [
-                {"spool": r["spool"], "weight": round(r["weight"] * 0.5, 2)}
-                for r in mix_recipe
-            ]
-            tinted_recipe.append({"spool": white_spool["name"], "weight": 0.5})
-            _add_entry(f"{mix_name} Tint", tint_rgb, tinted_recipe)
-
-    # 4. Shades with Black
-    if include_shades and black_spool is not None:
-        for s in chromatic_spools:
-            shade_rgb = mix_filament_pair(s["color"], black_spool["color"], 0.5)
-            _add_entry(
-                f"{s['name']} Shade (50% Black)",
-                shade_rgb,
-                [{"spool": s["name"], "weight": 0.5}, {"spool": black_spool["name"], "weight": 0.5}],
-            )
-        for mix_name, mix_rgb, mix_recipe in chrom_mixes:
-            shade_rgb = mix_filament_pair(mix_rgb, black_spool["color"], 0.5)
-            shaded_recipe = [
-                {"spool": r["spool"], "weight": round(r["weight"] * 0.5, 2)}
-                for r in mix_recipe
-            ]
-            shaded_recipe.append({"spool": black_spool["name"], "weight": 0.5})
-            _add_entry(f"{mix_name} Shade", shade_rgb, shaded_recipe)
 
     return palette
 
@@ -870,7 +936,7 @@ def apply_banded_colormap(
 def plot_filament_palette(
     palette: Sequence[Dict],
     title: str = "Filament Palette",
-    max_swatches: int = 30,
+    max_swatches: int = 40,
     figsize: Optional[Tuple[float, float]] = None,
     ax: Optional[plt.Axes] = None,
 ) -> plt.Axes:
@@ -879,7 +945,7 @@ def plot_filament_palette(
     Args:
         palette (sequence of dict): Palette items from create_filament_palette or band_specs.
         title (str, optional): Plot title. Defaults to 'Filament Palette'.
-        max_swatches (int, optional): Maximum number of swatches to display. Defaults to 30.
+        max_swatches (int, optional): Maximum number of swatches to display. Defaults to 40.
         figsize (tuple, optional): Matplotlib figure dimensions. Defaults to dynamic sizing.
         ax (plt.Axes, optional): Target matplotlib axes. Defaults to None.
 
@@ -892,7 +958,7 @@ def plot_filament_palette(
         raise ValueError("Palette cannot be empty.")
 
     if ax is None:
-        fig_w = figsize[0] if figsize else min(max(n * 0.8, 8.0), 16.0)
+        fig_w = figsize[0] if figsize else min(max(n * 0.55, 8.0), 22.0)
         fig_h = figsize[1] if figsize else 3.5
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
@@ -905,7 +971,8 @@ def plot_filament_palette(
         norm_c = [c / 255.0 for c in rgb]
         ax.bar(idx, 1.0, color=norm_c, edgecolor="black", linewidth=0.8, width=0.9)
 
-        # Label hex
+        # Label hex with luminance-based text contrast
+        lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
         ax.text(
             idx,
             0.5,
@@ -913,14 +980,14 @@ def plot_filament_palette(
             ha="center",
             va="center",
             rotation=90,
-            fontsize=8,
+            fontsize=7.5,
             fontweight="bold",
-            color="white" if np.mean(rgb) < 130 else "black",
+            color="white" if lum < 130 else "black",
         )
 
     ax.set_xticks(range(n))
     labels = [item.get("name", "") for item in items]
-    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    ax.set_xticklabels(labels, rotation=55, ha="right", fontsize=7.5)
     ax.set_yticks([])
     ax.set_xlim(-0.6, n - 0.4)
     ax.set_ylim(0, 1)
