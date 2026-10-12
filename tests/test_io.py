@@ -146,6 +146,7 @@ def test_write_3mf_basic(tmp_path):
         assert "my_model" in model_xml
         assert "<vertex " in model_xml
         assert "<triangle " in model_xml
+        assert "paint_color=\"" in model_xml
 
     # Verify trimesh can load it
     mesh = trimesh.load(str(filename))
@@ -201,10 +202,20 @@ def test_write_3mf_with_filaments_and_palette(tmp_path):
         assert cfg["filament_colour"][1] == "#14285F"
         assert cfg["filament_colour"][2] == "#F5F5F5"
         assert cfg["filament_colour"][3] == "#1E552D"
+        # Virtual slot indices start at 5 (after 4 physical base spools)
+        assert cfg["color_mix"]["virtual_slots"][0]["virtual_id"] == 5
+        # Mixed filament definitions contain only the virtual recipe, not redundant pure spools
+        assert "mixed_filament_definitions" in cfg
+        assert "2,3,1,1,50" in cfg["mixed_filament_definitions"]
+
+        # Triangle attributes include paint_color
+        model_xml = zf.read("3D/3dmodel.model").decode("utf-8")
+        assert "paint_color=\"" in model_xml
 
 
 def test_write_3mf_face_colors(tmp_path):
     """write_3mf supports per-face color arrays."""
+    import zipfile
     from globe3d.io import write_3mf
 
     filename = tmp_path / "face_colors.3mf"
@@ -226,4 +237,34 @@ def test_write_3mf_face_colors(tmp_path):
     slots = write_3mf(str(filename), vertices, faces, colors=face_colors)
     assert filename.exists()
     assert len(slots) == 2
+
+    with zipfile.ZipFile(filename, "r") as zf:
+        model_xml = zf.read("3D/3dmodel.model").decode("utf-8")
+        assert 'paint_color="4"' in model_xml
+        assert 'paint_color="8"' in model_xml
+
+
+def test_encode_paint_facet():
+    """encode_paint_facet correctly formats 1-based extruder states for OrcaSlicer."""
+    from globe3d.io import encode_paint_facet
+
+    # Extruder 1 -> "4"
+    assert encode_paint_facet(1) == "4"
+    # Extruder 2 -> "8"
+    assert encode_paint_facet(2) == "8"
+    # Extruder 3 -> "0C"
+    assert encode_paint_facet(3) == "0C"
+    # Extruder 4 -> "1C"
+    assert encode_paint_facet(4) == "1C"
+    # Extruder 5 (Virtual slot 1) -> "2C"
+    assert encode_paint_facet(5) == "2C"
+    # Extruder 6 (Virtual slot 2) -> "3C"
+    assert encode_paint_facet(6) == "3C"
+    # Extruder 17 -> "EC"
+    assert encode_paint_facet(17) == "EC"
+    # Extruder 18 -> "0FC"
+    assert encode_paint_facet(18) == "0FC"
+    # Extruder 0 (unpainted) -> ""
+    assert encode_paint_facet(0) == ""
+
 

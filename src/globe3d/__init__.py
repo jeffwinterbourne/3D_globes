@@ -63,7 +63,13 @@ from .presets import (
     DEFAULT_ELEVATION_BOUNDARIES,
 )
 from .widgets import InteractiveColormapBuilder
-from .io import write_3mf, write_stl_binary, write_obj_with_vertex_colors
+from .io import (
+    write_3mf,
+    write_stl_binary,
+    write_obj_with_vertex_colors,
+    build_orca_mixed_definitions,
+    encode_paint_facet,
+)
 from . import datasets
 from . import image
 from . import reconstruction
@@ -76,6 +82,8 @@ __all__ = [
     "write_3mf",
     "write_stl_binary",
     "write_obj_with_vertex_colors",
+    "build_orca_mixed_definitions",
+    "encode_paint_facet",
     "GeographicGrid",
     "Displacer",
     "ConstantDisplacer",

@@ -88,6 +88,32 @@ def write_obj_with_vertex_colors(filename, vertices, faces, colors,
         np.savetxt(f, f_data, fmt='f %d %d %d')
 
 
+def encode_paint_facet(state: int) -> str:
+    """Encodes a 1-based extruder/filament slot state (1..N) to Bambu/OrcaSlicer paint_color attribute.
+
+    Bambu Studio and OrcaSlicer store per-facet multi-material painting in a nibble-packed
+    recursive subdivision tree serialized right-to-left. For a non-subdivided facet (the whole
+    triangle in a single extruder), state 1 is '4', state 2 is '8', and states >= 3 use an
+    extended encoding ending with 'C'.
+
+    Args:
+        state (int): 1-based filament slot or extruder index. 0 represents unpainted/inherit.
+
+    Returns:
+        str: Hex string for the `paint_color` attribute, e.g. "4", "8", "0C", "1C", "2C", etc.
+    """
+    s = max(0, int(state))
+    if s <= 0:
+        return ""
+    if s < 3:
+        return hex(s << 2)[2:].upper()
+    rem = s - 3
+    num = rem // 15
+    next_code = rem % 15
+    chars = [hex(next_code)[2:].upper()] + ["F"] * num + ["C"]
+    return "".join(chars)
+
+
 def build_orca_mixed_definitions(palette, base_filaments):
     """Builds OrcaSlicer / Snapmaker Orca mixed_filament_definitions string for virtual slots.
 
@@ -100,7 +126,7 @@ def build_orca_mixed_definitions(palette, base_filaments):
     spool_name_to_id = {f["name"].lower(): i + 1 for i, f in enumerate(base_filaments)}
 
     def get_seq(p):
-        recipe = p.get("recipe", []) if isinstance(p, dict) else []
+        recipe = p.get("recipe_data", p.get("recipe", [])) if isinstance(p, dict) else []
         seq = []
         if isinstance(recipe, list):
             for item in recipe:
@@ -196,7 +222,7 @@ def write_3mf(
     object_name="globe_model",
     fix_normals=False,
     center=(0.0, 0.0, 0.0),
-    color_tolerance=2,
+    color_tolerance=6,
 ):
     """Writes one or more meshes with multi-filament colors to a 3MF package compatible with OrcaSlicer.
 
@@ -232,7 +258,7 @@ def write_3mf(
             Defaults to (0.0, 0.0, 0.0).
         color_tolerance (int, optional): Maximum difference per RGB channel (0-255) when matching
             mesh colors to registered filament slots, avoiding spurious duplicate slots caused by
-            floating-point roundoff. Defaults to 2.
+            floating-point roundoff. Defaults to 6.
 
     Returns:
         list of dict: Registered filament slots embedded in the 3MF package.
@@ -321,6 +347,7 @@ def write_3mf(
             "hex": hex_c,
             "td": float(td) if td is not None else 1.0,
             "recipe": rec_str,
+            "recipe_data": recipe if recipe is not None else rec_str,
             "is_base": is_base,
         }
         s_idx = len(slots)
@@ -446,11 +473,20 @@ def write_3mf(
         f_p2 = p_obj["f_p2"]
         f_p3 = p_obj["f_p3"]
         same_mask = (f_p1 == f_p2) & (f_p2 == f_p3)
-        for (v1, v2, v3), is_same, p1, p2, p3 in zip(f, same_mask, f_p1, f_p2, f_p3):
+        # Vectorized dominant slot index for OrcaSlicer paint_color
+        f_dom = np.where(f_p1 == f_p2, f_p1, np.where(f_p2 == f_p3, f_p2, f_p1))
+        slot_paint_codes = [encode_paint_facet(s + 1) for s in range(len(slots) + 1)]
+
+        for (v1, v2, v3), is_same, p1, p2, p3, dom in zip(f, same_mask, f_p1, f_p2, f_p3, f_dom):
+            p_code = slot_paint_codes[dom]
             if is_same:
-                model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}"/>\n')
+                model_xml_parts.append(
+                    f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}" paint_color="{p_code}"/>\n'
+                )
             else:
-                model_xml_parts.append(f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}" p2="{p2}" p3="{p3}"/>\n')
+                model_xml_parts.append(
+                    f'          <triangle v1="{v1}" v2="{v2}" v3="{v3}" pid="1" p1="{p1}" p2="{p2}" p3="{p3}" paint_color="{p_code}"/>\n'
+                )
 
         model_xml_parts.extend([
             '        </triangles>\n',
@@ -484,11 +520,14 @@ def write_3mf(
         '</Relationships>'
     )
 
+    phys_slots = [s for s in slots if s["is_base"]]
+    virt_slots = [s for s in slots if not s["is_base"]]
+    num_phys = len(phys_slots)
+
     # In OrcaSlicer / Snapmaker Orca:
     # `filament_colour` defines physical spools loaded in AMS/toolchanger.
     # Virtual blends are defined in `mixed_filament_definitions`.
     if base_filaments:
-        phys_slots = [s for s in slots if s["is_base"]]
         filament_colours = [s["hex"].upper() for s in phys_slots]
         filament_types = ["PLA"] * len(phys_slots)
         filament_tds = [f"{s['td']:.2f}" for s in phys_slots]
@@ -498,7 +537,7 @@ def write_3mf(
         ]
         filament_vendors = ["Generic"] * len(phys_slots)
         filament_densities = ["1.24"] * len(phys_slots)
-        defs_str = build_orca_mixed_definitions(palette, base_filaments)
+        defs_str = build_orca_mixed_definitions(virt_slots, base_filaments)
     else:
         disp_slots = slots[:16]
         filament_colours = [s["hex"].upper() for s in disp_slots]
@@ -539,11 +578,11 @@ def write_3mf(
     project_settings["color_mix"] = {
         "physical_spools": [
             {"slot_id": i + 1, "name": s["name"], "color": s["hex"], "td": s["td"]}
-            for i, s in enumerate(slots) if s["is_base"]
+            for i, s in enumerate(phys_slots)
         ],
         "virtual_slots": [
-            {"virtual_id": 5 + i, "name": s["name"], "color": s["hex"], "td": s["td"], "recipe": s["recipe"]}
-            for i, s in enumerate(slots) if not s["is_base"]
+            {"virtual_id": num_phys + 1 + v_idx, "name": s["name"], "color": s["hex"], "td": s["td"], "recipe": s["recipe"]}
+            for v_idx, s in enumerate(virt_slots)
         ]
     }
     project_settings_json = json.dumps(project_settings, indent=2)
