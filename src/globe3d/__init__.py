@@ -29,7 +29,19 @@ from .displacement import (
 from .magnets import MagnetSettings, generate_magnet_test_piece
 from .mesh import GlobeModel
 from .plot import plot_vertex_distribution
+from .reconstruction import PlateModel, reconstruct_points, reconstruct_grid
+from .image import (
+    add_svg_symbol_spherical,
+    add_pole_markers,
+    undo_hillshading,
+    simplify_image_median,
+    simplify_image_bilateral,
+    simplify_colors,
+    render_2d_array_as_rgb,
+)
 from . import datasets
+from . import image
+from . import reconstruction
 
 __all__ = [
     "GeographicGrid",
@@ -55,5 +67,17 @@ __all__ = [
     "generate_magnet_test_piece",
     "GlobeModel",
     "plot_vertex_distribution",
+    "PlateModel",
+    "reconstruct_points",
+    "reconstruct_grid",
+    "add_svg_symbol_spherical",
+    "add_pole_markers",
+    "undo_hillshading",
+    "simplify_image_median",
+    "simplify_image_bilateral",
+    "simplify_colors",
+    "render_2d_array_as_rgb",
     "datasets",
+    "image",
+    "reconstruction",
 ]

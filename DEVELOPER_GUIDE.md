@@ -14,10 +14,13 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 
 | Capability | Module / Class | Entry Point(s) / Methods |
 |---|---|---|
-| Globe model state & orchestration | `mesh.py` / `GlobeModel` | `GlobeModel(method, n_points, radius, hollow, ...)`, `model.outer.displace`, `model.inner.displace`, `model.outer.colour` |
+| Globe model state & orchestration | `mesh.py` / `GlobeModel` | `GlobeModel(...)`, `GlobeModel.from_paleo(...)`, `model.outer.displace`, `model.inner.displace`, `model.outer.colour` |
+| Deep-time plate reconstructions | `reconstruction.py` / `PlateModel` | `PlateModel(...)`, `reconstruct_points(...)`, `reconstruct_grid(...)` |
+| Paleo datasets & epoch catalog | `datasets.py` / `datasets.paleo` | `datasets.paleo.scotese(...)`, `datasets.paleo.scotese_plate_model(...)`, `datasets.paleo.list_scotese_maps()` |
+| Vector SVG stamping & image prep | `image.py` | `add_svg_symbol_spherical(...)`, `add_pole_markers(...)`, `undo_hillshading(...)`, `simplify_colors(...)`, `simplify_image_median(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
-| Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
-| Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer`, `ConstantColourer` |
+| Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
+| Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `ConstantColourer` |
 | Displacement scale (unit-aware) | `displacement.py` | `calculate_displacement_scale(model_radius_mm, grid_units=...)` |
 | Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
 | Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
@@ -40,22 +43,33 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 ├── src/
 │   └── globe3d/
 │       ├── __init__.py        # Public API re-exports
-│       ├── mesh.py            # Sphere generation, hollowing, splitting
+│       ├── mesh.py            # Sphere generation, hollowing, splitting, GlobeModel.from_paleo
 │       ├── grid.py            # NetCDF / TIFF data loading
 │       ├── displacement.py    # Vertex displacement & coloring
+│       ├── reconstruction.py  # GPlately/PyGPlates deep-time plate reconstructions
+│       ├── image.py           # Spherical SVG stamping & texture preprocessors
+│       ├── datasets.py        # Modern Earth/planetary/geophysics & paleo datasets
 │       ├── magnets.py         # Optimization & insertion of magnets
 │       ├── io.py              # STL & OBJ export
-│       └── plot.py            # Matplotlib visual checks
+│       ├── plot.py            # Matplotlib visual checks
+│       └── assets/            # Builtin SVGs (N, S, star) & map catalog metadata
 ├── tests/
 │   ├── test_mesh.py
 │   ├── test_model_api.py
 │   ├── test_displacement.py
 │   ├── test_grid.py
-│   └── test_magnets.py
+│   ├── test_magnets.py
+│   ├── test_reconstruction.py
+│   ├── test_image.py
+│   ├── test_paleo_datasets.py
+│   └── test_notebooks.py
 └── examples/
-    ├── tomo_globe_3d.ipynb          # Tomography globe (grid-colored)
-    ├── demo_split_globe_image.ipynb # Image-colored demo
-    └── demo_magnets.ipynb           # Magnet insertion demo
+    ├── example_1_basic_globe.ipynb
+    ├── example_2_intermediate_globe.ipynb
+    ├── example_3_magnets_globe.ipynb
+    ├── example_4_coloured_globe.ipynb
+    ├── example_5_colouring.ipynb
+    └── example_6_paleo_globe.ipynb
 ```
 
 ### Dependency graph
@@ -552,6 +566,33 @@ The OBJ format does not have a formal vertex color standard, but a widely suppor
 
 For 3D printing, the Fibonacci lattice at ~1M points is the standard choice.
 
+### `reconstruction.py` — Deep-Time Plate Tectonic Reconstructions
+
+This module integrates GPlately and PyGPlates to reconstruct geographic coordinates, vectors, and scalar grids across deep geological time (Ma).
+
+Key classes and functions:
+- **`PlateModel`**: Encapsulates a GPlately plate reconstruction model. Loads rotation models (`.rot`) and topology/polygons (`.gpml`), or downloads models via `gplately.DataServer` (`Muller2019`, `Merdith2021`, `Cao2020`).
+- **`reconstruct_points(points, plate_model, age_ma)`**: Vectorized coordinate reconstruction mapping modern $(lat, lon)$ points back to their paleo-coordinates at age $T$ Ma.
+- **`reconstruct_grid(grid, plate_model, age_ma)`**: Reconstructs a `GeographicGrid` or 2D NumPy array to age $T$ Ma using topology plate partitioning.
+
+### `image.py` — Spherical Vector Symbols & Texture Preprocessing
+
+This module provides tools for 3D print texture preparation and spherical vector stamping:
+- **`add_svg_symbol_spherical`**: Parses SVG files or XML strings, scales them by angular radius in degrees, and projects them spherically onto equirectangular maps using great-circle interpolation and polar projection.
+- **`add_pole_markers`**: Automatically stamps 'N' and 'S' vector symbols onto the North and South poles ($\pm 89.9999^\circ$) to provide unambiguous hemisphere orientation.
+- **`undo_hillshading`**: Normalizes Lightness in HSL space to flatten artificial lighting and shadows from published atlas maps, avoiding duplicate shadows on physical 3D relief.
+- **`simplify_image_median` & `simplify_image_bilateral`**: Smooths flat regions and eliminates single-pixel noise islands while preserving sharp coastlines.
+- **`simplify_colors`**: Quantizes continuous RGB textures to a discrete set of filament colors via weighted HSV distance for multi-material FDM slicing (Bambu AMS / Prusa MMU).
+- **`render_2d_array_as_rgb`**: Converts a 2D scalar array into an RGB image mapped through discrete boundary thresholds.
+
+### `datasets.py` — Geophysical & Paleogeographic Data Catalog
+
+Provides namespaces for standard datasets:
+- **`datasets.paleo`**: Catalog of 108 Scotese & Wright (2018) PALEOMAP PaleoDEM elevation grids and matching PaleoAtlas full-color textures spanning 0 to 540 Ma.
+  - `datasets.paleo.scotese(age=...)`: Automatically locates and loads the closest PaleoDEM grid and texture.
+  - `datasets.paleo.scotese_plate_model()`: Returns the initialized Scotese PALEOMAP `PlateModel`.
+  - `datasets.paleo.list_scotese_maps()`: Lists all 108 registered time slices.
+
 ---
 
 ## 🧪 Testing
@@ -562,12 +603,16 @@ The test suite lives in `tests/` and uses `pytest`.
 
 | Test file | Module | Key tests |
 |---|---|---|
-| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres` (watertightness, z-bounds), `create_hollow_hemispheres` (watertight, correct volume, z-bounds), `GlobeModel` lifecycle |
-| `test_model_api.py` | `mesh.py`, `displacement.py` | Unified constructor (fibonacci, icosahedron, hollow), `_MeshProxy` (inner/outer displace, colour), `configure_magnets`, `export`, `export_hemispheres`, `calculate_displacement_scale` with `grid_units` |
-| `test_displacement.py` | `displacement.py` | `GridDisplacer`, `GridColourer`, `ImageColourer`, `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `ConstantColourer`, selection functions, parallel displacement, dateline NaN handling |
+| `test_mesh.py` | `mesh.py` | Fibonacci generation (vertex count, radii), icosahedron subdivision, outward-facing normals (positive volume), `resize_globe`, `compute_scale_factor`, `project_vertices_to_sphere`, `create_inner_mesh`, `split_mesh_hemispheres`, `create_hollow_hemispheres`, `GlobeModel` lifecycle |
+| `test_model_api.py` | `mesh.py`, `displacement.py` | Unified constructor, `_MeshProxy` (inner/outer displace, colour), `configure_magnets`, `export`, `export_hemispheres`, `calculate_displacement_scale` with `grid_units` |
+| `test_displacement.py` | `displacement.py` | `GridDisplacer` (with `coastline_step`), `GridColourer`, `ImageColourer` (file/PIL/array), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer`, `ConstantColourer`, selection functions, parallel displacement, dateline NaN handling |
 | `test_grid.py` | `grid.py` | `list_netcdf_variables` and `load_netcdf_grid` using mocked `netCDF4.Dataset` |
-| `test_io.py` | `io.py` | `write_stl_binary` (binary validation, size check, normals), `fix_face_chirality` (vectorized chirality checking), `write_obj_with_vertex_colors` (correct format, lines count) |
-| `test_magnets.py` | `magnets.py` | `optimize_magnet_positions` (bisection distance check), `insert_magnets_into_hemispheres` (watertightness, volume bounds), `generate_magnet_test_piece` (height/radius bounds, watertightness) |
+| `test_io.py` | `io.py` | `write_stl_binary` (binary validation, size check, normals), `fix_face_chirality`, `write_obj_with_vertex_colors` |
+| `test_magnets.py` | `magnets.py` | `optimize_magnet_positions`, `insert_magnets_into_hemispheres`, `generate_magnet_test_piece` |
+| `test_reconstruction.py` | `reconstruction.py` | `PlateModel` loading and validation, point reconstruction across deep time, grid reconstruction |
+| `test_image.py` | `image.py` | Spherical SVG symbol projection, pole markers, hillshade suppression, median and bilateral filtering, color palette quantization, scalar-to-RGB conversion |
+| `test_paleo_datasets.py` | `datasets.py`, `mesh.py` | Scotese map catalog listing, `GridDisplacer` coastline step, in-memory `ImageColourer`, `GlobeModel.from_paleo` end-to-end creation |
+| `test_notebooks.py` | `examples/` | End-to-end execution of all example notebooks |
 
 ### Running tests
 

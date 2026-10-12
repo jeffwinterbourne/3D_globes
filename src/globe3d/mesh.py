@@ -5,10 +5,20 @@ and its creation recipe, along with helper functions for sphere generation,
 chirality fixing, hollowing, and hemisphere splitting.
 """
 
+from typing import Optional, List, Tuple, Union, Dict, Any
 import numpy as np
 from scipy.spatial import ConvexHull
 import trimesh
-from globe3d.displacement import Displacer, Colourer, select_inward_facing, select_outward_facing, SELECTION_REGISTRY
+from globe3d.displacement import (
+    Displacer,
+    Colourer,
+    GridDisplacer,
+    ImageColourer,
+    calculate_displacement_scale,
+    select_inward_facing,
+    select_outward_facing,
+    SELECTION_REGISTRY,
+)
 from globe3d.magnets import MagnetSettings
 
 
@@ -292,6 +302,119 @@ class GlobeModel:
         model._center = center
         model._outer_proxy = None
         model._inner_proxy = None
+        return model
+
+    @classmethod
+    def from_paleo(
+        cls,
+        age: float,
+        radius: float = 100.0,
+        n_points: int = 100000,
+        hollow: bool = True,
+        inner_ratio: float = 0.9,
+        vert_exagg: float = 50.0,
+        coastline_step: float = 1000.0,
+        mark_poles: bool = True,
+        tracked_locations: Optional[List[Dict[str, Any]]] = None,
+        palette_colors: Optional[List[Tuple[int, int, int]]] = None,
+        undo_shading: bool = False,
+        data_dir: Optional[str] = None,
+        plate_model: Optional[Any] = None,
+        method: str = "fibonacci",
+    ) -> "GlobeModel":
+        """Creates a fully configured paleo-globe model for a given geological age.
+
+        Loads the corresponding Scotese PALEOMAP PaleoDEM elevation grid and
+        matching PaleoAtlas texture, applies coastline shelf step and exaggeration,
+        optionally tracks modern locations back in deep time, burns pole markers, and applies
+        vertex colors.
+
+        Args:
+            age (float): Geological age in millions of years ago (Ma, e.g. 250 for Permo-Triassic).
+            radius (float, optional): Model radius in mm. Defaults to 100.0.
+            n_points (int, optional): Number of vertices for outer shell. Defaults to 100000.
+            hollow (bool, optional): Whether to hollow the model. Defaults to True.
+            inner_ratio (float, optional): Inner void radius relative to outer. Defaults to 0.9.
+            vert_exagg (float, optional): Topographic vertical exaggeration factor. Defaults to 50.0.
+            coastline_step (float, optional): Artificial vertical elevation step (in meters)
+                added to continents (> 0 m) to emphasize coastlines. Defaults to 1000.0.
+            mark_poles (bool, optional): Whether to burn 'N' and 'S' markers onto the poles. Defaults to True.
+            tracked_locations (list of dict, optional): List of modern locations to track back in time.
+                Each dict can contain:
+                - 'lat': float (latitude in degrees)
+                - 'lon': float (longitude in degrees)
+                - 'name': str (optional label)
+                - 'symbol': str (optional SVG or builtin: 'star', 'N', 'S', defaults to 'star')
+                - 'size': float (optional angular radius in degrees, defaults to 2.5)
+                - 'color': tuple (optional RGBA color, defaults to red (255, 0, 0))
+            palette_colors (list of tuple, optional): Discrete filament RGB palette for color quantization.
+                Defaults to None.
+            undo_shading (bool, optional): Whether to reduce baked-in hillshading from texture. Defaults to False.
+            data_dir (str, optional): Custom directory containing Scotese PALEOMAP datasets. Defaults to None.
+            plate_model (PlateModel, optional): Plate reconstruction model. If None, loads Scotese PALEOMAP.
+                Defaults to None.
+            method (str, optional): Sphere mesh generation method ('fibonacci' or 'icosahedron'). Defaults to 'fibonacci'.
+
+        Returns:
+            GlobeModel: Configured paleo-globe model with displaced geometry and vertex coloring.
+        """
+        from PIL import Image
+        from globe3d import datasets
+        from globe3d.image import (
+            add_svg_symbol_spherical,
+            add_pole_markers,
+            undo_hillshading,
+            simplify_colors,
+        )
+
+        grid, texture_path, meta = datasets.paleo.scotese(age=age, data_dir=data_dir)
+        actual_age = meta["age_ma"]
+
+        model = cls(
+            method=method,
+            n_points=n_points,
+            radius=radius,
+            hollow=hollow,
+            inner_ratio=inner_ratio,
+        )
+
+        scale = calculate_displacement_scale(radius, grid_units="m") * vert_exagg
+        displacer = GridDisplacer(grid, coastline_step=coastline_step, step_threshold=0.0)
+        model.outer.displace(displacer, scale=scale)
+
+        texture_img = Image.open(texture_path).convert("RGBA")
+
+        if undo_shading:
+            texture_img = undo_hillshading(texture_img, strength=0.5)
+
+        if tracked_locations:
+            pm = plate_model
+            if pm is None:
+                pm = datasets.paleo.scotese_plate_model(data_dir=data_dir)
+            for loc in tracked_locations:
+                lat = loc.get("lat")
+                lon = loc.get("lon")
+                symbol = loc.get("symbol", "star")
+                size = loc.get("size", 2.5)
+                color = loc.get("color", (255, 0, 0, 255))
+                rec_pt = pm.reconstruct_points([[lat, lon]], actual_age)
+                rec_lat, rec_lon = float(rec_pt[0, 0]), float(rec_pt[0, 1])
+                texture_img = add_svg_symbol_spherical(
+                    texture_img,
+                    svg_source=symbol,
+                    center_lat_deg=rec_lat,
+                    center_lon_deg=rec_lon,
+                    symbol_radius_degrees=size,
+                    fill_color=color,
+                )
+
+        if mark_poles:
+            texture_img = add_pole_markers(texture_img, marker_size_degrees=2.5)
+
+        if palette_colors:
+            texture_img = simplify_colors(texture_img, palette_colors)
+
+        model.outer.colour(ImageColourer(image=texture_img))
         return model
 
     # ------------------------------------------------------------------

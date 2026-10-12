@@ -24,9 +24,21 @@ dependencies = [
     "cmocean",
 ]
 
+[project.optional-dependencies]
+paleo = [
+    "gplately",
+    "pygplates",
+    "svg.path",
+    "opencv-python",
+    "Pillow",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/jeffwinterbourne/3D_globes"
 "Bug Tracker" = "https://github.com/jeffwinterbourne/3D_globes/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+globe3d = ["assets/*"]

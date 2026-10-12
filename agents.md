@@ -30,9 +30,12 @@ pip install -e .
 ## Code Standards
 - **Style**: Follow PEP 8 guidelines.
 - **Structure**: Keep code modular. Core logic resides in `src/globe3d/`.
-    - `mesh.py`: `GlobeModel` (unified constructor, `_MeshProxy` for inner/outer shells, `configure_magnets()`, `export()`, `export_hemispheres()`), sphere generation, hollowing, splitting.
+    - `mesh.py`: `GlobeModel` (unified constructor, `_MeshProxy` for inner/outer shells, `GlobeModel.from_paleo()`, `configure_magnets()`, `export()`, `export_hemispheres()`), sphere generation, hollowing, splitting.
     - `grid.py`: `GeographicGrid` data loading (NetCDF, TIFF).
-    - `displacement.py`: `Displacer` / `Colourer` class hierarchies, unit-aware `calculate_displacement_scale(grid_units=...)`.
+    - `displacement.py`: `Displacer` / `Colourer` class hierarchies, `GridDisplacer` (with `coastline_step`), `ImageColourer` (file, PIL Image, array), unit-aware `calculate_displacement_scale(grid_units=...)`.
+    - `reconstruction.py`: `PlateModel` (`gplately`/`pygplates` integration), deep-time coordinate and raster reconstruction (`reconstruct_points()`, `reconstruct_grid()`).
+    - `image.py`: Spherical vector symbol rendering (`add_svg_symbol_spherical()`, `add_pole_markers()`), texture preprocessing for 3D printing (`undo_hillshading()`, `simplify_image_median()`, `simplify_image_bilateral()`, `simplify_colors()`, `render_2d_array_as_rgb()`).
+    - `datasets.py`: Builtin catalog and fetchers for Earth, planetary, geophysics, and `datasets.paleo` (Scotese PALEOMAP PaleoDEMs, PaleoAtlas textures, plate models).
     - `magnets.py`: `MagnetSettings` (`allow_bosses`), multi-objective optimization and insertion of magnet voids with boss count and material minimization.
     - `io.py`: Low-level STL & OBJ file export (called internally by `GlobeModel.export`).
     - `plot.py`: Visualization.

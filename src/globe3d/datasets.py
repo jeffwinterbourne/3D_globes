@@ -789,6 +789,165 @@ class ShapefilesNamespace:
         return shp_path
 
 
+class PaleoNamespace:
+    """Namespace for paleogeographic and deep-time plate tectonic datasets."""
+
+    def __init__(self):
+        self._maps = None
+
+    def _load_metadata(self):
+        if self._maps is not None:
+            return self._maps
+
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "scotese_maps.csv")
+        records = []
+        if os.path.exists(csv_path):
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    r["age_ma"] = float(r["age_ma"])
+                    r["map_id"] = int(r["map_id"])
+                    records.append(r)
+        self._maps = records
+        return self._maps
+
+    def list_scotese_maps(self):
+        """Lists available Scotese & Wright (2018) PALEOMAP PaleoDEM and PaleoAtlas maps.
+
+        Returns:
+            list[dict]: List of map records with age_ma, map_id, name, dem_file_6min, dem_file_1deg, raster_file.
+        """
+        return self._load_metadata()
+
+    def find_scotese_data_dir(self, data_dir=None):
+        """Locates the directory containing Scotese PALEOMAP datasets.
+
+        Checks:
+        1. Explicit data_dir parameter.
+        2. Environment variables GLOBE3D_PALEO_DIR, SCOTESE_DIR.
+        3. D:\\OneDrive\\python\\scotese (common local storage).
+        4. .download_cache/scotese.
+
+        Args:
+            data_dir (str, optional): Custom path. Defaults to None.
+
+        Returns:
+            str or None: Path to directory containing Scotese data, or None if not found.
+        """
+        candidates = [
+            data_dir,
+            os.environ.get("GLOBE3D_PALEO_DIR"),
+            os.environ.get("SCOTESE_DIR"),
+            r"D:\OneDrive\python\scotese",
+            os.path.join(_get_cache_dir(), "scotese"),
+        ]
+        for c in candidates:
+            if c and os.path.isdir(c):
+                return os.path.abspath(c)
+        return None
+
+    def scotese(self, age=None, name=None, resolution="6m", data_dir=None):
+        """Loads a Scotese & Wright (2018) PaleoDEM grid and matching PaleoAtlas texture.
+
+        Args:
+            age (float, optional): Target geological age in Ma (0 to 540). The closest available
+                time slice is chosen. Defaults to None.
+            name (str, optional): Map name substring to match (e.g. 'Permo-Triassic', 'KT Boundary').
+                Defaults to None.
+            resolution (str, optional): Grid resolution ('6m' for 6 arc-minute, '1d' for 1 degree).
+                Defaults to '6m'.
+            data_dir (str, optional): Directory containing Scotese data folders. Defaults to None.
+
+        Returns:
+            tuple[GeographicGrid, str, dict]: (grid, texture_image_path, metadata)
+                where grid is the loaded GeographicGrid, texture_image_path is the matching
+                PaleoAtlas JPG path, and metadata is the dictionary of map info.
+
+        Raises:
+            FileNotFoundError: If the Scotese data directory or files cannot be located.
+        """
+        maps = self._load_metadata()
+        if not maps:
+            raise FileNotFoundError("Scotese map metadata table (scotese_maps.csv) not found.")
+
+        # Find closest map
+        selected = None
+        if age is not None:
+            selected = min(maps, key=lambda m: abs(m["age_ma"] - float(age)))
+        elif name is not None:
+            for m in maps:
+                if name.lower() in m["name"].lower():
+                    selected = m
+                    break
+            if selected is None:
+                raise ValueError(f"No Scotese map found matching name '{name}'.")
+        else:
+            selected = maps[0]  # Holocene 0 Ma default
+
+        base_dir = self.find_scotese_data_dir(data_dir)
+        if base_dir is None:
+            raise FileNotFoundError(
+                "Scotese dataset directory not found. Please provide data_dir or set "
+                "the GLOBE3D_PALEO_DIR environment variable pointing to the folder containing "
+                "Scotese_Wright_2018_Maps... and Scotese_PaleoAtlas_v3 folders."
+            )
+
+        dem_filename = selected["dem_file_6min"] if resolution.lower() in ("6m", "6min") else selected["dem_file_1deg"]
+        raster_filename = selected["raster_file"]
+
+        # Search for dem and raster files in base_dir
+        dem_path = None
+        raster_path = None
+        for root, _, files in os.walk(base_dir):
+            if dem_filename in files and dem_path is None:
+                dem_path = os.path.join(root, dem_filename)
+            if raster_filename in files and raster_path is None:
+                raster_path = os.path.join(root, raster_filename)
+            if dem_path and raster_path:
+                break
+
+        if dem_path is None or not os.path.exists(dem_path):
+            raise FileNotFoundError(f"PaleoDEM file '{dem_filename}' not found in '{base_dir}'.")
+
+        # Load grid (Scotese netCDFs typically use 'latitude', 'longitude', 'z')
+        grid = _load_netcdf_grid(dem_path, lat_var="latitude", lon_var="longitude", data_var="z")
+
+        return grid, raster_path, selected
+
+    def scotese_plate_model(self, data_dir=None):
+        """Loads the Scotese PALEOMAP Global Plate Model as a PlateModel instance.
+
+        Args:
+            data_dir (str, optional): Directory containing Scotese data folders. Defaults to None.
+
+        Returns:
+            PlateModel: Loaded plate reconstruction model.
+
+        Raises:
+            FileNotFoundError: If PALEOMAP plate model files cannot be found.
+        """
+        from globe3d.reconstruction import PlateModel
+
+        base_dir = self.find_scotese_data_dir(data_dir)
+        if base_dir is None:
+            raise FileNotFoundError("Scotese dataset directory not found.")
+
+        rot_path = None
+        gpml_path = None
+        for root, _, files in os.walk(base_dir):
+            if "PALEOMAP_PlateModel.rot" in files and rot_path is None:
+                rot_path = os.path.join(root, "PALEOMAP_PlateModel.rot")
+            if "PALEOMAP_PlatePolygons.gpml" in files and gpml_path is None:
+                gpml_path = os.path.join(root, "PALEOMAP_PlatePolygons.gpml")
+            if rot_path and gpml_path:
+                break
+
+        if rot_path is None or gpml_path is None:
+            raise FileNotFoundError("PALEOMAP_PlateModel.rot or PALEOMAP_PlatePolygons.gpml not found.")
+
+        return PlateModel(rot_path, gpml_path, gpml_path, name="Scotese_PALEOMAP")
+
+
 # Instantiate namespaces
 topography = TopographyNamespace()
 tomography = TomographyNamespace()
@@ -799,6 +958,7 @@ gravity = GravityNamespace()
 magnetics = MagneticsNamespace()
 shapefiles = ShapefilesNamespace()
 lithosphere = LithosphereNamespace()
+paleo = PaleoNamespace()
 
 
 def list_datasets():
@@ -808,6 +968,9 @@ def list_datasets():
         dict: A dictionary of datasets grouped by category.
     """
     datasets_info = {
+        "paleo": {
+            "scotese": "Scotese & Wright (2018) PALEOMAP PaleoDEMs & PaleoAtlas textures (0-540 Ma)",
+        },
         "topography": {
             "earth": "Earth global relief (topography + bathymetry)",
             "etopo": "NOAA ETOPO global relief",
@@ -876,3 +1039,9 @@ def moon(resolution="30m", cache_dir=None, url=None):
 def venus(resolution="30m", cache_dir=None, url=None):
     """Fetches and loads Venus topography data."""
     return topography.venus(resolution=resolution, cache_dir=cache_dir, url=url)
+
+
+def scotese(age=None, name=None, resolution="6m", data_dir=None):
+    """Fetches and loads a Scotese & Wright (2018) PaleoDEM grid and matching texture."""
+    return paleo.scotese(age=age, name=name, resolution=resolution, data_dir=data_dir)
+

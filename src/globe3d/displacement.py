@@ -7,6 +7,7 @@ on grids, images, or constant values.
 
 import os
 import warnings
+from typing import Union, Optional, Tuple, List, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import matplotlib.pyplot as plt
@@ -215,6 +216,8 @@ class GridDisplacer(Displacer):
         show_progress: bool = False,
         chunk_size: int = 10000,
         reference_level: float = 0.0,
+        coastline_step: float = 0.0,
+        step_threshold: float = 0.0,
     ):
         """Initializes a GridDisplacer.
 
@@ -227,6 +230,10 @@ class GridDisplacer(Displacer):
             reference_level (float, optional): Reference level about which to center the displacement.
                 Values below this level displace inward (negative), and values above displace outward (positive).
                 Defaults to 0.0.
+            coastline_step (float, optional): Synthetic vertical elevation step added at the coastline
+                (values > step_threshold) to make landmasses pop distinctly on 3D printed globes. Defaults to 0.0.
+            step_threshold (float, optional): Threshold boundary (typically sea level, 0.0) above which
+                coastline_step is applied. Defaults to 0.0.
         """
         if not isinstance(grid_data, GeographicGrid):
             raise TypeError("grid_data must be an instance of GeographicGrid.")
@@ -236,9 +243,17 @@ class GridDisplacer(Displacer):
         self.show_progress = show_progress
         self.chunk_size = chunk_size
         self.reference_level = float(reference_level)
+        self.coastline_step = float(coastline_step)
+        self.step_threshold = float(step_threshold)
 
     def __call__(self, vertices: np.ndarray, scale: float = 1.0) -> np.ndarray:
-        lats, lons, grid = _wrap_longitude(self.grid_data.lats, self.grid_data.lons, self.grid_data.grid)
+        grid_values = self.grid_data.grid
+        if self.coastline_step != 0.0:
+            grid_values = grid_values.copy()
+            continent_mask = grid_values > self.step_threshold
+            grid_values[continent_mask] += self.coastline_step
+
+        lats, lons, grid = _wrap_longitude(self.grid_data.lats, self.grid_data.lons, grid_values)
         interpolator = RegularGridInterpolator(
             (lats, lons), grid, bounds_error=False, fill_value=None, method=self.interp_method
         )
@@ -677,7 +692,8 @@ class ImageColourer(Colourer):
 
     def __init__(
         self,
-        image_path: str,
+        image: Union[str, object, np.ndarray, None] = None,
+        image_path: Optional[str] = None,
         num_threads: int = -1,
         show_progress: bool = False,
         chunk_size: int = 10000,
@@ -685,18 +701,32 @@ class ImageColourer(Colourer):
         """Initializes an ImageColourer.
 
         Args:
-            image_path (str): File path to the image.
+            image (str, PIL.Image.Image, or np.ndarray, optional): Equirectangular image
+                as a file path, PIL Image, or NumPy array. Defaults to None.
+            image_path (str, optional): Legacy alias for image path. Defaults to None.
             num_threads (int, optional): Parallel threads. Defaults to -1.
             show_progress (bool, optional): Show progress. Defaults to False.
             chunk_size (int, optional): Chunk size. Defaults to 10000.
         """
-        self.image_path = image_path
+        img_source = image if image is not None else image_path
+        if img_source is None:
+            raise ValueError("Either 'image' or 'image_path' must be provided.")
+
+        self.image = img_source
+        self.image_path = img_source if isinstance(img_source, str) else None
         self.num_threads = num_threads
         self.show_progress = show_progress
         self.chunk_size = chunk_size
 
     def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
-        img = plt.imread(self.image_path)
+        if isinstance(self.image, str):
+            img = plt.imread(self.image)
+        elif hasattr(self.image, "convert"):  # PIL Image
+            img = np.array(self.image.convert("RGB"))
+        elif isinstance(self.image, np.ndarray):
+            img = self.image.copy()
+        else:
+            raise TypeError("image must be a file path, PIL.Image.Image, or NumPy array.")
 
         if img.dtype == np.uint8:
             img = img.astype(np.float64) / 255.0
