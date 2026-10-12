@@ -52,8 +52,8 @@ DEFAULT_ELEVATION_BANDS: List[Dict[str, Union[int, float, str, None]]] = [
     {"index": 13, "threshold": -200,  "name": "Deep sea"},
     {"index": 16, "threshold": 0,     "name": "Continental Shelf"},
     {"index": 3,  "threshold": 300,   "name": "Lowlands"},
-    {"index": 32, "threshold": 600,   "name": "High ground"},
-    {"index": 29, "threshold": 1000,  "name": "Low mountains"},
+    {"index": 19, "threshold": 600,   "name": "High ground"},
+    {"index": 9,  "threshold": 1000,  "name": "Low mountains"},
     {"index": 5,  "threshold": 1500,  "name": "High mountains"},
     {"index": 2,  "threshold": None,  "name": "Very high"},
 ]
