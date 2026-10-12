@@ -553,13 +553,37 @@ def create_filament_palette(
             name = " + ".join(f"{count}/{total_layers} {s['name']}" for s, count in parts)
             layers_str = name
 
+        # Interleave discrete micro-layer sequence to avoid adjacent identical layers
+        if total_layers == 4:
+            if len(parts) == 1:
+                seq_spools = [parts[0][0]] * 4
+            elif len(parts) == 2 and parts[0][1] == 2 and parts[1][1] == 2:
+                # 50/50 mix: alternate BWBW
+                seq_spools = [parts[0][0], parts[1][0], parts[0][0], parts[1][0]]
+            elif len(parts) == 3 and parts[0][1] == 2 and parts[1][1] == 1 and parts[2][1] == 1:
+                # 50/25/25 mix: alternate BWBG (no adjacent same colors)
+                seq_spools = [parts[0][0], parts[1][0], parts[0][0], parts[2][0]]
+            elif len(parts) == 2 and parts[0][1] == 3 and parts[1][1] == 1:
+                # 75/25 mix: e.g. BBWB
+                seq_spools = [parts[0][0], parts[1][0], parts[0][0], parts[0][0]]
+            elif len(parts) == 4 and all(c == 1 for _, c in parts):
+                seq_spools = [s for s, _ in parts]
+            else:
+                seq_spools = []
+                for s, count in parts:
+                    seq_spools.extend([s] * count)
+        else:
+            seq_spools = []
+            for s, count in parts:
+                seq_spools.extend([s] * count)
+
         recipe = [
             {
                 "spool": s["name"],
-                "weight": round(count / float(total_layers), 2),
-                "layers": count,
+                "weight": round(1.0 / float(total_layers), 2),
+                "layers": 1,
             }
-            for s, count in parts
+            for s in seq_spools
         ]
 
         if hex_code not in seen_hex:

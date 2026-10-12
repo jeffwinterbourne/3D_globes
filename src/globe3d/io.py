@@ -114,6 +114,28 @@ def encode_paint_facet(state: int) -> str:
     return "".join(chars)
 
 
+def decode_paint_facet(code: str) -> int:
+    """Decodes a Bambu/OrcaSlicer paint_color attribute into a 1-based extruder/filament slot state.
+
+    Args:
+        code (str): Hex string from `paint_color` attribute, e.g. "4", "8", "0C", "1C", etc.
+
+    Returns:
+        int: 1-based filament slot state (1..N). Returns 0 if unpainted or empty.
+    """
+    if not code:
+        return 0
+    code = code.strip().upper()
+    if code.endswith("C"):
+        body = code[:-1]
+        num_f = body.count("F")
+        first = body[0]
+        rem = int(first, 16) + 15 * num_f
+        return rem + 3
+    val = int(code, 16)
+    return val >> 2
+
+
 def build_orca_mixed_definitions(palette, base_filaments):
     """Builds OrcaSlicer / Snapmaker Orca mixed_filament_definitions string for virtual slots.
 
@@ -139,9 +161,55 @@ def build_orca_mixed_definitions(palette, base_filaments):
 
     spool_name_to_id = {f["name"].lower(): i + 1 for i, f in enumerate(base_filaments)}
 
+    def interleave_layers(seq):
+        """Interleaves micro-layers to alternate colors and avoid adjacent identical layers."""
+        if len(seq) <= 1:
+            return list(seq)
+        counts = {}
+        for x in seq:
+            counts[x] = counts.get(x, 0) + 1
+        if len(counts) <= 1:
+            return list(seq)
+
+        # Sort spools by count descending, preserving order of first appearance for ties
+        sorted_spools = sorted(counts.keys(), key=lambda s: (-counts[s], seq.index(s)))
+        c_vals = [counts[s] for s in sorted_spools]
+
+        if len(seq) == 4:
+            if c_vals == [2, 2]:
+                # 50/50 mix: alternate BWBW
+                return [sorted_spools[0], sorted_spools[1], sorted_spools[0], sorted_spools[1]]
+            elif c_vals == [2, 1, 1]:
+                # 50/25/25 mix: alternate BWBG without adjacent duplicate colors
+                return [sorted_spools[0], sorted_spools[1], sorted_spools[0], sorted_spools[2]]
+            elif c_vals == [3, 1]:
+                # 75/25 mix: distribute minority layer
+                return [sorted_spools[0], sorted_spools[1], sorted_spools[0], sorted_spools[0]]
+            elif c_vals == [1, 1, 1, 1]:
+                return [sorted_spools[0], sorted_spools[1], sorted_spools[2], sorted_spools[3]]
+        return list(seq)
+
     def get_seq(p):
         recipe = p.get("recipe_data", p.get("recipe", [])) if isinstance(p, dict) else p
         seq = []
+
+        def _fallback_sid(name=""):
+            if isinstance(p, dict) and "color" in p:
+                try:
+                    p_rgb = parse_color(p["color"])
+                    best_sid = 1
+                    best_dist = float("inf")
+                    for idx_b, bf in enumerate(base_filaments):
+                        b_rgb = parse_color(bf)
+                        dist = sum((p_rgb[ch] - b_rgb[ch]) ** 2 for ch in range(3))
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_sid = idx_b + 1
+                    return best_sid
+                except Exception:
+                    return 1
+            return 1
+
         if isinstance(recipe, list):
             for item in recipe:
                 if isinstance(item, dict):
@@ -152,11 +220,13 @@ def build_orca_mixed_definitions(palette, base_filaments):
                             if sname in spool_name or spool_name in sname:
                                 sid = s_id
                                 break
+                    if sid is None:
+                        sid = _fallback_sid(spool_name)
                     layers = item.get("layers")
                     if layers is None:
                         weight = float(item.get("weight", 1.0))
                         layers = max(1, int(round(weight * 4)))
-                    seq.extend([sid if sid is not None else 1] * max(1, int(layers)))
+                    seq.extend([sid] * max(1, int(layers)))
                 elif isinstance(item, tuple) and len(item) == 2:
                     spool_name = str(item[0]).lower()
                     sid = spool_name_to_id.get(spool_name)
@@ -165,9 +235,11 @@ def build_orca_mixed_definitions(palette, base_filaments):
                             if sname in spool_name or spool_name in sname:
                                 sid = s_id
                                 break
+                    if sid is None:
+                        sid = _fallback_sid(spool_name)
                     val = float(item[1])
                     layers = int(round(val * 4)) if val <= 1.0 else int(round(val))
-                    seq.extend([sid if sid is not None else 1] * max(1, layers))
+                    seq.extend([sid] * max(1, layers))
         elif isinstance(recipe, str) and recipe.strip():
             import re
             parts = [part.strip() for part in recipe.split("+") if part.strip()]
@@ -183,7 +255,7 @@ def build_orca_mixed_definitions(palette, base_filaments):
                                 sid = s_id
                                 break
                     if sid is None:
-                        sid = 1
+                        sid = _fallback_sid(name)
                     if num and denom:
                         layers = max(1, int(round(int(num) / int(denom) * 4)))
                     elif pct:
@@ -192,8 +264,8 @@ def build_orca_mixed_definitions(palette, base_filaments):
                         layers = 4
                     seq.extend([sid] * layers)
         if not seq:
-            seq = [1]
-        return seq
+            seq = [_fallback_sid()]
+        return interleave_layers(seq)
 
     rows = []
     for i, p in enumerate(palette):
@@ -342,34 +414,12 @@ def write_3mf(
             "color_per_vertex": color_per_vertex,
         })
 
-    # 2. Build filament and color slot registry
+    # 2. Build filament and color slot registry (capped strictly to OrcaSlicer's max 16 extruders)
     slots = []  # list of dicts: {'name', 'color': (R,G,B), 'hex', 'td', 'recipe', 'is_base'}
     registered_rgbs = []
 
-    def _find_or_add_slot(name, rgb, td=1.0, recipe=None, is_base=False):
-        rgb_tuple = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
-        # Check if matching slot exists within color_tolerance
-        for s_idx, (existing_rgb, s) in enumerate(zip(registered_rgbs, slots)):
-            if max(abs(rgb_tuple[ch] - existing_rgb[ch]) for ch in range(3)) <= color_tolerance:
-                return s_idx
-
-        hex_c = color_to_hex(rgb_tuple)
-        rec_str = str(recipe) if recipe is not None else (f"100% {name}" if is_base else "Direct Color")
-        slot_info = {
-            "name": name,
-            "color": rgb_tuple,
-            "hex": hex_c,
-            "td": float(td) if td is not None else 1.0,
-            "recipe": rec_str,
-            "recipe_data": recipe if recipe is not None else rec_str,
-            "is_base": is_base,
-        }
-        s_idx = len(slots)
-        slots.append(slot_info)
-        registered_rgbs.append(rgb_tuple)
-        return s_idx
-
-    # Register physical base spools first
+    # 2a. Register physical base spools first
+    white_base_idx = None
     if base_filaments:
         for idx, bf in enumerate(base_filaments):
             if isinstance(bf, dict):
@@ -380,43 +430,142 @@ def write_3mf(
                 name = f"Base Spool {idx + 1}"
                 rgb = parse_color(bf)
                 td = 1.0
-            _find_or_add_slot(name, rgb, td=td, recipe=f"100% {name} (Physical Spool)", is_base=True)
+            rgb_tuple = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            s_idx = len(slots)
+            slots.append({
+                "name": name,
+                "color": rgb_tuple,
+                "hex": color_to_hex(rgb_tuple),
+                "td": float(td) if td is not None else 1.0,
+                "recipe": f"100% {name} (Physical Spool)",
+                "recipe_data": f"100% {name}",
+                "is_base": True,
+            })
+            registered_rgbs.append(rgb_tuple)
+            if "white" in name.lower() or (rgb_tuple[0] >= 220 and rgb_tuple[1] >= 220 and rgb_tuple[2] >= 220):
+                if white_base_idx is None:
+                    white_base_idx = s_idx
 
-    # Register virtual mixed palette entries
+    def _match_registered_slot(rgb_tuple, tol=color_tolerance):
+        """Finds matching registered slot index or returns None."""
+        # Near-white snapping: pure/near-white (>= 240 in all RGB channels) snaps to white base spool
+        if white_base_idx is not None and min(rgb_tuple) >= 240:
+            return white_base_idx
+        for s_idx, existing_rgb in enumerate(registered_rgbs):
+            if max(abs(rgb_tuple[ch] - existing_rgb[ch]) for ch in range(3)) <= tol:
+                return s_idx
+        return None
+
+    # Collect unique colors present across all mesh objects
+    mesh_unique_colors = []
+    for p_obj in processed_objects:
+        u_c = np.unique(p_obj["colors"], axis=0)
+        for rgb in u_c:
+            rgb_t = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            if rgb_t not in mesh_unique_colors:
+                mesh_unique_colors.append(rgb_t)
+
+    # 2b. Register virtual mixed palette entries
     if palette:
+        available_virtual_slots = max(0, 16 - len(slots))
+        all_can_fit = (len(palette) <= available_virtual_slots)
+
         for idx, p in enumerate(palette):
             if isinstance(p, dict):
                 name = p.get("name", p.get("zone", f"Mix {idx + 1}"))
                 rgb = parse_color(p)
                 td = p.get("td", 1.0)
                 recipe_data = p.get("recipe", p.get("layers", name))
-                if isinstance(recipe_data, list):
-                    parts = []
-                    for r in recipe_data:
-                        if isinstance(r, dict):
-                            sp = r.get("spool", "Spool")
-                            w = r.get("weight", 1.0)
-                        elif isinstance(r, tuple) and len(r) == 2:
-                            sp, w = str(r[0]), float(r[1])
-                        else:
-                            sp, w = str(r), 1.0
-                        parts.append(f"{w:.0%} {sp}" if w <= 1.0 else f"{w} {sp}")
-                    recipe_str = " + ".join(parts)
-                else:
-                    recipe_str = str(recipe_data)
             else:
                 name = f"Mix {idx + 1}"
                 rgb = parse_color(p)
                 td = 1.0
-                recipe_str = name
-            _find_or_add_slot(name, rgb, td=td, recipe=recipe_str, is_base=False)
+                recipe_data = name
 
-    # Register any remaining mesh colors not covered by base spools or palette
-    for p_obj in processed_objects:
-        unique_mesh_colors = np.unique(p_obj["colors"], axis=0)
-        for rgb in unique_mesh_colors:
-            hex_c = color_to_hex(rgb)
-            _find_or_add_slot(f"Color {hex_c}", rgb, td=1.0, recipe="Direct Vertex Color", is_base=False)
+            rgb_tuple = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+
+            # Check if this palette entry is already covered by a physical base spool
+            match_idx = _match_registered_slot(rgb_tuple)
+            if match_idx is not None and slots[match_idx]["is_base"]:
+                continue
+
+            # Check if this palette color is actually referenced by the mesh
+            is_used_by_mesh = False
+            for m_col in mesh_unique_colors:
+                if _match_registered_slot(m_col) is None:
+                    if max(abs(m_col[ch] - rgb_tuple[ch]) for ch in range(3)) <= color_tolerance:
+                        is_used_by_mesh = True
+                        break
+
+            if all_can_fit or is_used_by_mesh:
+                if len(slots) < 16:
+                    if isinstance(recipe_data, list):
+                        parts = []
+                        for r in recipe_data:
+                            if isinstance(r, dict):
+                                sp = r.get("spool", "Spool")
+                                w = r.get("weight", 1.0)
+                            elif isinstance(r, tuple) and len(r) == 2:
+                                sp, w = str(r[0]), float(r[1])
+                            else:
+                                sp, w = str(r), 1.0
+                            parts.append(f"{w:.0%} {sp}" if w <= 1.0 else f"{w} {sp}")
+                        recipe_str = " + ".join(parts)
+                    else:
+                        recipe_str = str(recipe_data)
+
+                    slot_info = {
+                        "name": name,
+                        "color": rgb_tuple,
+                        "hex": color_to_hex(rgb_tuple),
+                        "td": float(td) if td is not None else 1.0,
+                        "recipe": recipe_str,
+                        "recipe_data": recipe_data,
+                        "is_base": False,
+                    }
+                    slots.append(slot_info)
+                    registered_rgbs.append(rgb_tuple)
+
+    # 2c. Register any remaining mesh colors not covered by base spools or palette
+    for rgb_t in mesh_unique_colors:
+        s_idx = _match_registered_slot(rgb_t)
+        if s_idx is None:
+            if len(slots) < 16:
+                hex_c = color_to_hex(rgb_t)
+                best_base = base_filaments[0]["name"] if base_filaments else "Spool 1"
+                if base_filaments:
+                    best_d = float("inf")
+                    for bf in base_filaments:
+                        b_rgb = parse_color(bf)
+                        d = sum((rgb_t[ch] - b_rgb[ch]) ** 2 for ch in range(3))
+                        if d < best_d:
+                            best_d = d
+                            best_base = bf.get("name", "Spool")
+                slot_info = {
+                    "name": f"Color {hex_c}",
+                    "color": rgb_t,
+                    "hex": hex_c,
+                    "td": 1.0,
+                    "recipe": f"100% {best_base}",
+                    "recipe_data": f"100% {best_base}",
+                    "is_base": False,
+                }
+                slots.append(slot_info)
+                registered_rgbs.append(rgb_t)
+
+    def _get_slot_index(rgb_tuple):
+        s_idx = _match_registered_slot(rgb_tuple)
+        if s_idx is not None:
+            return s_idx
+        # Snap to closest existing slot
+        best_idx = 0
+        best_d = float("inf")
+        for idx_s, ex_rgb in enumerate(registered_rgbs):
+            d = sum((rgb_tuple[ch] - ex_rgb[ch]) ** 2 for ch in range(3))
+            if d < best_d:
+                best_d = d
+                best_idx = idx_s
+        return best_idx
 
     # 3. Map each object's colors to slot indices
     for p_obj in processed_objects:
@@ -428,7 +577,8 @@ def write_3mf(
         if p_obj["color_per_vertex"]:
             v_indices = np.zeros(len(v), dtype=np.int32)
             for rgb in unique_mesh_colors:
-                slot_idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
+                rgb_t = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                slot_idx = _get_slot_index(rgb_t)
                 mask = np.all(c_arr == rgb, axis=1)
                 v_indices[mask] = slot_idx
 
@@ -438,7 +588,8 @@ def write_3mf(
         else:
             f_indices = np.zeros(len(f), dtype=np.int32)
             for rgb in unique_mesh_colors:
-                slot_idx = _find_or_add_slot(f"Color {color_to_hex(rgb)}", rgb)
+                rgb_t = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+                slot_idx = _get_slot_index(rgb_t)
                 mask = np.all(c_arr == rgb, axis=1)
                 f_indices[mask] = slot_idx
             p_obj["f_p1"] = f_indices

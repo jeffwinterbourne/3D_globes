@@ -331,9 +331,9 @@ def test_build_orca_mixed_definitions_recipes_and_ordering():
     assert row_tokens[3] == "1"  # custom=1
     assert row_tokens[10] == "o0"  # origin=o0
     assert row_tokens[11] == "u5"  # stable_id=u5
-    # Pattern is 13th token (index 12) with NO extra comma splits
+    # Pattern is 13th token (index 12) with NO extra comma splits, interleaved without adjacent duplicate layers
     assert len(row_tokens) == 13
-    assert row_tokens[12] == "4413"
+    assert row_tokens[12] == "4143"
 
 
 def test_get_printer_profile():
@@ -349,5 +349,79 @@ def test_get_printer_profile():
 
     with pytest.raises(FileNotFoundError):
         get_printer_profile("nonexistent_printer")
+
+
+def test_interleaved_layer_sequencing():
+    """build_orca_mixed_definitions alternates 50/50 layers (BWBW) and avoids adjacent duplicates in 50/25/25 (BWBG)."""
+    from globe3d.io import build_orca_mixed_definitions
+
+    base_spools = [
+        {"name": "Brown", "color": [90, 50, 30]},       # 1
+        {"name": "Dark Blue", "color": [20, 40, 95]},   # 2
+        {"name": "White", "color": [245, 245, 245]},    # 3
+        {"name": "Dark Green", "color": [30, 85, 45]},  # 4
+    ]
+
+    palette = [
+        # 50/25/25 mix of Blue (2), White (3), Green (4)
+        {"name": "BWBG mix", "recipe": [("Dark Blue", 0.5), ("White", 0.25), ("Dark Green", 0.25)]},
+    ]
+
+    defs_str = build_orca_mixed_definitions(palette, base_spools)
+    row = defs_str.split(";")[0]
+    tokens = row.split(",")
+    # Pattern must be '2324' (BWBG) - not '2234' (BBWG)
+    assert tokens[12] == "2324"
+
+
+def test_white_snapping_and_max_16_slots(tmp_path):
+    """write_3mf snaps pure white (255, 255, 255) to physical White spool and strictly enforces <= 16 slots."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    from globe3d.io import write_3mf, decode_paint_facet
+
+    base_spools = [
+        {"name": "Brown", "color": [90, 50, 30]},       # 1
+        {"name": "Dark Blue", "color": [20, 40, 95]},   # 2
+        {"name": "White", "color": [245, 245, 245]},    # 3
+        {"name": "Dark Green", "color": [30, 85, 45]},  # 4
+    ]
+
+    # Large 35-item palette
+    from globe3d.filaments import create_filament_palette
+    large_palette = create_filament_palette(base_spools)
+    assert len(large_palette) > 16
+
+    # Triangle mesh with 3 vertices: 1 blue, 1 green, 1 pure white (255, 255, 255)
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=float)
+    faces = np.array([[0, 1, 2]], dtype=int)
+    colors = np.array([[20, 40, 95], [30, 85, 45], [255, 255, 255]], dtype=np.uint8)
+
+    out_file = str(tmp_path / "test_slots.3mf")
+    slots = write_3mf(
+        out_file,
+        vertices=verts,
+        faces=faces,
+        colors=colors,
+        base_filaments=base_spools,
+        palette=large_palette,
+    )
+
+    # Total registered slots MUST not exceed 16
+    assert len(slots) <= 16
+    # Pure white (255, 255, 255) must NOT create a separate slot; it must map to Base Spool White (index 2 = slot 3)
+    assert any(s["is_base"] and s["name"] == "White" for s in slots)
+    assert not any(s["name"] == "Color #ffffff" for s in slots)
+
+    # Check paint_color in 3MF
+    with zipfile.ZipFile(out_file) as zf:
+        root = ET.fromstring(zf.read("3D/3dmodel.model"))
+        ns = {"c": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+        for tri in root.findall(".//c:triangle", ns):
+            pc = tri.get("paint_color")
+            # If facet is painted, the decoded state must be between 1 and 16
+            if pc:
+                state = decode_paint_facet(pc)
+                assert 1 <= state <= 16
 
 

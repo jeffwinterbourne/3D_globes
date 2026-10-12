@@ -70,6 +70,7 @@ from .io import (
     write_obj_with_vertex_colors,
     build_orca_mixed_definitions,
     encode_paint_facet,
+    decode_paint_facet,
 )
 from . import datasets
 from . import image
@@ -85,6 +86,7 @@ __all__ = [
     "write_obj_with_vertex_colors",
     "build_orca_mixed_definitions",
     "encode_paint_facet",
+    "decode_paint_facet",
     "GeographicGrid",
     "Displacer",
     "ConstantDisplacer",
