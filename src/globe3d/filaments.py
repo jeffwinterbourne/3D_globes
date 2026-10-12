@@ -1393,7 +1393,7 @@ class InteractiveColormapBuilder:
 
         has_grid = self.dem_grid is not None
         fig_rows = 2 if has_grid else 1
-        fig, axes = plt.subplots(fig_rows, 1, figsize=(14, 3.5 if has_grid else 1.8), dpi=100)
+        fig, axes = plt.subplots(fig_rows, 1, figsize=(14, 8 if has_grid else 1.8), height_ratios=[1, 4], dpi=100)
         try:
             if not has_grid:
                 ax_cbar = axes
