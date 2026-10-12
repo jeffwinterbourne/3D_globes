@@ -509,7 +509,7 @@ model.export_hemispheres(
 
 ## 📓 Example Notebooks
 
-Seven example notebooks live in `examples/`:
+Eight example notebooks live in `examples/`:
 
 | Notebook | Purpose |
 |---|---|
@@ -517,6 +517,7 @@ Seven example notebooks live in `examples/`:
 | `example_2_intermediate_globe.ipynb` | Coastline step + hemisphere splitting → STL |
 | `example_3_magnets_globe.ipynb` | Magnet void insertion (with and without bosses) |
 | `example_4_coloured_globe.ipynb` | Full pipeline: displacement + color + magnets → OBJ |
+| `example_6_paleo_globe.ipynb` | Deep-time paleo-globes (0-540 Ma), 4-filament optical mixing, banded colormaps & interactive 3D WebGL preview |
 | `tomo_globe_3d.ipynb` | Production tomography globe with all features |
 | `demo_magnets.ipynb` | Magnets demo with calibration test piece |
 | `demo_split_globe_image.ipynb` | Image-based coloring demo |

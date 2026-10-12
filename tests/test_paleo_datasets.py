@@ -78,3 +78,25 @@ def test_globe_model_from_paleo():
     assert model.outer_vertices.shape == (1000, 3)
     assert model.outer_colors.shape == (1000, 3)
     assert model.inner_vertices is not None
+
+
+def test_globe_model_from_paleo_custom_texture():
+    """Verifies GlobeModel.from_paleo accepts custom texture image/array."""
+    scotese_dir = datasets.paleo.find_scotese_data_dir()
+    if scotese_dir is None:
+        pytest.skip("Scotese datasets not found on local machine")
+
+    custom_img = Image.new("RGB", (360, 180), (30, 85, 40))
+    model = GlobeModel.from_paleo(
+        age=250.0,
+        radius=50.0,
+        n_points=500,
+        hollow=False,
+        texture=custom_img,
+        mark_poles=False,
+    )
+    assert model.outer_vertices.shape == (500, 3)
+    assert model.outer_colors.shape == (500, 3)
+    # Check that colors reflect custom image green (30/255, 85/255, 40/255)
+    assert pytest.approx(model.outer_colors[0, 1], abs=0.05) == 85 / 255.0
+

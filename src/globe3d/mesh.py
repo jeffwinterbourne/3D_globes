@@ -321,6 +321,7 @@ class GlobeModel:
         data_dir: Optional[str] = None,
         plate_model: Optional[Any] = None,
         method: str = "fibonacci",
+        texture: Optional[Union[str, Any]] = None,
     ) -> "GlobeModel":
         """Creates a fully configured paleo-globe model for a given geological age.
 
@@ -354,6 +355,9 @@ class GlobeModel:
             plate_model (PlateModel, optional): Plate reconstruction model. If None, loads Scotese PALEOMAP.
                 Defaults to None.
             method (str, optional): Sphere mesh generation method ('fibonacci' or 'icosahedron'). Defaults to 'fibonacci'.
+            texture (str or PIL.Image.Image or np.ndarray, optional): Custom texture image or array
+                to apply to the globe. If None, uses the Scotese PaleoAtlas texture for the given age.
+                Defaults to None.
 
         Returns:
             GlobeModel: Configured paleo-globe model with displaced geometry and vertex coloring.
@@ -382,7 +386,17 @@ class GlobeModel:
         displacer = GridDisplacer(grid, coastline_step=coastline_step, step_threshold=0.0)
         model.outer.displace(displacer, scale=scale)
 
-        texture_img = Image.open(texture_path).convert("RGBA")
+        if texture is not None:
+            if isinstance(texture, str):
+                texture_img = Image.open(texture).convert("RGBA")
+            elif isinstance(texture, Image.Image):
+                texture_img = texture.convert("RGBA")
+            elif isinstance(texture, np.ndarray):
+                texture_img = Image.fromarray(texture.astype(np.uint8)).convert("RGBA")
+            else:
+                raise TypeError(f"Unsupported texture type: {type(texture)}")
+        else:
+            texture_img = Image.open(texture_path).convert("RGBA")
 
         if undo_shading:
             texture_img = undo_hillshading(texture_img, strength=0.5)
