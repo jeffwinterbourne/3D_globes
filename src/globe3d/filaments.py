@@ -911,26 +911,48 @@ def create_elevation_banded_colormap(
 
 
 def apply_banded_colormap(
-    data_array: np.ndarray,
+    data_array: Union[np.ndarray, "GeographicGrid"],
     colors: Sequence[Union[str, Sequence[Union[int, float]], Dict]],
     boundaries: Sequence[float],
+    flip_y: Optional[bool] = None,
 ) -> np.ndarray:
-    """Applies a banded colormap to a 2D scalar array, returning a 3D RGB uint8 image.
+    """Applies a banded colormap to a 2D scalar array or GeographicGrid, returning a 3D RGB uint8 image.
 
     Values below the first boundary get the first color; values between successive
     boundaries get the respective colors; values above or equal to the final boundary
     get the last color.
 
+    If a GeographicGrid is passed (or if flip_y is True), the output image is oriented
+    with North (latitude +90) at row 0 (the top edge of the image), correctly aligning
+    with standard equirectangular texture maps and ImageColourer.
+
     Args:
-        data_array (np.ndarray): 2D array of numerical values (e.g. elevation grid).
+        data_array (np.ndarray or GeographicGrid): 2D array or GeographicGrid instance.
         colors (sequence): List of N color representations.
         boundaries (sequence of float): List of N - 1 threshold boundaries.
+        flip_y (bool, optional): Whether to flip rows vertically so row 0 is North (+90°).
+            If None, automatically True when a GeographicGrid with ascending latitudes
+            is provided. Defaults to None.
 
     Returns:
         np.ndarray: (H, W, 3) array of RGB values with dtype uint8.
     """
+    from globe3d.grid import GeographicGrid
+
+    if isinstance(data_array, GeographicGrid):
+        arr = data_array.data
+        if flip_y is None:
+            flip_y = bool(len(data_array.lats) > 1 and data_array.lats[0] < data_array.lats[-1])
+    else:
+        arr = np.asarray(data_array)
+        if flip_y is None:
+            flip_y = False
+
     clean_colors = [parse_color(c) for c in colors]
-    return render_2d_array_as_rgb(data_array, clean_colors, list(boundaries))
+    res = render_2d_array_as_rgb(arr, clean_colors, list(boundaries))
+    if flip_y:
+        res = np.flipud(res)
+    return res
 
 
 def plot_filament_palette(

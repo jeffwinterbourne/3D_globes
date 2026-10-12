@@ -364,9 +364,8 @@ class GlobeModel:
         """
         from PIL import Image
         from globe3d import datasets
+        from globe3d.displacement import SymbolColourer, PoleLabelColourer
         from globe3d.image import (
-            add_svg_symbol_spherical,
-            add_pole_markers,
             undo_hillshading,
             simplify_colors,
         )
@@ -401,34 +400,39 @@ class GlobeModel:
         if undo_shading:
             texture_img = undo_hillshading(texture_img, strength=0.5)
 
+        if palette_colors:
+            texture_img = simplify_colors(texture_img, palette_colors)
+
+        model.outer.colour(ImageColourer(image=texture_img))
+
         if tracked_locations:
             pm = plate_model
             if pm is None:
                 pm = datasets.paleo.scotese_plate_model(data_dir=data_dir)
             for loc in tracked_locations:
-                lat = loc.get("lat")
-                lon = loc.get("lon")
-                symbol = loc.get("symbol", "star")
-                size = loc.get("size", 2.5)
-                color = loc.get("color", (255, 0, 0, 255))
-                rec_pt = pm.reconstruct_points([[lat, lon]], actual_age)
-                rec_lat, rec_lon = float(rec_pt[0, 0]), float(rec_pt[0, 1])
-                texture_img = add_svg_symbol_spherical(
-                    texture_img,
-                    svg_source=symbol,
-                    center_lat_deg=rec_lat,
-                    center_lon_deg=rec_lon,
-                    symbol_radius_degrees=size,
-                    fill_color=color,
+                model.outer.colour(
+                    SymbolColourer(
+                        symbol=loc.get("symbol", "star"),
+                        lat=loc.get("lat"),
+                        lon=loc.get("lon"),
+                        radius_degrees=loc.get("size", loc.get("radius_degrees", 2.5)),
+                        color=loc.get("color", "red"),
+                        reference=loc.get("reference", "modern"),
+                        age=actual_age,
+                        plate_model=pm,
+                        rotation_degrees=loc.get("rotation_degrees", 0.0),
+                    )
                 )
 
         if mark_poles:
-            texture_img = add_pole_markers(texture_img, marker_size_degrees=2.5)
+            model.outer.colour(
+                PoleLabelColourer(
+                    radius_degrees=2.5,
+                    north_color=(1.0, 0.0, 0.0),
+                    south_color=(0.0, 0.0, 1.0),
+                )
+            )
 
-        if palette_colors:
-            texture_img = simplify_colors(texture_img, palette_colors)
-
-        model.outer.colour(ImageColourer(image=texture_img))
         return model
 
     # ------------------------------------------------------------------

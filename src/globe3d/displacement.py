@@ -7,10 +7,12 @@ on grids, images, or constant values.
 
 import os
 import warnings
-from typing import Union, Optional, Tuple, List, Callable
+from typing import Union, Optional, Tuple, List, Callable, Sequence, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.path as mpath
+from matplotlib.colors import to_rgb
 from scipy.interpolate import RegularGridInterpolator
 from tqdm import tqdm
 from globe3d.grid import GeographicGrid
@@ -587,6 +589,9 @@ class GridColourer(Colourer):
         num_threads: int = -1,
         show_progress: bool = False,
         chunk_size: int = 10000,
+        reference: str = "paleo",
+        age: Optional[float] = None,
+        plate_model: Optional[object] = None,
     ):
         """Initializes a GridColourer.
 
@@ -600,9 +605,27 @@ class GridColourer(Colourer):
             num_threads (int, optional): Parallel threads. Defaults to -1.
             show_progress (bool, optional): Show progress bar. Defaults to False.
             chunk_size (int, optional): Chunk size for progress tracking. Defaults to 10000.
+            reference (str, optional): Coordinate reference system ('paleo' or 'modern').
+                Defaults to 'paleo'. If 'modern' and `age` is given, grid is reconstructed.
+            age (float, optional): Geological age in Ma if reference='modern'. Defaults to None.
+            plate_model (PlateModel, optional): Plate reconstruction model if reference='modern'.
+                Defaults to None.
         """
         if not isinstance(grid_data, GeographicGrid):
             raise TypeError("grid_data must be an instance of GeographicGrid.")
+
+        self.reference = reference.lower()
+        self.age = age
+        self.plate_model = plate_model
+
+        if self.reference == "modern" and self.age is not None and self.age != 0:
+            pm = self.plate_model
+            if pm is None:
+                from globe3d import datasets
+                pm = datasets.paleo.scotese_plate_model()
+            from globe3d.reconstruction import reconstruct_grid
+            grid_data = reconstruct_grid(grid_data, plate_model=pm, age_ma=float(self.age))
+
         self.grid_data = grid_data
         self.colormap = colormap
         self.norm = norm
@@ -697,6 +720,9 @@ class ImageColourer(Colourer):
         num_threads: int = -1,
         show_progress: bool = False,
         chunk_size: int = 10000,
+        reference: str = "paleo",
+        age: Optional[float] = None,
+        plate_model: Optional[object] = None,
     ):
         """Initializes an ImageColourer.
 
@@ -707,6 +733,11 @@ class ImageColourer(Colourer):
             num_threads (int, optional): Parallel threads. Defaults to -1.
             show_progress (bool, optional): Show progress. Defaults to False.
             chunk_size (int, optional): Chunk size. Defaults to 10000.
+            reference (str, optional): Coordinate reference system ('paleo' or 'modern').
+                Defaults to 'paleo'.
+            age (float, optional): Geological age in Ma if reference='modern'. Defaults to None.
+            plate_model (PlateModel, optional): Plate reconstruction model if reference='modern'.
+                Defaults to None.
         """
         img_source = image if image is not None else image_path
         if img_source is None:
@@ -717,6 +748,9 @@ class ImageColourer(Colourer):
         self.num_threads = num_threads
         self.show_progress = show_progress
         self.chunk_size = chunk_size
+        self.reference = reference.lower()
+        self.age = age
+        self.plate_model = plate_model
 
     def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
         if isinstance(self.image, str):
@@ -1137,6 +1171,327 @@ class PolygonColourer(Colourer):
             apply_mask = ~inside_mask
 
         colors[apply_mask] = self.color
+        return colors
+
+
+def _parse_color_float(color: Union[str, Sequence[Union[int, float]], np.ndarray]) -> np.ndarray:
+    """Parses arbitrary color specification into an RGB float array in [0.0, 1.0]."""
+    if isinstance(color, (tuple, list, np.ndarray)) and len(color) >= 3:
+        vals = [float(x) for x in color[:3]]
+        if any(v > 1.0 for v in vals):
+            return np.array([v / 255.0 for v in vals], dtype=np.float64)
+        return np.array(vals, dtype=np.float64)
+    from matplotlib.colors import to_rgb
+    return np.array(to_rgb(color), dtype=np.float64)
+
+
+def _get_symbol_path(symbol: Union[str, Sequence[Tuple[float, float]], np.ndarray]) -> mpath.Path:
+    """Returns a normalized mpath.Path centered at origin with bounding radius 1.0."""
+    if isinstance(symbol, (list, tuple, np.ndarray)):
+        pts = np.asarray(symbol, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 2:
+            raise ValueError("Polygon points must have shape (N, 2).")
+    elif isinstance(symbol, str):
+        sym_lower = symbol.lower()
+        if sym_lower == "circle":
+            theta = np.linspace(0, 2 * np.pi, 64)
+            pts = np.column_stack([np.cos(theta), np.sin(theta)])
+        elif sym_lower == "square":
+            pts = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]])
+        elif sym_lower == "triangle":
+            pts = np.array([[0.0, 1.0], [-0.866, -0.5], [0.866, -0.5], [0.0, 1.0]])
+        elif sym_lower == "cross":
+            pts = np.array([
+                [-0.3, 1.0], [0.3, 1.0], [0.3, 0.3], [1.0, 0.3], [1.0, -0.3], [0.3, -0.3],
+                [0.3, -1.0], [-0.3, -1.0], [-0.3, -0.3], [-1.0, -0.3], [-1.0, 0.3], [-0.3, 0.3],
+                [-0.3, 1.0]
+            ])
+        else:
+            from globe3d.image import _get_builtin_asset_path, _parse_svg_to_points
+            asset_path = _get_builtin_asset_path(symbol) or symbol
+            raw_pts = _parse_svg_to_points(asset_path)
+            if not raw_pts:
+                raise ValueError(f"Could not parse symbol '{symbol}' as SVG or recognized shape.")
+            pts = np.asarray(raw_pts, dtype=np.float64)
+            # In SVG, y coordinates increase downwards, so invert y for Cartesian/spherical tangent plane
+            pts = np.column_stack([pts[:, 0], -pts[:, 1]])
+    else:
+        raise TypeError(f"Unsupported symbol type: {type(symbol)}")
+
+    cx = (pts[:, 0].min() + pts[:, 0].max()) / 2.0
+    cy = (pts[:, 1].min() + pts[:, 1].max()) / 2.0
+    centered_x = pts[:, 0] - cx
+    centered_y = pts[:, 1] - cy
+    max_r = np.max(np.hypot(centered_x, centered_y))
+    if max_r < 1e-7:
+        max_r = 1.0
+    norm_pts = np.column_stack([centered_x / max_r, centered_y / max_r])
+    return mpath.Path(norm_pts)
+
+
+class SymbolColourer(Colourer):
+    """Assigns discrete colors to vertices within 2D symbols projected onto the globe sphere.
+
+    Projects geometric shapes (such as 'star', 'circle', 'square', 'triangle', 'cross',
+    'N', 'S') or arbitrary SVG paths directly onto the spherical mesh using local
+    gnomonic tangent-plane projection. This provides mathematically exact,
+    singularity-free placement across all latitudes including both geographic poles.
+
+    Positions can be specified either in paleo coordinates (default) or modern
+    geographic coordinates that are dynamically reconstructed to paleo coordinates
+    using a PlateModel and age.
+    """
+
+    def __init__(
+        self,
+        symbol: Union[str, Sequence[Tuple[float, float]], np.ndarray] = "star",
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        locations: Optional[Sequence[Union[Tuple[float, float], Dict]]] = None,
+        radius_degrees: float = 2.5,
+        color: Union[str, Sequence[Union[int, float]]] = "red",
+        reference: str = "paleo",
+        age: Optional[float] = None,
+        plate_model: Optional[object] = None,
+        rotation_degrees: float = 0.0,
+    ):
+        """Initializes a SymbolColourer.
+
+        Args:
+            symbol (str or sequence, optional): Built-in symbol ('star', 'circle',
+                'square', 'triangle', 'cross', 'N', 'S'), path to an SVG file, or
+                an (N, 2) sequence of Cartesian polygon points. Defaults to 'star'.
+            lat (float, optional): Center latitude in degrees for a single symbol.
+                Defaults to None.
+            lon (float, optional): Center longitude in degrees for a single symbol.
+                Defaults to None.
+            locations (sequence of tuple or dict, optional): Multiple target locations.
+                Each element can be a (lat, lon) tuple or a dict specifying
+                `{'lat': ..., 'lon': ..., 'symbol': ..., 'color': ..., 'radius_degrees': ..., 'rotation_degrees': ...}`.
+                Defaults to None.
+            radius_degrees (float, optional): Angular radius of the symbol on the globe
+                in degrees. Defaults to 2.5.
+            color (str or sequence, optional): RGB color for vertices inside the symbol.
+                Can be a color name, hex code, or 3-element sequence in [0, 1] or [0, 255].
+                Defaults to 'red'.
+            reference (str, optional): Coordinate reference system — ``'paleo'`` (default)
+                or ``'modern'``. If ``'modern'`` and `age` is provided, coordinates are
+                reconstructed using `plate_model`.
+            age (float, optional): Geological age in Ma if `reference='modern'`. Defaults to None.
+            plate_model (PlateModel, optional): Plate reconstruction model if `reference='modern'`.
+                If None and `reference='modern'`, loads the default Scotese PALEOMAP model.
+                Defaults to None.
+            rotation_degrees (float, optional): In-plane rotation angle in degrees
+                (positive rotates counter-clockwise in tangent plane). Defaults to 0.0.
+
+        Raises:
+            ValueError: If neither `lat`/`lon` nor `locations` is provided.
+        """
+        self.default_symbol = symbol
+        self.default_radius_degrees = float(radius_degrees)
+        self.default_color = color
+        self.reference = reference.lower()
+        self.age = age
+        self.plate_model = plate_model
+        self.default_rotation_degrees = float(rotation_degrees)
+
+        if locations is not None:
+            self.locations = list(locations)
+        elif lat is not None and lon is not None:
+            self.locations = [{
+                "lat": float(lat),
+                "lon": float(lon),
+                "symbol": symbol,
+                "color": color,
+                "radius_degrees": self.default_radius_degrees,
+                "rotation_degrees": self.default_rotation_degrees,
+            }]
+        else:
+            raise ValueError("Either 'lat' and 'lon', or 'locations' must be provided to SymbolColourer.")
+
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        """Assigns symbol colors to vertices falling inside the projected boundaries.
+
+        Args:
+            vertices (np.ndarray): (N, 3) Cartesian vertex coordinates in mm.
+            current_colors (np.ndarray, optional): (N, 3) existing vertex colors in [0, 1].
+                If provided, existing colors outside the symbol are preserved. Defaults to None.
+
+        Returns:
+            np.ndarray: (N, 3) updated RGB vertex colors in range [0, 1].
+        """
+        n = vertices.shape[0]
+        if current_colors is not None:
+            colors = np.array(current_colors, dtype=np.float64, copy=True)
+        else:
+            colors = np.ones((n, 3), dtype=np.float64)
+
+        if n == 0 or len(self.locations) == 0:
+            return colors
+
+        r = np.linalg.norm(vertices, axis=1)
+        r_safe = np.where(r == 0.0, 1.0, r)
+        u_v = vertices / r_safe[:, None]
+
+        path_cache = {}
+
+        pm = self.plate_model
+        if self.reference == "modern" and self.age is not None and self.age != 0:
+            if pm is None:
+                from globe3d import datasets
+                pm = datasets.paleo.scotese_plate_model()
+
+        for loc in self.locations:
+            if isinstance(loc, (tuple, list)):
+                loc_lat, loc_lon = float(loc[0]), float(loc[1])
+                loc_sym = self.default_symbol
+                loc_col = self.default_color
+                loc_rad = self.default_radius_degrees
+                loc_rot = self.default_rotation_degrees
+            elif isinstance(loc, dict):
+                loc_lat = float(loc.get("lat", loc.get("latitude")))
+                loc_lon = float(loc.get("lon", loc.get("longitude")))
+                loc_sym = loc.get("symbol", self.default_symbol)
+                loc_col = loc.get("color", self.default_color)
+                loc_rad = float(loc.get("radius_degrees", loc.get("size", self.default_radius_degrees)))
+                loc_rot = float(loc.get("rotation_degrees", self.default_rotation_degrees))
+            else:
+                continue
+
+            if self.reference == "modern" and self.age is not None and self.age != 0 and pm is not None:
+                rec_pt = pm.reconstruct_points([[loc_lat, loc_lon]], age_ma=float(self.age))
+                center_lat = float(rec_pt[0, 0])
+                center_lon = float(rec_pt[0, 1])
+            else:
+                center_lat = loc_lat
+                center_lon = loc_lon
+
+            cache_key = loc_sym if isinstance(loc_sym, str) else id(loc_sym)
+            if cache_key not in path_cache:
+                path_cache[cache_key] = _get_symbol_path(loc_sym)
+            poly_path = path_cache[cache_key]
+
+            col_rgb = _parse_color_float(loc_col)
+
+            lat_r = np.radians(center_lat)
+            lon_r = np.radians(center_lon)
+
+            if center_lat >= 89.9999:
+                c = np.array([0.0, 0.0, 1.0])
+                ex = np.array([0.0, 1.0, 0.0])
+                ey = np.array([-1.0, 0.0, 0.0])
+            elif center_lat <= -89.9999:
+                c = np.array([0.0, 0.0, -1.0])
+                ex = np.array([0.0, 1.0, 0.0])
+                ey = np.array([1.0, 0.0, 0.0])
+            else:
+                c = np.array([np.cos(lat_r) * np.cos(lon_r), np.cos(lat_r) * np.sin(lon_r), np.sin(lat_r)])
+                ey = np.array([-np.sin(lat_r) * np.cos(lon_r), -np.sin(lat_r) * np.sin(lon_r), np.cos(lat_r)])
+                ex = np.array([-np.sin(lon_r), np.cos(lon_r), 0.0])
+
+            if loc_rot != 0.0:
+                rot_rad = np.radians(loc_rot)
+                cos_a, sin_a = np.cos(rot_rad), np.sin(rot_rad)
+                ex_prime = cos_a * ex + sin_a * ey
+                ey_prime = -sin_a * ex + cos_a * ey
+                ex, ey = ex_prime, ey_prime
+
+            theta_max_rad = np.radians(loc_rad)
+            cos_cutoff = np.cos(theta_max_rad)
+            cos_thetas = np.dot(u_v, c)
+            cand_mask = cos_thetas >= cos_cutoff
+            cand_indices = np.where(cand_mask)[0]
+
+            if len(cand_indices) > 0:
+                cos_cand = cos_thetas[cand_indices, None]
+                p_tangent = (u_v[cand_indices] / cos_cand) - c[None, :]
+                x_local = np.dot(p_tangent, ex)
+                y_local = np.dot(p_tangent, ey)
+                tan_theta = np.tan(theta_max_rad)
+                if tan_theta > 1e-7:
+                    u = x_local / tan_theta
+                    v = y_local / tan_theta
+                    inside = poly_path.contains_points(np.column_stack([u, v]))
+                    if np.any(inside):
+                        colors[cand_indices[inside]] = col_rgb
+
+        return colors
+
+
+class PoleLabelColourer(Colourer):
+    """Assigns discrete colors to vertices at the North and/or South poles.
+
+    Applies spherical tangent-plane projection for polar indicators (default 'N' at
+    North Pole and 'S' at South Pole), completely eliminating equirectangular distortion
+    and pole singularity artifacts.
+
+    Args:
+        radius_degrees (float, optional): Angular radius of the polar marker in degrees. Defaults to 3.0.
+        north_color (str or sequence, optional): RGB color for North pole label. If None,
+            North pole is not labeled. Defaults to 'red'.
+        south_color (str or sequence, optional): RGB color for South pole label. If None,
+            defaults to north_color. Defaults to None.
+        north_symbol (str, optional): Symbol for North pole. Defaults to 'N'.
+        south_symbol (str, optional): Symbol for South pole. Defaults to 'S'.
+        reference (str, optional): Coordinate reference system ('paleo' or 'modern'). Defaults to 'paleo'.
+        age (float, optional): Geological age in Ma if reference='modern'. Defaults to None.
+        plate_model (PlateModel, optional): Plate reconstruction model if reference='modern'. Defaults to None.
+        rotation_degrees (float, optional): In-plane rotation angle in degrees. Defaults to 0.0.
+    """
+
+    def __init__(
+        self,
+        radius_degrees: float = 3.0,
+        north_color: Optional[Union[str, Sequence[Union[int, float]]]] = "red",
+        south_color: Optional[Union[str, Sequence[Union[int, float]]]] = None,
+        north_symbol: str = "N",
+        south_symbol: str = "S",
+        reference: str = "paleo",
+        age: Optional[float] = None,
+        plate_model: Optional[object] = None,
+        rotation_degrees: float = 0.0,
+    ):
+        self.radius_degrees = float(radius_degrees)
+        self.north_color = north_color
+        self.south_color = south_color if south_color is not None else north_color
+        self.north_symbol = north_symbol
+        self.south_symbol = south_symbol
+        self.reference = reference
+        self.age = age
+        self.plate_model = plate_model
+        self.rotation_degrees = float(rotation_degrees)
+
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        colors = np.array(current_colors, dtype=np.float64, copy=True) if current_colors is not None else np.ones((len(vertices), 3), dtype=np.float64)
+
+        if self.north_color is not None:
+            c_north = SymbolColourer(
+                symbol=self.north_symbol,
+                lat=90.0,
+                lon=0.0,
+                radius_degrees=self.radius_degrees,
+                color=self.north_color,
+                reference=self.reference,
+                age=self.age,
+                plate_model=self.plate_model,
+                rotation_degrees=self.rotation_degrees,
+            )
+            colors = c_north(vertices, current_colors=colors)
+
+        if self.south_color is not None:
+            c_south = SymbolColourer(
+                symbol=self.south_symbol,
+                lat=-90.0,
+                lon=0.0,
+                radius_degrees=self.radius_degrees,
+                color=self.south_color,
+                reference=self.reference,
+                age=self.age,
+                plate_model=self.plate_model,
+                rotation_degrees=self.rotation_degrees,
+            )
+            colors = c_south(vertices, current_colors=colors)
+
         return colors
 
 

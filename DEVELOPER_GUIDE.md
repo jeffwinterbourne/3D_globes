@@ -22,7 +22,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Banded colormaps for 3D slicing | `filaments.py` / `image.py` | `create_banded_colormap(...)`, `create_elevation_banded_colormap(...)`, `apply_banded_colormap(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
-| Vertex coloring (grid, image, constant) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `ConstantColourer` |
+| Vertex coloring (grid, image, symbols, poles) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `SymbolColourer` (SVG/shapes, `modern`/`paleo`), `PoleLabelColourer` (undistorted 'N'/'S'), `ConstantColourer` |
 | Displacement scale (unit-aware) | `displacement.py` | `calculate_displacement_scale(model_radius_mm, grid_units=...)` |
 | Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
 | Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
@@ -487,6 +487,23 @@ model.outer.colour(colourer, selection='outward_facing')
 
 # OR image-based coloring
 # model.outer.colour(ImageColourer('texture.png'))
+
+# Modular vector symbols (supports 'modern' with plate reconstruction or 'paleo')
+model.outer.colour(SymbolColourer(
+    symbol="star",
+    lat=51.7519, lon=-1.2578, # Oxford, UK
+    reference="modern",
+    age=250.0,
+    color="red",
+    radius_degrees=3.0,
+))
+
+# Modular polar labels (tangent-plane projection, zero pole distortion)
+model.outer.colour(PoleLabelColourer(
+    radius_degrees=3.5,
+    north_color="red",
+    south_color="blue",
+))
 ```
 
 #### 5. Configure magnets (optional)

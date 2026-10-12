@@ -627,6 +627,7 @@ def render_2d_array_as_rgb(
     data_array: np.ndarray,
     colors: List[Tuple[int, int, int]],
     boundaries: List[float],
+    flip_y: bool = False,
 ) -> np.ndarray:
     """Renders a 2D scalar array into an RGB image mapped through discrete boundary thresholds.
 
@@ -634,6 +635,7 @@ def render_2d_array_as_rgb(
         data_array (np.ndarray): 2D array of numerical values.
         colors (list of tuple): List of N RGB tuples (0-255).
         boundaries (list of float): List of N-1 threshold boundaries.
+        flip_y (bool, optional): Whether to flip rows vertically (flipud). Defaults to False.
 
     Returns:
         np.ndarray: (H, W, 3) array of RGB values with dtype uint8.
@@ -658,6 +660,9 @@ def render_2d_array_as_rgb(
 
     palette = np.array(clean_colors, dtype=np.uint8)
     out = palette[indices]
+
+    if flip_y:
+        out = np.flipud(out)
 
     return out
 

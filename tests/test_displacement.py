@@ -16,6 +16,8 @@ from globe3d.displacement import (
     PointColourer,
     LineColourer,
     PolygonColourer,
+    SymbolColourer,
+    PoleLabelColourer,
     select_inward_facing,
     select_outward_facing,
     cartesian_to_spherical,
@@ -685,4 +687,83 @@ def test_constant_displacer():
     # test ValueError on negative displacement deeper than origin
     with pytest.raises(ValueError, match="Vertex displacement translates point"):
         displacer(vertices, scale=-10.0)
+
+
+def test_symbol_colourer_shapes():
+    # Sphere mesh
+    vertices, _ = generate_sphere_points_fibonacci(1000, radius=50.0)
+    bg_colors = np.zeros((len(vertices), 3))
+
+    # Circle at equator (lat=0, lon=0)
+    sc_circle = SymbolColourer(symbol="circle", lat=0.0, lon=0.0, radius_degrees=15.0, color="red")
+    c1 = sc_circle(vertices, current_colors=bg_colors)
+    assert np.any(c1[:, 0] > 0.9)  # red vertices present
+
+    # Star at equator
+    sc_star = SymbolColourer(symbol="star", lat=0.0, lon=0.0, radius_degrees=15.0, color=[0.0, 1.0, 0.0])
+    c2 = sc_star(vertices, current_colors=bg_colors)
+    assert np.any(c2[:, 1] > 0.9)  # green vertices present
+
+    # Test error when coordinates omitted
+    with pytest.raises(ValueError, match="Either 'lat' and 'lon', or 'locations' must be provided"):
+        SymbolColourer(symbol="circle")
+
+
+def test_symbol_colourer_polar_singularity():
+    vertices, _ = generate_sphere_points_fibonacci(5000, radius=100.0)
+    r = np.linalg.norm(vertices, axis=1)
+    lats = np.degrees(np.arcsin(vertices[:, 2] / r))
+
+    # North Pole 'N'
+    sc_n = SymbolColourer(symbol="N", lat=90.0, lon=0.0, radius_degrees=5.0, color="red")
+    c_n = sc_n(vertices)
+    red_indices = np.where((c_n[:, 0] > 0.9) & (c_n[:, 1] < 0.1))[0]
+    assert len(red_indices) > 0
+    # Every red vertex must have latitude >= 85°
+    assert np.all(lats[red_indices] >= 85.0)
+
+    # South Pole 'S'
+    sc_s = SymbolColourer(symbol="S", lat=-90.0, lon=0.0, radius_degrees=5.0, color="blue")
+    c_s = sc_s(vertices)
+    blue_indices = np.where((c_s[:, 2] > 0.9) & (c_s[:, 0] < 0.1))[0]
+    assert len(blue_indices) > 0
+    # Every blue vertex must have latitude <= -85°
+    assert np.all(lats[blue_indices] <= -85.0)
+
+
+def test_symbol_colourer_reconstruction():
+    mock_pm = MagicMock()
+    mock_pm.reconstruct_points.return_value = np.array([[10.0, 20.0]])
+
+    sc = SymbolColourer(
+        symbol="circle",
+        lat=50.0,
+        lon=0.0,
+        radius_degrees=5.0,
+        color="red",
+        reference="modern",
+        age=100.0,
+        plate_model=mock_pm,
+    )
+    vertices = np.array([[100.0, 0.0, 0.0]])
+    _ = sc(vertices)
+    mock_pm.reconstruct_points.assert_called_once()
+
+
+def test_pole_label_colourer():
+    vertices, _ = generate_sphere_points_fibonacci(5000, radius=100.0)
+    r = np.linalg.norm(vertices, axis=1)
+    lats = np.degrees(np.arcsin(vertices[:, 2] / r))
+
+    plc = PoleLabelColourer(radius_degrees=5.0, north_color="red", south_color="blue")
+    colors = plc(vertices)
+
+    red_n = np.where((colors[:, 0] > 0.9) & (colors[:, 2] < 0.1))[0]
+    blue_s = np.where((colors[:, 2] > 0.9) & (colors[:, 0] < 0.1))[0]
+
+    assert len(red_n) > 0
+    assert len(blue_s) > 0
+    assert np.all(lats[red_n] >= 85.0)
+    assert np.all(lats[blue_s] <= -85.0)
+
 
