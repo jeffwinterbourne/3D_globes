@@ -272,19 +272,19 @@ def build_orca_mixed_definitions(palette, base_filaments):
         seq = get_seq(p)
         if not seq:
             continue
-        stable_id = i + 1
+        stable_id = 1001 + i
         unique_ids = sorted(list(dict.fromkeys(int(c) for c in seq)))
         n_unique = len(unique_ids)
         if n_unique <= 1:
             fid = unique_ids[0] if unique_ids else 1
-            row = f"{fid},{fid},1,0,0,0,g,w,m2,d0,o1,u{stable_id}"
+            row = f"{fid},{fid},1,1,0,0,g,w,m2,d0,o0,u{stable_id}"
         elif n_unique == 2:
             fid_a, fid_b = unique_ids[0], unique_ids[1]
             count_a = seq.count(fid_a)
             count_b = seq.count(fid_b)
             total = count_a + count_b
             mix_b_pct = round(count_b / total * 100) if total > 0 else 50
-            row = f"{fid_a},{fid_b},1,0,{mix_b_pct},0,g,w,m2,d0,o1,u{stable_id}"
+            row = f"{fid_a},{fid_b},1,1,{mix_b_pct},0,g,w,m2,d0,o0,u{stable_id}"
         else:
             total = len(seq)
             mix_b_pct = round(seq.count(2) / total * 100) if 2 in seq else round(100 / n_unique)
@@ -755,9 +755,10 @@ def write_3mf(
         project_settings["layer_height"] = "0.08"
         project_settings["initial_layer_print_height"] = "0.2"
         project_settings["dithering_local_z_mode"] = "0"
-        project_settings["mixed_color_layer_height_a"] = "0"
-        project_settings["mixed_color_layer_height_b"] = "0"
-        project_settings["dithering_z_step_size"] = "0"
+        project_settings["mixed_color_layer_height_a"] = "0.08"
+        project_settings["mixed_color_layer_height_b"] = "0.08"
+        project_settings["dithering_z_step_size"] = "0.08"
+        project_settings["dithering_step_size"] = "0.08"
         project_settings["dithering_step_painted_zones_only"] = "1"
         project_settings["mixed_filament_advanced_dithering"] = "0"
         project_settings["mixed_filament_gradient_mode"] = "0"
@@ -811,6 +812,12 @@ def write_3mf(
         '  </header>\n'
         '</config>\n'
     )
+
+    if os.path.exists(filename):
+        try:
+            os.remove(filename)
+        except OSError:
+            pass
 
     with zipfile.ZipFile(filename, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types)

@@ -206,7 +206,7 @@ def test_write_3mf_with_filaments_and_palette(tmp_path):
         assert cfg["color_mix"]["virtual_slots"][0]["virtual_id"] == 5
         # Mixed filament definitions follow Snapmaker Orca FullSpectrum format (custom=0 for 2-spool)
         assert "mixed_filament_definitions" in cfg
-        assert "2,3,1,0,50" in cfg["mixed_filament_definitions"]
+        assert "2,3,1,1,50" in cfg["mixed_filament_definitions"]
         # Printer profile is injected
         assert cfg["printer_model"] == "Snapmaker U1"
         assert cfg["printer_settings_id"] == "Snapmaker U1 (0.4 nozzle)"
@@ -312,25 +312,25 @@ def test_build_orca_mixed_definitions_recipes_and_ordering():
     assert len(rows) == 5
 
     # 1. Pure spool: Dark Blue (2)
-    assert rows[0] == "2,2,1,0,0,0,g,w,m2,d0,o1,u1"
+    assert rows[0] == "2,2,1,1,0,0,g,w,m2,d0,o0,u1001"
 
-    # 2. 75% Dark Green (4) + 25% Brown (1): fid_a=1, fid_b=4, mix_b=75, custom=0, origin=o1, u2
-    assert rows[1] == "1,4,1,0,75,0,g,w,m2,d0,o1,u2"
+    # 2. 75% Dark Green (4) + 25% Brown (1): fid_a=1, fid_b=4, mix_b=75, custom=1, origin=o0, u1002
+    assert rows[1] == "1,4,1,1,75,0,g,w,m2,d0,o0,u1002"
 
-    # 3. 75% Brown (1) + 25% White (3): fid_a=1, fid_b=3, mix_b=25, custom=0, origin=o1, u3
-    assert rows[2] == "1,3,1,0,25,0,g,w,m2,d0,o1,u3"
+    # 3. 75% Brown (1) + 25% White (3): fid_a=1, fid_b=3, mix_b=25, custom=1, origin=o0, u1003
+    assert rows[2] == "1,3,1,1,25,0,g,w,m2,d0,o0,u1003"
 
-    # 4. 50% Dark Blue (2) + 50% White (3): fid_a=2, fid_b=3, mix_b=50, custom=0, origin=o1, u4
-    assert rows[3] == "2,3,1,0,50,0,g,w,m2,d0,o1,u4"
+    # 4. 50% Dark Blue (2) + 50% White (3): fid_a=2, fid_b=3, mix_b=50, custom=1, origin=o0, u1004
+    assert rows[3] == "2,3,1,1,50,0,g,w,m2,d0,o0,u1004"
 
-    # 5. 3-filament: custom=1, origin=o0, u5, compact pattern without commas
+    # 5. 3-filament: custom=1, origin=o0, u1005, compact pattern without commas
     row_tokens = rows[4].split(",")
     assert row_tokens[0] == "1"
     assert row_tokens[1] == "2"
     assert row_tokens[2] == "1"
     assert row_tokens[3] == "1"  # custom=1
     assert row_tokens[10] == "o0"  # origin=o0
-    assert row_tokens[11] == "u5"  # stable_id=u5
+    assert row_tokens[11] == "u1005"  # stable_id=u1005
     # Pattern is 13th token (index 12) with NO extra comma splits, interleaved without adjacent duplicate layers
     assert len(row_tokens) == 13
     assert row_tokens[12] == "4143"
