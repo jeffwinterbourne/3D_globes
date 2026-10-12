@@ -204,9 +204,20 @@ def test_write_3mf_with_filaments_and_palette(tmp_path):
         assert cfg["filament_colour"][3] == "#1E552D"
         # Virtual slot indices start at 5 (after 4 physical base spools)
         assert cfg["color_mix"]["virtual_slots"][0]["virtual_id"] == 5
-        # Mixed filament definitions contain only the virtual recipe, not redundant pure spools
+        # Mixed filament definitions follow Snapmaker Orca FullSpectrum format (custom=0 for 2-spool)
         assert "mixed_filament_definitions" in cfg
-        assert "2,3,1,1,50" in cfg["mixed_filament_definitions"]
+        assert "2,3,1,0,50" in cfg["mixed_filament_definitions"]
+        # Printer profile is injected
+        assert cfg["printer_model"] == "Snapmaker U1"
+        assert cfg["printer_settings_id"] == "Snapmaker U1 (0.4 nozzle)"
+        assert cfg["layer_height"] == "0.08"
+
+        # slice_info.config is present
+        assert "Metadata/slice_info.config" in zf.namelist()
+
+        # model_settings.config has object extruder set to 0 (multi-material)
+        model_cfg = zf.read("Metadata/model_settings.config").decode("utf-8")
+        assert '<metadata key="extruder" value="0"/>' in model_cfg
 
         # Triangle attributes include paint_color
         model_xml = zf.read("3D/3dmodel.model").decode("utf-8")
@@ -266,5 +277,77 @@ def test_encode_paint_facet():
     assert encode_paint_facet(18) == "0FC"
     # Extruder 0 (unpainted) -> ""
     assert encode_paint_facet(0) == ""
+
+
+def test_build_orca_mixed_definitions_recipes_and_ordering():
+    """build_orca_mixed_definitions enforces fid_a < fid_b, correct percentage, and compact pattern for 3+ filaments."""
+    from globe3d.io import build_orca_mixed_definitions
+
+    base_spools = [
+        {"name": "Brown", "color": [90, 50, 30], "td": 2.5},       # 1
+        {"name": "Dark Blue", "color": [20, 40, 95], "td": 3.0},   # 2
+        {"name": "White", "color": [245, 245, 245], "td": 5.0},    # 3
+        {"name": "Dark Green", "color": [30, 85, 45], "td": 2.8},  # 4
+    ]
+
+    palette = [
+        # Pure spool: Dark Blue (2)
+        {"name": "Abyssal", "recipe": "Dark Blue"},
+        # 2-filament where dominant spool has larger id: 3/4 Dark Green (4) + 1/4 Brown (1)
+        # Should be fid_a=1, fid_b=4, mix_b_pct=75 (percentage of Dark Green)
+        {"name": "High ground", "recipe": "3/4 Dark Green + 1/4 Brown"},
+        # 2-filament where dominant spool has smaller id: 3/4 Brown (1) + 1/4 White (3)
+        # Should be fid_a=1, fid_b=3, mix_b_pct=25 (percentage of White)
+        {"name": "High mountains", "recipe": "3/4 Brown + 1/4 White"},
+        # 2-filament equal mix: 2/4 Dark Blue (2) + 2/4 White (3)
+        # Should be fid_a=2, fid_b=3, mix_b_pct=50
+        {"name": "Deep sea", "recipe": "2/4 Dark Blue + 2/4 White"},
+        # 3-filament mix: 2/4 Dark Green (4) + 1/4 Brown (1) + 1/4 White (3)
+        # Should have compact pattern without commas (e.g. '4413')
+        {"name": "Lowlands mix", "recipe": [("Dark Green", 0.5), ("Brown", 0.25), ("White", 0.25)]},
+    ]
+
+    defs_str = build_orca_mixed_definitions(palette, base_spools)
+    rows = defs_str.split(";")
+    assert len(rows) == 5
+
+    # 1. Pure spool: Dark Blue (2)
+    assert rows[0] == "2,2,1,0,0,0,g,w,m2,d0,o1,u1"
+
+    # 2. 75% Dark Green (4) + 25% Brown (1): fid_a=1, fid_b=4, mix_b=75, custom=0, origin=o1, u2
+    assert rows[1] == "1,4,1,0,75,0,g,w,m2,d0,o1,u2"
+
+    # 3. 75% Brown (1) + 25% White (3): fid_a=1, fid_b=3, mix_b=25, custom=0, origin=o1, u3
+    assert rows[2] == "1,3,1,0,25,0,g,w,m2,d0,o1,u3"
+
+    # 4. 50% Dark Blue (2) + 50% White (3): fid_a=2, fid_b=3, mix_b=50, custom=0, origin=o1, u4
+    assert rows[3] == "2,3,1,0,50,0,g,w,m2,d0,o1,u4"
+
+    # 5. 3-filament: custom=1, origin=o0, u5, compact pattern without commas
+    row_tokens = rows[4].split(",")
+    assert row_tokens[0] == "1"
+    assert row_tokens[1] == "2"
+    assert row_tokens[2] == "1"
+    assert row_tokens[3] == "1"  # custom=1
+    assert row_tokens[10] == "o0"  # origin=o0
+    assert row_tokens[11] == "u5"  # stable_id=u5
+    # Pattern is 13th token (index 12) with NO extra comma splits
+    assert len(row_tokens) == 13
+    assert row_tokens[12] == "4413"
+
+
+def test_get_printer_profile():
+    """get_printer_profile loads valid Snapmaker U1 settings template."""
+    from globe3d.presets import get_printer_profile
+
+    profile = get_printer_profile("snapmaker_u1")
+    assert isinstance(profile, dict)
+    assert profile["printer_model"] == "Snapmaker U1"
+    assert profile["printer_settings_id"] == "Snapmaker U1 (0.4 nozzle)"
+    assert profile["layer_height"] == "0.08"
+    assert profile["initial_layer_print_height"] == "0.2"
+
+    with pytest.raises(FileNotFoundError):
+        get_printer_profile("nonexistent_printer")
 
 

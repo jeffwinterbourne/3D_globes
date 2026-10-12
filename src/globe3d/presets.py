@@ -57,3 +57,34 @@ DEFAULT_ELEVATION_BANDS: List[Dict[str, Union[int, float, str, None]]] = [
     {"index": 5,  "threshold": 1500,  "name": "High mountains"},
     {"index": 2,  "threshold": None,  "name": "Very high"},
 ]
+
+
+def get_printer_profile(name: str = "snapmaker_u1") -> Dict:
+    """Loads a printer project settings profile template for 3MF export.
+
+    Args:
+        name (str): Identifier of the printer profile template.
+            Defaults to 'snapmaker_u1'.
+
+    Returns:
+        dict: Deep-copied JSON dictionary containing all machine, process,
+            and filament configuration settings for the requested printer profile.
+
+    Raises:
+        FileNotFoundError: If the profile template asset is not found.
+    """
+    import json
+    import os
+    import copy
+
+    profile_filename = f"{name.lower().replace(' ', '_')}_profile.json"
+    asset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", profile_filename)
+    if not os.path.exists(asset_path):
+        raise FileNotFoundError(
+            f"Printer profile template '{name}' not found at: {asset_path}. "
+            f"Available builtin profiles: 'snapmaker_u1'."
+        )
+
+    with open(asset_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return copy.deepcopy(data)

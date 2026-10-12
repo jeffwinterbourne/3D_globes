@@ -20,7 +20,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Vector SVG stamping & image prep | `image.py` | `add_svg_symbol_spherical(...)`, `add_pole_markers(...)`, `undo_hillshading(...)`, `simplify_colors(...)`, `simplify_image_median(...)` |
 | Filament optical mixing & palettes | `filaments.py` | `mix_filament_pair(...)`, `mix_filaments(...)`, `create_filament_palette(...)`, `match_filament_color(...)` |
 | Banded colormaps for 3D slicing | `filaments.py` / `image.py` | `create_banded_colormap(...)`, `create_elevation_banded_colormap(...)`, `apply_banded_colormap(...)` |
-| Domain presets & spool libraries | `presets.py` | `FILAMENT_PRESETS`, `DEFAULT_ELEVATION_BANDS`, `DEFAULT_ELEVATION_BOUNDARIES` |
+| Domain presets & spool libraries | `presets.py` | `FILAMENT_PRESETS`, `DEFAULT_ELEVATION_BANDS`, `DEFAULT_ELEVATION_BOUNDARIES`, `get_printer_profile(...)` |
 | Interactive Jupyter widgets & GUI | `widgets.py` | `InteractiveColormapBuilder(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
@@ -656,6 +656,16 @@ Provides namespaces for standard datasets:
   - `datasets.paleo.scotese(age=...)`: Automatically locates and loads the closest PaleoDEM grid and texture.
   - `datasets.paleo.scotese_plate_model()`: Returns the initialized Scotese PALEOMAP `PlateModel`.
   - `datasets.paleo.list_scotese_maps()`: Lists all 108 registered time slices.
+
+### `io.py` & Multi-Color 3MF Export (OrcaSlicer & Snapmaker U1)
+
+`globe3d` includes a native 3MF exporter designed for multi-material slicing and micro-layer mixing:
+- **FullSpectrum Specification Compliance**: Formats `mixed_filament_definitions` rows following the OrcaSlicer / Snapmaker Orca specification:
+  - **1-Spool**: `fid,fid,1,0,0,0,g,w,m2,d0,o1,u<id>`
+  - **2-Spool Mixes**: Strictly enforces `fid_a < fid_b` ordering and calculates `mix_b_percent` as the proportion of `fid_b` (`fid_a,fid_b,1,0,mix_b,0,g,w,m2,d0,o1,u<id>`). This prevents component inversion and guarantees displayed UI percentage names in OrcaSlicer match physical recipes (e.g., 25% Brown + 75% Dark Green).
+  - **3+ Spool Patterns**: Emits compact digit strings without commas (e.g. `u<id>,124`, `u<id>,4413`) with `custom=1`, preventing CSV column parsing corruption.
+- **Snapmaker U1 Hardware Profile Integration**: Embeds comprehensive printer profiles via `get_printer_profile("snapmaker_u1")` into `Metadata/project_settings.config`, including layer height (`0.08` mm), temperatures, speeds, G-code routines, and `Metadata/slice_info.config`.
+- **Multi-Material Slicing**: Configures object metadata with `<metadata key="extruder" value="0"/>` in `Metadata/model_settings.config`, ensuring OrcaSlicer slices models multi-material using facet paint codes (`paint_color`).
 
 ---
 

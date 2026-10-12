@@ -118,7 +118,21 @@ def build_orca_mixed_definitions(palette, base_filaments):
     """Builds OrcaSlicer / Snapmaker Orca mixed_filament_definitions string for virtual slots.
 
     Each virtual mixed filament row follows the FullSpectrum specification:
-    component_a,component_b,enabled,custom,mix_b_percent,pointillism,g<ids>,w<weights>,m<mode>,d<deleted>,o<origin>,u<stable_id>[,manual_pattern]
+    For 1 component:
+        fid,fid,1,0,0,0,g,w,m2,d0,o1,u<stable_id>
+    For 2 components:
+        fid_a,fid_b,1,0,mix_b_percent,0,g,w,m2,d0,o1,u<stable_id>
+        (where fid_a < fid_b, and mix_b_percent is the percentage of fid_b)
+    For 3+ components:
+        1,2,1,1,mix_b_percent,0,g,w,m2,d0,o0,u<stable_id>,<compact_pattern>
+        (where compact_pattern is a continuous string of digits without commas, e.g. 124, 134, 1234)
+
+    Args:
+        palette (sequence): Virtual palette entries (list of dicts or colors).
+        base_filaments (sequence): List of physical base filaments loaded in the printer.
+
+    Returns:
+        str: Semicolon-delimited mixed_filament_definitions string for OrcaSlicer project settings.
     """
     if not palette or not base_filaments:
         return ""
@@ -126,7 +140,7 @@ def build_orca_mixed_definitions(palette, base_filaments):
     spool_name_to_id = {f["name"].lower(): i + 1 for i, f in enumerate(base_filaments)}
 
     def get_seq(p):
-        recipe = p.get("recipe_data", p.get("recipe", [])) if isinstance(p, dict) else []
+        recipe = p.get("recipe_data", p.get("recipe", [])) if isinstance(p, dict) else p
         seq = []
         if isinstance(recipe, list):
             for item in recipe:
@@ -138,7 +152,11 @@ def build_orca_mixed_definitions(palette, base_filaments):
                             if sname in spool_name or spool_name in sname:
                                 sid = s_id
                                 break
-                    seq.extend([sid if sid is not None else 1] * max(1, item.get("layers", int(round(item.get("weight", 1.0) * 4)))))
+                    layers = item.get("layers")
+                    if layers is None:
+                        weight = float(item.get("weight", 1.0))
+                        layers = max(1, int(round(weight * 4)))
+                    seq.extend([sid if sid is not None else 1] * max(1, int(layers)))
                 elif isinstance(item, tuple) and len(item) == 2:
                     spool_name = str(item[0]).lower()
                     sid = spool_name_to_id.get(spool_name)
@@ -147,8 +165,8 @@ def build_orca_mixed_definitions(palette, base_filaments):
                             if sname in spool_name or spool_name in sname:
                                 sid = s_id
                                 break
-                    weight = float(item[1])
-                    layers = int(round(weight * 4))
+                    val = float(item[1])
+                    layers = int(round(val * 4)) if val <= 1.0 else int(round(val))
                     seq.extend([sid if sid is not None else 1] * max(1, layers))
         elif isinstance(recipe, str) and recipe.strip():
             import re
@@ -171,7 +189,7 @@ def build_orca_mixed_definitions(palette, base_filaments):
                     elif pct:
                         layers = max(1, int(round(int(pct) / 100.0 * 4)))
                     else:
-                        layers = 1
+                        layers = 4
                     seq.extend([sid] * layers)
         if not seq:
             seq = [1]
@@ -182,31 +200,24 @@ def build_orca_mixed_definitions(palette, base_filaments):
         seq = get_seq(p)
         if not seq:
             continue
-        stable_id = 1000 + i
-        unique_ids = list(dict.fromkeys(int(c) for c in seq))
+        stable_id = i + 1
+        unique_ids = sorted(list(dict.fromkeys(int(c) for c in seq)))
         n_unique = len(unique_ids)
         if n_unique <= 1:
             fid = unique_ids[0] if unique_ids else 1
-            row = f"{fid},{fid},1,1,0,0,g,w,m2,d0,o0,u{stable_id}"
+            row = f"{fid},{fid},1,0,0,0,g,w,m2,d0,o1,u{stable_id}"
         elif n_unique == 2:
             fid_a, fid_b = unique_ids[0], unique_ids[1]
             count_a = seq.count(fid_a)
             count_b = seq.count(fid_b)
             total = count_a + count_b
             mix_b_pct = round(count_b / total * 100) if total > 0 else 50
-            row = f"{fid_a},{fid_b},1,1,{mix_b_pct},0,g,w,m2,d0,o0,u{stable_id}"
+            row = f"{fid_a},{fid_b},1,0,{mix_b_pct},0,g,w,m2,d0,o1,u{stable_id}"
         else:
-            grad_ids = "".join(str(x) for x in unique_ids)
             total = len(seq)
-            weights = [round(seq.count(fid) / total * 100) for fid in unique_ids]
-            diff = 100 - sum(weights)
-            if diff != 0:
-                weights[0] += diff
-            grad_w = "/".join(str(w) for w in weights)
-            pattern = ",".join(str(x) for x in seq)
-            fid_a, fid_b = unique_ids[0], unique_ids[-1]
-            mix_b_pct = weights[-1]
-            row = f"{fid_a},{fid_b},1,1,{mix_b_pct},0,g{grad_ids},w{grad_w},m2,d0,o0,u{stable_id},{pattern}"
+            mix_b_pct = round(seq.count(2) / total * 100) if 2 in seq else round(100 / n_unique)
+            pattern = "".join(str(x) for x in seq)
+            row = f"1,2,1,1,{mix_b_pct},0,g,w,m2,d0,o0,u{stable_id},{pattern}"
         rows.append(row)
     return ";".join(rows)
 
@@ -223,6 +234,7 @@ def write_3mf(
     fix_normals=False,
     center=(0.0, 0.0, 0.0),
     color_tolerance=6,
+    printer_profile="snapmaker_u1",
 ):
     """Writes one or more meshes with multi-filament colors to a 3MF package compatible with OrcaSlicer.
 
@@ -231,7 +243,7 @@ def write_3mf(
     embeds OrcaSlicer / Snapmaker Orca project configuration metadata
     (`Metadata/project_settings.config` and `Metadata/model_settings.config`) specifying physical
     base filament spools in `filament_colour`, virtual mixed filament slots in `mixed_filament_definitions`,
-    transmission distances (`td`), and micro-layer mixing recipes.
+    transmission distances (`td`), micro-layer mixing recipes, and full printer hardware profile.
 
     Args:
         filename (str): Output file path (must end with .3mf).
@@ -259,6 +271,8 @@ def write_3mf(
         color_tolerance (int, optional): Maximum difference per RGB channel (0-255) when matching
             mesh colors to registered filament slots, avoiding spurious duplicate slots caused by
             floating-point roundoff. Defaults to 6.
+        printer_profile (str, optional): Name of the printer profile preset to embed in the 3MF
+            project metadata (e.g. 'snapmaker_u1'). Defaults to 'snapmaker_u1'.
 
     Returns:
         list of dict: Registered filament slots embedded in the 3MF package.
@@ -548,32 +562,56 @@ def write_3mf(
         filament_densities = ["1.24"] * len(disp_slots)
         defs_str = ""
 
-    project_settings = {
-        "version": "01.09.04.52",
-        "name": "OrcaSlicer FullSpectrum Project",
-        "from": "project",
-        "filament_colour": filament_colours,
-        "filament_type": filament_types,
-        "filament_transmission_distance": filament_tds,
-        "filament_notes": filament_notes,
-        "filament_vendor": filament_vendors,
-        "filament_density": filament_densities,
-    }
+    from .presets import get_printer_profile
+
+    if printer_profile:
+        try:
+            project_settings = get_printer_profile(printer_profile)
+        except Exception:
+            project_settings = {}
+    else:
+        project_settings = {}
+
+    if not project_settings:
+        project_settings = {
+            "version": "01.09.04.52",
+            "name": "OrcaSlicer FullSpectrum Project",
+            "from": "project",
+        }
+
+    # If number of physical spools is not 4, adapt 4-element extruder/filament lists in the profile template
+    target_num = len(phys_slots) if len(phys_slots) > 0 else 4
+    for k, v in list(project_settings.items()):
+        if isinstance(v, list) and len(v) == 4 and k != "printable_area":
+            if target_num < 4:
+                project_settings[k] = v[:target_num]
+            elif target_num > 4:
+                project_settings[k] = v + [v[-1]] * (target_num - 4)
+
+    project_settings["filament_colour"] = filament_colours
+    project_settings["filament_type"] = filament_types
+    project_settings["filament_transmission_distance"] = filament_tds
+    project_settings["filament_notes"] = filament_notes
+    project_settings["filament_vendor"] = filament_vendors
+    project_settings["filament_density"] = filament_densities
+    if "filament_settings_id" in project_settings and phys_slots:
+        project_settings["filament_settings_id"] = [
+            f"Snapmaker PLA - {s['name']}" for s in phys_slots
+        ]
 
     if defs_str:
         project_settings["mixed_filament_definitions"] = defs_str
-        project_settings["mixed_color_layer_height_a"] = "0.08"
-        project_settings["mixed_color_layer_height_b"] = "0.08"
-        project_settings["dithering_z_step_size"] = "0.08"
-        project_settings["dithering_step_size"] = "0.08"
-        project_settings["dithering_cadence_height_a"] = "0.08"
-        project_settings["dithering_cadence_height_b"] = "0.08"
-        project_settings["dithering_local_z_mode"] = "1"
+        project_settings["layer_height"] = "0.08"
+        project_settings["initial_layer_print_height"] = "0.2"
+        project_settings["dithering_local_z_mode"] = "0"
+        project_settings["mixed_color_layer_height_a"] = "0"
+        project_settings["mixed_color_layer_height_b"] = "0"
+        project_settings["dithering_z_step_size"] = "0"
         project_settings["dithering_step_painted_zones_only"] = "1"
         project_settings["mixed_filament_advanced_dithering"] = "0"
         project_settings["mixed_filament_gradient_mode"] = "0"
         project_settings["mixed_filament_height_lower_bound"] = "0.04"
-        project_settings["mixed_filament_height_upper_bound"] = "0.32"
+        project_settings["mixed_filament_height_upper_bound"] = "0.16"
 
     project_settings["color_mix"] = {
         "physical_spools": [
@@ -602,7 +640,7 @@ def write_3mf(
         model_settings_lines.extend([
             f'  <object id="{obj_id}">\n',
             f'    <metadata key="name" value="{name}"/>\n',
-            '    <metadata key="extruder" value="1"/>\n',
+            '    <metadata key="extruder" value="0"/>\n',
             '    <part id="1" subtype="normal_part">\n',
             f'      <metadata key="name" value="{name}_part"/>\n',
             '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n',
@@ -613,12 +651,23 @@ def write_3mf(
     model_settings_lines.append('</config>')
     model_settings_xml = "".join(model_settings_lines)
 
+    slice_info_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<config>\n'
+        '  <header>\n'
+        '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
+        '    <header_item key="X-BBL-Client-Version" value=""/>\n'
+        '  </header>\n'
+        '</config>\n'
+    )
+
     with zipfile.ZipFile(filename, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types)
         zf.writestr("_rels/.rels", rels)
         zf.writestr("3D/3dmodel.model", model_xml_str)
         zf.writestr("Metadata/project_settings.config", project_settings_json)
         zf.writestr("Metadata/model_settings.config", model_settings_xml)
+        zf.writestr("Metadata/slice_info.config", slice_info_xml)
 
     return slots
 

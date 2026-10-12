@@ -61,6 +61,7 @@ from .presets import (
     FILAMENT_PRESETS,
     DEFAULT_ELEVATION_BANDS,
     DEFAULT_ELEVATION_BOUNDARIES,
+    get_printer_profile,
 )
 from .widgets import InteractiveColormapBuilder
 from .io import (
@@ -138,6 +139,7 @@ __all__ = [
     "FILAMENT_PRESETS",
     "DEFAULT_ELEVATION_BANDS",
     "DEFAULT_ELEVATION_BOUNDARIES",
+    "get_printer_profile",
     "datasets",
     "image",
     "reconstruction",

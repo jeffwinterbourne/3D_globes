@@ -1059,6 +1059,7 @@ class GlobeModel:
         palette=None,
         flip_bottom: bool = True,
         offset_distance: float = None,
+        printer_profile: str = "snapmaker_u1",
         **kwargs,
     ):
         """Splits, hollows, colors, and exports hemispheres.
@@ -1095,6 +1096,8 @@ class GlobeModel:
                 print bed (Z=0). Defaults to True.
             offset_distance (float, optional): When exporting a combined 3MF, lateral spacing
                 along X to place both hemispheres side-by-side without collision. Defaults to 1.15 * radius.
+            printer_profile (str, optional): Printer profile template name for 3MF project metadata.
+                Defaults to 'snapmaker_u1'.
             **kwargs: Additional parameters forwarded to format writers (e.g. ``color_tolerance``).
 
         Returns:
@@ -1174,6 +1177,7 @@ class GlobeModel:
                 objects=objects,
                 base_filaments=base_filaments,
                 palette=palette,
+                printer_profile=printer_profile,
                 **kwargs,
             )
             return top_filename
@@ -1207,6 +1211,7 @@ class GlobeModel:
                     base_filaments=base_filaments,
                     palette=palette,
                     object_name=part_name,
+                    printer_profile=printer_profile,
                     **kwargs,
                 )
             else:
@@ -1260,7 +1265,8 @@ class GlobeModel:
                   object_name: str = "globe_model",
                   fix_normals: bool = False,
                   center=(0.0, 0.0, 0.0),
-                  color_tolerance: int = 2):
+                  color_tolerance: int = 2,
+                  printer_profile: str = "snapmaker_u1"):
         """Exports the model geometry and multi-filament colors to a 3MF file.
 
         Compatible with standard 3MF viewers and OrcaSlicer's multi-filament color mixing.
@@ -1281,6 +1287,8 @@ class GlobeModel:
                 Defaults to ``(0, 0, 0)``.
             color_tolerance (int, optional): Maximum difference per RGB channel (0-255) when matching
                 mesh colors to registered filament slots. Defaults to 2.
+            printer_profile (str, optional): Printer profile template name for 3MF project metadata.
+                Defaults to 'snapmaker_u1'.
 
         Returns:
             list of dict: Registered filament slots embedded in the 3MF package.
@@ -1304,6 +1312,7 @@ class GlobeModel:
             fix_normals=fix_normals,
             center=center,
             color_tolerance=color_tolerance,
+            printer_profile=printer_profile,
         )
 
 
