@@ -24,7 +24,7 @@ Welcome to the `globe3d` project. This guide provides a comprehensive architectu
 | Interactive Jupyter widgets & GUI | `widgets.py` | `InteractiveColormapBuilder(...)` |
 | Geographic grid loading & representation | `grid.py` / `GeographicGrid` | `GeographicGrid.from_netcdf`, `GeographicGrid.from_tiff`, `GeographicGrid.list_netcdf_variables` |
 | Radial displacement of vertices | `displacement.py` / `Displacer` | `GridDisplacer` (with `coastline_step`), `PointDisplacer`, `LineDisplacer`, `PolygonDisplacer` |
-| Vertex coloring (grid, image, symbols, poles) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `SymbolColourer` (SVG/shapes, `modern`/`paleo`), `PoleLabelColourer` (undistorted 'N'/'S'), `ConstantColourer` |
+| Vertex coloring (grid, image, symbols, poles, text) | `displacement.py` / `Colourer` | `GridColourer`, `ImageColourer` (file/PIL/array), `SymbolColourer` (SVG/shapes, `modern`/`paleo`), `PoleLabelColourer` (undistorted 'N'/'S'), `TextColourer` (custom text, TTF fonts, height, angle, stroke/fill), `ConstantColourer` |
 | Displacement scale (unit-aware) | `displacement.py` | `calculate_displacement_scale(model_radius_mm, grid_units=...)` |
 | Magnet configuration | `mesh.py` / `GlobeModel` | `model.configure_magnets(...)` |
 | Hemisphere generation | `mesh.py` / `GlobeModel` | `model.generate_hemispheres(...)`, `model.export_hemispheres(...)` |
@@ -280,6 +280,12 @@ All coloring classes inherit from the base `Colourer` class and are callable wit
   Maps an equirectangular image to the sphere vertices using nearest-neighbor lookup.
 - **`ConstantColourer(color=[1.0, 1.0, 1.0])`**
   Applies a solid, single RGB color.
+- **`SymbolColourer(symbol='star', lat=..., lon=..., radius_degrees=2.5, color='red', reference='paleo'|'modern', age=..., plate_model=..., rotation_degrees=0.0)`**
+  Projects 2D geometric shapes (star, circle, square, triangle, cross, N, S) or arbitrary SVG paths directly onto the sphere via local gnomonic tangent-plane projection. Supports modern coordinate reconstruction via PlateModel.
+- **`PoleLabelColourer(radius_degrees=3.0, north_color='red', south_color=None, north_symbol='N', south_symbol='S', reference='paleo'|'modern', age=..., plate_model=..., rotation_degrees=0.0)`**
+  Projects sharp polar indicators ('N' at North Pole, 'S' at South Pole) onto polar vertices, completely avoiding equirectangular distortion and pole singularities.
+- **`TextColourer(text='...', lat=..., lon=..., height_degrees=4.0, angle=0.0, color='white', fill=True, fill_color=..., stroke=..., stroke_width=..., stroke_color='black', font=..., font_weight='normal', font_style='normal', reference='paleo'|'modern', age=..., plate_model=...)`**
+  Projects arbitrary text glyphs directly onto the spherical mesh with options to supply a TTF/OTF font file or family name, text height in degrees, tangent-plane rotation angle, fill and stroke styling, and paleo or modern reconstructed coordinate placement.
 
 #### Selection Functions & Registry
 

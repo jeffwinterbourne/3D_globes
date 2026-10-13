@@ -18,6 +18,7 @@ from globe3d.displacement import (
     PolygonColourer,
     SymbolColourer,
     PoleLabelColourer,
+    TextColourer,
     select_inward_facing,
     select_outward_facing,
     cartesian_to_spherical,
@@ -765,5 +766,141 @@ def test_pole_label_colourer():
     assert len(blue_s) > 0
     assert np.all(lats[red_n] >= 85.0)
     assert np.all(lats[blue_s] <= -85.0)
+
+
+def test_text_colourer_basic():
+    vertices, _ = generate_sphere_points_fibonacci(15000, radius=100.0)
+    bg = np.zeros((len(vertices), 3))
+
+    tc = TextColourer(text="250Ma", lat=0.0, lon=0.0, height_degrees=8.0, color="white")
+    res = tc(vertices, current_colors=bg)
+
+    white_indices = np.where((res[:, 0] > 0.9) & (res[:, 1] > 0.9) & (res[:, 2] > 0.9))[0]
+    assert len(white_indices) > 0
+
+    # Ensure colored vertices are concentrated near equator and prime meridian
+    r = np.linalg.norm(vertices[white_indices], axis=1)
+    lats = np.degrees(np.arcsin(vertices[white_indices, 2] / r))
+    lons = np.degrees(np.arctan2(vertices[white_indices, 1], vertices[white_indices, 0]))
+    assert np.all(np.abs(lats) < 15.0)
+    assert np.all(np.abs(lons) < 25.0)
+
+
+def test_text_colourer_font_family_and_file():
+    from matplotlib.font_manager import findfont
+    font_path = findfont("DejaVu Sans")
+
+    vertices, _ = generate_sphere_points_fibonacci(10000, radius=100.0)
+
+    # 1. Font family
+    tc_family = TextColourer(text="Pangaea", lat=10.0, lon=20.0, height_degrees=6.0, font="sans-serif", font_weight="bold", color="yellow")
+    res_fam = tc_family(vertices)
+    assert np.any((res_fam[:, 0] > 0.9) & (res_fam[:, 1] > 0.9) & (res_fam[:, 2] < 0.1))
+
+    # 2. Direct font file path
+    tc_file = TextColourer(text="Ocean", lat=-10.0, lon=-30.0, height_degrees=6.0, font=font_path, color="cyan")
+    res_file = tc_file(vertices)
+    assert np.any((res_file[:, 0] < 0.1) & (res_file[:, 1] > 0.9) & (res_file[:, 2] > 0.9))
+
+
+def test_text_colourer_fill_and_stroke():
+    vertices, _ = generate_sphere_points_fibonacci(25000, radius=100.0)
+    bg = np.zeros((len(vertices), 3))
+
+    # Fill white + Stroke red
+    tc_both = TextColourer(
+        text="250Ma",
+        lat=0.0,
+        lon=0.0,
+        height_degrees=10.0,
+        fill=True,
+        fill_color="white",
+        stroke=True,
+        stroke_width=1.5,
+        stroke_color="red",
+    )
+    res_both = tc_both(vertices, current_colors=bg)
+
+    white_pts = np.where((res_both[:, 0] > 0.9) & (res_both[:, 1] > 0.9) & (res_both[:, 2] > 0.9))[0]
+    red_pts = np.where((res_both[:, 0] > 0.9) & (res_both[:, 1] < 0.1) & (res_both[:, 2] < 0.1))[0]
+    assert len(white_pts) > 0
+    assert len(red_pts) > 0
+
+    # Fill False + Stroke green
+    tc_stroke_only = TextColourer(
+        text="250Ma",
+        lat=0.0,
+        lon=0.0,
+        height_degrees=10.0,
+        fill=False,
+        stroke=True,
+        stroke_width=1.5,
+        stroke_color=[0.0, 1.0, 0.0],
+    )
+    res_stroke = tc_stroke_only(vertices, current_colors=bg)
+    green_pts = np.where((res_stroke[:, 1] > 0.9) & (res_stroke[:, 0] < 0.1))[0]
+    assert len(green_pts) > 0
+
+
+def test_text_colourer_rotation_and_polar():
+    vertices, _ = generate_sphere_points_fibonacci(10000, radius=100.0)
+    bg = np.zeros((len(vertices), 3))
+
+    # North Pole placement
+    tc_north = TextColourer(text="NP", lat=90.0, lon=0.0, height_degrees=5.0, color="blue", angle=45.0)
+    res_n = tc_north(vertices, current_colors=bg)
+    blue_n = np.where(res_n[:, 2] > 0.9)[0]
+    assert len(blue_n) > 0
+    r = np.linalg.norm(vertices[blue_n], axis=1)
+    lats_n = np.degrees(np.arcsin(vertices[blue_n, 2] / r))
+    assert np.all(lats_n >= 80.0)
+
+    # South Pole placement
+    tc_south = TextColourer(text="SP", lat=-90.0, lon=0.0, height_degrees=5.0, color="red", rotation_degrees=-30.0)
+    res_s = tc_south(vertices, current_colors=bg)
+    red_s = np.where(res_s[:, 0] > 0.9)[0]
+    assert len(red_s) > 0
+    r_s = np.linalg.norm(vertices[red_s], axis=1)
+    lats_s = np.degrees(np.arcsin(vertices[red_s, 2] / r_s))
+    assert np.all(lats_s <= -80.0)
+
+
+def test_text_colourer_reconstruction():
+    mock_pm = MagicMock()
+    mock_pm.reconstruct_points.return_value = np.array([[15.0, 45.0]])
+
+    tc = TextColourer(
+        text="Oxford",
+        lat=51.75,
+        lon=-1.25,
+        height_degrees=5.0,
+        color="white",
+        reference="modern",
+        age=250.0,
+        plate_model=mock_pm,
+    )
+    vertices = np.array([[100.0, 0.0, 0.0]])
+    _ = tc(vertices)
+    mock_pm.reconstruct_points.assert_called_once()
+
+
+def test_text_colourer_locations_and_errors():
+    vertices, _ = generate_sphere_points_fibonacci(5000, radius=100.0)
+
+    # Multiple locations via dict
+    tc_multi = TextColourer(
+        locations=[
+            {"lat": 0.0, "lon": 0.0, "text": "Eq", "color": "red", "height_degrees": 5.0},
+            {"lat": 30.0, "lon": 60.0, "text": "Mid", "color": "blue", "height_degrees": 5.0},
+        ]
+    )
+    res = tc_multi(vertices)
+    assert np.any(res[:, 0] > 0.9)
+    assert np.any(res[:, 2] > 0.9)
+
+    # Error when coordinates omitted
+    with pytest.raises(ValueError, match="Either 'lat' and 'lon', or 'locations' must be provided"):
+        TextColourer(text="Test")
+
 
 

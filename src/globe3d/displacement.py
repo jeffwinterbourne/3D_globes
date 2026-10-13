@@ -1495,6 +1495,392 @@ class PoleLabelColourer(Colourer):
         return colors
 
 
+_TEXT_GEOM_CACHE: Dict[Tuple, Tuple[object, float]] = {}
+
+
+def _get_text_normalized_geometry(
+    text: str,
+    font: Optional[str] = None,
+    font_weight: str = "normal",
+    font_style: str = "normal",
+) -> Tuple[object, float]:
+    """Extracts, validates, and normalizes text glyph paths into a centered Shapely geometry.
+
+    Converts text characters to vector contours via Matplotlib TextPath, evaluates
+    winding and nesting parity to cleanly differentiate glyph fills from inner holes
+    (e.g. in '0', 'A', '8'), and scales the geometry to unit height centered at (0, 0).
+
+    Args:
+        text (str): String to convert into 2D polygon geometry.
+        font (str, optional): TrueType/OpenType font file path (.ttf, .otf) or font family name.
+        font_weight (str, optional): Font weight ('normal', 'bold'). Defaults to 'normal'.
+        font_style (str, optional): Font style ('normal', 'italic'). Defaults to 'normal'.
+
+    Returns:
+        tuple: (norm_geom, max_r_norm) where `norm_geom` is a Shapely Polygon or
+            MultiPolygon centered at (0, 0) with vertical height equal to 1.0,
+            and `max_r_norm` is the maximum bounding radius from origin.
+    """
+    cache_key = (text, str(font), str(font_weight), str(font_style))
+    if cache_key in _TEXT_GEOM_CACHE:
+        return _TEXT_GEOM_CACHE[cache_key]
+
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.textpath import TextPath
+    import shapely.geometry as sgeom
+    import shapely.ops as sops
+    import shapely.affinity as saff
+
+    if not text or not text.strip():
+        empty_geom = sgeom.Polygon()
+        _TEXT_GEOM_CACHE[cache_key] = (empty_geom, 1.0)
+        return empty_geom, 1.0
+
+    if font is not None:
+        if os.path.isfile(font):
+            fp = FontProperties(fname=font)
+        else:
+            fp = FontProperties(family=font, weight=font_weight, style=font_style)
+    else:
+        fp = FontProperties(family="sans-serif", weight=font_weight, style=font_style)
+
+    tp = TextPath((0, 0), text, prop=fp)
+    polys = tp.to_polygons()
+    poly_objects = [sgeom.Polygon(p) for p in polys if len(p) >= 3]
+    if not poly_objects:
+        empty_geom = sgeom.Polygon()
+        _TEXT_GEOM_CACHE[cache_key] = (empty_geom, 1.0)
+        return empty_geom, 1.0
+
+    outers = []
+    holes = []
+    for i, p in enumerate(poly_objects):
+        pt = sgeom.Point(p.exterior.coords[0])
+        depth = sum(1 for j, other in enumerate(poly_objects) if i != j and other.contains(pt))
+        if depth % 2 == 0:
+            outers.append(p)
+        else:
+            holes.append(p)
+
+    geom = sops.unary_union(outers)
+    if holes:
+        geom = geom.difference(sops.unary_union(holes))
+
+    if geom.is_empty:
+        _TEXT_GEOM_CACHE[cache_key] = (geom, 1.0)
+        return geom, 1.0
+
+    minx, miny, maxx, maxy = geom.bounds
+    dy = maxy - miny
+    if dy < 1e-7:
+        dy = 1.0
+    cx = (minx + maxx) / 2.0
+    cy = (miny + maxy) / 2.0
+
+    norm_geom = saff.translate(geom, xoff=-cx, yoff=-cy)
+    norm_geom = saff.scale(norm_geom, xfact=1.0 / dy, yfact=1.0 / dy, origin=(0, 0))
+
+    nb = norm_geom.bounds
+    max_r_norm = float(np.hypot(max(abs(nb[0]), abs(nb[2])), max(abs(nb[1]), abs(nb[3]))))
+
+    _TEXT_GEOM_CACHE[cache_key] = (norm_geom, max_r_norm)
+    return norm_geom, max_r_norm
+
+
+class TextColourer(Colourer):
+    """Assigns discrete colors to vertices within 2D text strings projected onto the globe sphere.
+
+    Renders text glyphs directly onto the spherical mesh using local gnomonic tangent-plane
+    projection. This provides mathematically exact, singularity-free placement across all
+    latitudes including the polar regions.
+
+    Supports:
+        - TrueType / OpenType font files (.ttf, .otf) or system font families.
+        - Configurable text height in degrees on the spherical globe.
+        - In-plane rotation angle (in degrees).
+        - Direct fill and stroke styling with separate color assignments.
+        - Center placement in either Paleo coordinates (default) or Modern geographic coordinates
+          dynamically reconstructed to paleo coordinates using a PlateModel and age.
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        locations: Optional[Sequence[Union[Tuple[float, float], Dict]]] = None,
+        height_degrees: float = 4.0,
+        size_degrees: Optional[float] = None,
+        angle: float = 0.0,
+        rotation_degrees: Optional[float] = None,
+        color: Union[str, Sequence[Union[int, float]], np.ndarray] = "white",
+        fill: bool = True,
+        fill_color: Optional[Union[str, Sequence[Union[int, float]], np.ndarray]] = None,
+        stroke: Optional[Union[bool, float]] = None,
+        stroke_width: Optional[float] = None,
+        stroke_color: Union[str, Sequence[Union[int, float]], np.ndarray] = "black",
+        font: Optional[str] = None,
+        font_weight: str = "normal",
+        font_style: str = "normal",
+        reference: str = "paleo",
+        age: Optional[float] = None,
+        plate_model: Optional[object] = None,
+    ):
+        """Initializes a TextColourer.
+
+        Args:
+            text (str, optional): Text string to project onto the globe. Defaults to "".
+            lat (float, optional): Center latitude in degrees for single-label placement. Defaults to None.
+            lon (float, optional): Center longitude in degrees for single-label placement. Defaults to None.
+            locations (sequence of tuple or dict, optional): Multiple target locations.
+                Each element can be a `(lat, lon)` tuple or a dict overriding any label property
+                (`'lat'`, `'lon'`, `'text'`, `'color'`, `'height_degrees'`, `'angle'`, `'fill'`,
+                `'fill_color'`, `'stroke'`, `'stroke_width'`, `'stroke_color'`, `'font'`,
+                `'font_weight'`, `'font_style'`). Defaults to None.
+            height_degrees (float, optional): Angular height of the text in degrees. Defaults to 4.0.
+            size_degrees (float, optional): Alias for `height_degrees`. Defaults to None.
+            angle (float, optional): In-plane rotation angle in degrees (positive rotates counter-clockwise
+                in the tangent plane). Defaults to 0.0.
+            rotation_degrees (float, optional): Alias for `angle`. Defaults to None.
+            color (str or sequence, optional): Text color. Defaults to "white".
+            fill (bool, optional): Whether to fill the interior of the text glyphs. Defaults to True.
+            fill_color (str or sequence, optional): Color for the glyph fill. If None,
+                defaults to `color`. Defaults to None.
+            stroke (bool or float, optional): Stroke outline toggle or width in degrees. If float,
+                specifies stroke width in degrees. If True, enables stroke with default width
+                (0.1 * height_degrees). If False or None (and `stroke_width` is None), stroke is
+                disabled. Defaults to None.
+            stroke_width (float, optional): Stroke outline width in degrees. If provided and `stroke`
+                is not False, stroke is enabled. Defaults to None.
+            stroke_color (str or sequence, optional): Color for the stroke outline. Defaults to "black".
+            font (str, optional): Path to a TrueType / OpenType font file (.ttf / .otf) or a font
+                family name (e.g. 'sans-serif', 'Arial', 'DejaVu Sans'). Defaults to None.
+            font_weight (str, optional): Font weight (e.g. 'normal', 'bold'). Defaults to 'normal'.
+            font_style (str, optional): Font style (e.g. 'normal', 'italic'). Defaults to 'normal'.
+            reference (str, optional): Coordinate reference system — `'paleo'` (default) or `'modern'`.
+                If `'modern'` and `age` is provided, coordinates are dynamically reconstructed using
+                `plate_model`.
+            age (float, optional): Geological age in Ma if `reference='modern'`. Defaults to None.
+            plate_model (PlateModel, optional): Plate reconstruction model if `reference='modern'`.
+                If None and `reference='modern'`, loads the default Scotese PALEOMAP model. Defaults to None.
+
+        Raises:
+            ValueError: If neither `lat`/`lon` nor `locations` is provided.
+        """
+        self.default_text = str(text)
+        self.default_height_degrees = float(size_degrees if size_degrees is not None else height_degrees)
+        self.default_angle = float(rotation_degrees if rotation_degrees is not None else angle)
+        self.default_color = color
+        self.default_fill = bool(fill)
+        self.default_fill_color = fill_color if fill_color is not None else color
+        self.default_stroke_color = stroke_color
+        self.default_font = font
+        self.default_font_weight = font_weight
+        self.default_font_style = font_style
+        self.reference = reference.lower()
+        self.age = age
+        self.plate_model = plate_model
+
+        if stroke_width is not None:
+            self.default_stroke_width = float(stroke_width)
+            self.default_stroke_enabled = (stroke is not False)
+        elif isinstance(stroke, (int, float)) and stroke > 0:
+            self.default_stroke_width = float(stroke)
+            self.default_stroke_enabled = True
+        elif stroke is True:
+            self.default_stroke_width = float(self.default_height_degrees) * 0.1
+            self.default_stroke_enabled = True
+        else:
+            self.default_stroke_width = 0.0
+            self.default_stroke_enabled = False
+
+        if locations is not None:
+            self.locations = list(locations)
+        elif lat is not None and lon is not None:
+            self.locations = [{
+                "lat": float(lat),
+                "lon": float(lon),
+                "text": self.default_text,
+                "color": self.default_color,
+                "height_degrees": self.default_height_degrees,
+                "angle": self.default_angle,
+                "fill": self.default_fill,
+                "fill_color": self.default_fill_color,
+                "stroke": self.default_stroke_enabled,
+                "stroke_width": self.default_stroke_width,
+                "stroke_color": self.default_stroke_color,
+                "font": self.default_font,
+                "font_weight": self.default_font_weight,
+                "font_style": self.default_font_style,
+            }]
+        else:
+            raise ValueError("Either 'lat' and 'lon', or 'locations' must be provided to TextColourer.")
+
+    def __call__(self, vertices: np.ndarray, current_colors: np.ndarray = None) -> np.ndarray:
+        """Assigns text colors to mesh vertices falling inside the projected glyphs and strokes.
+
+        Args:
+            vertices (np.ndarray): (N, 3) Cartesian vertex coordinates in mm.
+            current_colors (np.ndarray, optional): (N, 3) existing vertex colors in [0, 1].
+                If provided, existing colors outside the text are preserved. Defaults to None.
+
+        Returns:
+            np.ndarray: (N, 3) updated RGB vertex colors in range [0, 1].
+        """
+        n = vertices.shape[0]
+        if current_colors is not None:
+            colors = np.array(current_colors, dtype=np.float64, copy=True)
+        else:
+            colors = np.ones((n, 3), dtype=np.float64)
+
+        if n == 0 or len(self.locations) == 0:
+            return colors
+
+        import shapely
+        import shapely.affinity as saff
+
+        r = np.linalg.norm(vertices, axis=1)
+        r_safe = np.where(r == 0.0, 1.0, r)
+        u_v = vertices / r_safe[:, None]
+
+        pm = self.plate_model
+        if self.reference == "modern" and self.age is not None and self.age != 0:
+            if pm is None:
+                from globe3d import datasets
+                pm = datasets.paleo.scotese_plate_model()
+
+        for loc in self.locations:
+            if isinstance(loc, (tuple, list)):
+                loc_lat, loc_lon = float(loc[0]), float(loc[1])
+                loc_text = self.default_text
+                loc_h = self.default_height_degrees
+                loc_ang = self.default_angle
+                loc_fill = self.default_fill
+                loc_fill_col = self.default_fill_color
+                loc_stroke_on = self.default_stroke_enabled
+                loc_stroke_w = self.default_stroke_width
+                loc_stroke_col = self.default_stroke_color
+                loc_font = self.default_font
+                loc_font_w = self.default_font_weight
+                loc_font_s = self.default_font_style
+            elif isinstance(loc, dict):
+                loc_lat = float(loc.get("lat", loc.get("latitude")))
+                loc_lon = float(loc.get("lon", loc.get("longitude")))
+                loc_text = str(loc.get("text", self.default_text))
+                loc_h = float(loc.get("height_degrees", loc.get("size_degrees", self.default_height_degrees)))
+                loc_ang = float(loc.get("angle", loc.get("rotation_degrees", self.default_angle)))
+                loc_fill = bool(loc.get("fill", self.default_fill))
+                loc_fill_col = loc.get("fill_color", loc.get("color", self.default_fill_color))
+                loc_stroke_col = loc.get("stroke_color", self.default_stroke_color)
+                loc_font = loc.get("font", self.default_font)
+                loc_font_w = loc.get("font_weight", self.default_font_weight)
+                loc_font_s = loc.get("font_style", self.default_font_style)
+
+                loc_stroke_val = loc.get("stroke", None)
+                loc_sw_val = loc.get("stroke_width", None)
+                if loc_sw_val is not None:
+                    loc_stroke_w = float(loc_sw_val)
+                    loc_stroke_on = (loc_stroke_val is not False)
+                elif isinstance(loc_stroke_val, (int, float)) and loc_stroke_val > 0:
+                    loc_stroke_w = float(loc_stroke_val)
+                    loc_stroke_on = True
+                elif loc_stroke_val is True:
+                    loc_stroke_w = float(loc_h) * 0.1
+                    loc_stroke_on = True
+                elif loc_stroke_val is False:
+                    loc_stroke_w = 0.0
+                    loc_stroke_on = False
+                else:
+                    loc_stroke_on = self.default_stroke_enabled
+                    loc_stroke_w = self.default_stroke_width
+            else:
+                continue
+
+            if not loc_text or (not loc_fill and not loc_stroke_on):
+                continue
+
+            norm_geom, max_r_norm = _get_text_normalized_geometry(
+                loc_text, font=loc_font, font_weight=loc_font_w, font_style=loc_font_s
+            )
+            if norm_geom.is_empty:
+                continue
+
+            if self.reference == "modern" and self.age is not None and self.age != 0 and pm is not None:
+                rec_pt = pm.reconstruct_points([[loc_lat, loc_lon]], age_ma=float(self.age))
+                center_lat = float(rec_pt[0, 0])
+                center_lon = float(rec_pt[0, 1])
+            else:
+                center_lat = loc_lat
+                center_lon = loc_lon
+
+            lat_r = np.radians(center_lat)
+            lon_r = np.radians(center_lon)
+
+            if center_lat >= 89.9999:
+                c = np.array([0.0, 0.0, 1.0])
+                ex = np.array([0.0, 1.0, 0.0])
+                ey = np.array([-1.0, 0.0, 0.0])
+            elif center_lat <= -89.9999:
+                c = np.array([0.0, 0.0, -1.0])
+                ex = np.array([0.0, 1.0, 0.0])
+                ey = np.array([1.0, 0.0, 0.0])
+            else:
+                c = np.array([np.cos(lat_r) * np.cos(lon_r), np.cos(lat_r) * np.sin(lon_r), np.sin(lat_r)])
+                ey = np.array([-np.sin(lat_r) * np.cos(lon_r), -np.sin(lat_r) * np.sin(lon_r), np.cos(lat_r)])
+                ex = np.array([-np.sin(lon_r), np.cos(lon_r), 0.0])
+
+            if loc_ang != 0.0:
+                rot_rad = np.radians(loc_ang)
+                cos_a, sin_a = np.cos(rot_rad), np.sin(rot_rad)
+                ex_prime = cos_a * ex + sin_a * ey
+                ey_prime = -sin_a * ex + cos_a * ey
+                ex, ey = ex_prime, ey_prime
+
+            H_tangent = np.tan(np.radians(loc_h))
+            if H_tangent <= 1e-7:
+                continue
+
+            tangent_geom = saff.scale(norm_geom, xfact=H_tangent, yfact=H_tangent, origin=(0, 0))
+
+            stroke_geom = None
+            if loc_stroke_on and loc_stroke_w > 0:
+                W_tangent = np.tan(np.radians(loc_stroke_w))
+                if loc_fill:
+                    stroke_geom = tangent_geom.buffer(W_tangent)
+                    max_r = (max_r_norm * H_tangent) + W_tangent
+                else:
+                    stroke_geom = tangent_geom.boundary.buffer(W_tangent / 2.0)
+                    max_r = (max_r_norm * H_tangent) + (W_tangent / 2.0)
+            else:
+                max_r = max_r_norm * H_tangent
+
+            theta_max_rad = min(np.arctan(max_r) * 1.05, np.pi * 0.499)
+            cos_cutoff = np.cos(theta_max_rad)
+            cos_thetas = np.dot(u_v, c)
+            cand_mask = cos_thetas >= cos_cutoff
+            cand_indices = np.where(cand_mask)[0]
+
+            if len(cand_indices) > 0:
+                cos_cand = cos_thetas[cand_indices, None]
+                p_tangent = (u_v[cand_indices] / cos_cand) - c[None, :]
+                x_local = np.dot(p_tangent, ex)
+                y_local = np.dot(p_tangent, ey)
+
+                if stroke_geom is not None:
+                    stroke_rgb = _parse_color_float(loc_stroke_col)
+                    in_stroke = shapely.contains_xy(stroke_geom, x_local, y_local)
+                    if np.any(in_stroke):
+                        colors[cand_indices[in_stroke]] = stroke_rgb
+
+                if loc_fill:
+                    fill_rgb = _parse_color_float(loc_fill_col)
+                    in_fill = shapely.contains_xy(tangent_geom, x_local, y_local)
+                    if np.any(in_fill):
+                        colors[cand_indices[in_fill]] = fill_rgb
+
+        return colors
+
+
 def select_inward_facing(vertices, faces, **kwargs):
     """Selects vertices that form inward-facing faces.
 
