@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   ChevronRight,
@@ -11,9 +11,12 @@ import {
   Magnet,
   Globe2,
   Sparkles,
+  HardDrive,
+  FileQuestion,
 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { GlobeProject } from '../../types/globeProject';
+import { BUILTIN_COLORMAPS, getColormapCssGradient } from '../../utils/colormaps';
 
 interface WizardState {
   // Step 1: Base Geometry & Mode
@@ -26,6 +29,7 @@ interface WizardState {
   resolution: 'draft' | 'standard' | 'high';
 
   // Step 2: Dataset
+  datasetCategory: 'online' | 'workspace' | 'none';
   selectedDataset: string;
 
   // Step 3: Displacement
@@ -52,6 +56,7 @@ const DEFAULT_WIZARD_STATE: WizardState = {
   hollow: true,
   innerRatio: 0.5,
   resolution: 'standard',
+  datasetCategory: 'online',
   selectedDataset: 'topography.earth',
   displaceTarget: 'outer',
   vertExagg: 40,
@@ -64,20 +69,34 @@ const DEFAULT_WIZARD_STATE: WizardState = {
   magnetHeight: 2.0,
 };
 
-const DATASET_OPTIONS = [
-  { id: 'topography.earth', name: 'Earth Topography & Bathymetry (ETOPO 2022)', cat: 'topography' },
-  { id: 'topography.mars', name: 'Mars MOLA Topography', cat: 'planetary' },
-  { id: 'topography.moon', name: 'Moon LOLA Lunar Relief', cat: 'planetary' },
-  { id: 'topography.venus', name: 'Venus Magellan Radar Topography', cat: 'planetary' },
-  { id: 'topography.mercury', name: 'Mercury Messenger Elevation', cat: 'planetary' },
-  { id: 'synthetic.wave', name: 'Procedural Spherical Harmonic Wave (No download)', cat: 'synthetic' },
+const ONLINE_DATASETS = [
+  { id: 'topography.earth', name: 'Earth Topography & Bathymetry (ETOPO 2022)', cat: 'Earth Hypsometry' },
+  { id: 'topography.mars', name: 'Mars MOLA Planetary Topography', cat: 'Planetary' },
+  { id: 'topography.moon', name: 'Moon LOLA Lunar Surface Relief', cat: 'Planetary' },
+  { id: 'topography.venus', name: 'Venus Magellan Radar Topography', cat: 'Planetary' },
+  { id: 'topography.mercury', name: 'Mercury MESSENGER Elevation', cat: 'Planetary' },
+  { id: 'synthetic.wave', name: 'Procedural Spherical Harmonic Wave (No download)', cat: 'Synthetic' },
 ];
 
 export const NewProjectWizardModal: React.FC = () => {
-  const { isWizardOpen, setWizardOpen, saveCurrentProjectToWorkspace, setProject, setCurrentView } =
-    useProjectStore();
+  const {
+    isWizardOpen,
+    setWizardOpen,
+    saveCurrentProjectToWorkspace,
+    setProject,
+    setCurrentView,
+    workspaceDatasets,
+    fetchWorkspaceDatasets,
+  } = useProjectStore();
+
   const [step, setStep] = useState<number>(1);
   const [form, setForm] = useState<WizardState>(DEFAULT_WIZARD_STATE);
+
+  useEffect(() => {
+    if (isWizardOpen) {
+      fetchWorkspaceDatasets();
+    }
+  }, [isWizardOpen]);
 
   if (!isWizardOpen) return null;
 
@@ -85,12 +104,121 @@ export const NewProjectWizardModal: React.FC = () => {
     const nPoints =
       form.resolution === 'draft' ? 100000 : form.resolution === 'high' ? 1000000 : 500000;
 
+    const isNoneDataset = form.datasetCategory === 'none' || form.selectedDataset === 'none';
+    const isWsDataset = form.datasetCategory === 'workspace' || form.selectedDataset.startsWith('workspace:');
+    const wsEntry = isWsDataset
+      ? workspaceDatasets.find((d) => `workspace:${d.id}` === form.selectedDataset || d.id === form.selectedDataset)
+      : null;
+
+    let gridsArray: any[] = [];
+    if (!form.isPaleo && !isNoneDataset) {
+      if (isWsDataset && wsEntry) {
+        gridsArray = [
+          {
+            id: 'base_grid',
+            source: 'local',
+            filepath: wsEntry.physical_path || wsEntry.physical_filename,
+            params: {},
+          },
+        ];
+      } else if (form.selectedDataset.startsWith('synthetic')) {
+        gridsArray = [
+          {
+            id: 'base_grid',
+            source: 'synthetic',
+            synthetic_type: 'spherical_harmonics',
+            params: { step: 1.0 },
+          },
+        ];
+      } else {
+        gridsArray = [
+          {
+            id: 'base_grid',
+            source: 'online',
+            dataset: form.selectedDataset,
+            params: { resolution: '30m' },
+          },
+        ];
+      }
+    }
+
+    const hasDisp = !form.isPaleo && !isNoneDataset && form.displaceTarget !== 'none';
+    const outerDisps =
+      hasDisp && (form.displaceTarget === 'outer' || form.displaceTarget === 'both')
+        ? [
+            {
+              id: 'outer_disp',
+              enabled: true,
+              type: 'GridDisplacer' as const,
+              grid_id: 'base_grid',
+              scale: form.vertExagg,
+              target: 'outer' as const,
+              smooth: false,
+              coastline_step: form.coastlineStep,
+              normalize: true,
+            },
+          ]
+        : [];
+
+    const innerDisps =
+      hasDisp && (form.displaceTarget === 'inner' || form.displaceTarget === 'both')
+        ? [
+            {
+              id: 'inner_disp',
+              enabled: true,
+              type: 'GridDisplacer' as const,
+              grid_id: 'base_grid',
+              scale: form.vertExagg * 0.5,
+              target: 'inner' as const,
+              smooth: false,
+              coastline_step: 0,
+              normalize: true,
+            },
+          ]
+        : [];
+
+    let colourersArray: any[] = [];
+    if (!form.isPaleo) {
+      if (isNoneDataset || form.colormap.toLowerCase() === 'none') {
+        colourersArray = [
+          {
+            id: 'outer_color',
+            type: 'ConstantColourer',
+            target: 'outer',
+            color: '#e2e8f0',
+          },
+        ];
+      } else {
+        colourersArray = [
+          {
+            id: 'outer_color',
+            type: 'GridColourer',
+            grid_id: 'base_grid',
+            target: 'outer',
+            colormap: form.colormap,
+            undo_shading: true,
+          },
+        ];
+      }
+    }
+
+    const gridsRecord: Record<string, any> = {};
+    if (gridsArray.length > 0) {
+      gridsRecord[gridsArray[0].id || 'base_grid'] = gridsArray[0];
+    }
+
     const newProject: GlobeProject = {
       $schema: '../../schemas/globe_project.schema.json',
       id: form.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
       name: form.name,
       category: 'user',
-      description: `Created via New Project Wizard (${form.isPaleo ? `${form.paleoAge} Ma Paleo` : form.selectedDataset})`,
+      description: `Created via New Project Wizard (${
+        form.isPaleo
+          ? `${form.paleoAge} Ma Paleo Reconstruction`
+          : isNoneDataset
+          ? 'Smooth Sphere'
+          : form.selectedDataset
+      })`,
       mode: form.isPaleo ? 'paleo' : 'custom',
       paleo: {
         enabled: form.isPaleo,
@@ -99,8 +227,8 @@ export const NewProjectWizardModal: React.FC = () => {
         plate_model: 'Scotese_PALEOMAP',
         vert_exagg: form.vertExagg,
         coastline_step: form.coastlineStep * 1000,
-        color_mode: 'palette',
-        colormap: form.colormap,
+        color_mode: form.colormap.toLowerCase() === 'none' ? 'paleo_atlas' : 'scientific_cmap',
+        colormap: form.colormap.toLowerCase() === 'none' ? 'none' : form.colormap,
         undo_shading: true,
         palette_colors: null,
         mark_poles: true,
@@ -121,67 +249,10 @@ export const NewProjectWizardModal: React.FC = () => {
           mode: 'inner',
         },
       },
-      custom_recipe: {
-        grids: form.isPaleo
-          ? []
-          : [
-              form.selectedDataset.startsWith('synthetic')
-                ? {
-                    id: 'base_grid',
-                    source: 'synthetic',
-                    synthetic_type: 'spherical_harmonics',
-                    params: { step: 1.0 },
-                  }
-                : {
-                    id: 'base_grid',
-                    source: 'online',
-                    dataset: form.selectedDataset,
-                    params: { resolution: '30m' },
-                  },
-            ],
-        outer_displacements:
-          !form.isPaleo && (form.displaceTarget === 'outer' || form.displaceTarget === 'both')
-            ? [
-                {
-                  id: 'outer_disp',
-                  type: 'GridDisplacer',
-                  grid_id: 'base_grid',
-                  scale: form.vertExagg,
-                  target: 'outer',
-                  smooth: false,
-                  coastline_step: form.coastlineStep,
-                  normalize: true,
-                },
-              ]
-            : [],
-        inner_displacements:
-          !form.isPaleo && (form.displaceTarget === 'inner' || form.displaceTarget === 'both')
-            ? [
-                {
-                  id: 'inner_disp',
-                  type: 'GridDisplacer',
-                  grid_id: 'base_grid',
-                  scale: form.vertExagg * 0.5,
-                  target: 'inner',
-                  smooth: false,
-                  coastline_step: 0,
-                  normalize: true,
-                },
-              ]
-            : [],
-        colourers: form.isPaleo
-          ? []
-          : [
-              {
-                id: 'outer_color',
-                type: 'GridColourer',
-                grid_id: 'base_grid',
-                target: 'outer',
-                colormap: form.colormap,
-                undo_shading: true,
-              },
-            ],
-      },
+      grids: gridsRecord,
+      outer_displacements: outerDisps,
+      inner_displacements: innerDisps,
+      colourers: colourersArray,
       filaments: {
         enabled: false,
         preset: 'TERRAIN_4',
@@ -291,6 +362,7 @@ export const NewProjectWizardModal: React.FC = () => {
 
         {/* Step Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          {/* STEP 1: Geometry & Mode */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
@@ -403,127 +475,273 @@ export const NewProjectWizardModal: React.FC = () => {
             </div>
           )}
 
+          {/* STEP 2: Dataset Selection (Online, Workspace Cache Picker, or None) */}
           {step === 2 && (
-            <div className="space-y-3">
-              <label className="block text-xs font-semibold text-slate-300">
-                Choose Base Geophysical Dataset
-              </label>
-              <div className="grid grid-cols-1 gap-2">
-                {DATASET_OPTIONS.map((ds) => (
-                  <div
-                    key={ds.id}
-                    onClick={() => setForm({ ...form, selectedDataset: ds.id })}
-                    className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${
-                      form.selectedDataset === ds.id
-                        ? 'border-sky-500 bg-sky-500/10 text-white'
-                        : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700'
+            <div className="space-y-3.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Select Base Geophysical Dataset
+                </label>
+                <div className="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm({
+                        ...form,
+                        datasetCategory: 'online',
+                        selectedDataset: form.selectedDataset.startsWith('workspace:') || form.selectedDataset === 'none' ? 'topography.earth' : form.selectedDataset,
+                      });
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                      form.datasetCategory === 'online'
+                        ? 'bg-sky-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <div>
-                      <div className="text-xs font-bold text-slate-200">{ds.name}</div>
-                      <div className="text-[10px] text-slate-500 uppercase">{ds.cat}</div>
-                    </div>
-                    {form.selectedDataset === ds.id && (
-                      <Check className="w-4 h-4 text-sky-400 shrink-0" />
-                    )}
-                  </div>
-                ))}
+                    Catalog
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstWs = workspaceDatasets[0];
+                      setForm({
+                        ...form,
+                        datasetCategory: 'workspace',
+                        selectedDataset: firstWs ? `workspace:${firstWs.id}` : 'workspace:none',
+                      });
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                      form.datasetCategory === 'workspace'
+                        ? 'bg-sky-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Workspace Cache ({workspaceDatasets.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm({
+                        ...form,
+                        datasetCategory: 'none',
+                        selectedDataset: 'none',
+                        displaceTarget: 'none',
+                      });
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                      form.datasetCategory === 'none'
+                        ? 'bg-amber-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    None (Smooth)
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
 
-          {step === 3 && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Displacement Target
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'outer', label: 'Outer Shell Only' },
-                    { id: 'both', label: 'Outer & Inner Cavity' },
-                    { id: 'none', label: 'No Displacement' },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setForm({ ...form, displaceTarget: t.id as any })}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold border transition ${
-                        form.displaceTarget === t.id
-                          ? 'border-sky-500 bg-sky-500/20 text-sky-300'
-                          : 'border-slate-800 bg-slate-950 text-slate-400'
+              {/* Category: Catalog */}
+              {form.datasetCategory === 'online' && (
+                <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto">
+                  {ONLINE_DATASETS.map((ds) => (
+                    <div
+                      key={ds.id}
+                      onClick={() => setForm({ ...form, selectedDataset: ds.id })}
+                      className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${
+                        form.selectedDataset === ds.id
+                          ? 'border-sky-500 bg-sky-500/10 text-white'
+                          : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700'
                       }`}
                     >
-                      {t.label}
-                    </button>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">{ds.name}</div>
+                        <div className="text-[10px] text-slate-500 uppercase font-mono">{ds.cat}</div>
+                      </div>
+                      {form.selectedDataset === ds.id && (
+                        <Check className="w-4 h-4 text-sky-400 shrink-0" />
+                      )}
+                    </div>
                   ))}
                 </div>
-              </div>
+              )}
 
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span className="text-slate-300">Vertical Exaggeration</span>
-                  <span className="text-sky-400 font-mono">{form.vertExagg}x</span>
+              {/* Category: Workspace Cache Picker */}
+              {form.datasetCategory === 'workspace' && (
+                <div className="space-y-2">
+                  {workspaceDatasets.length === 0 ? (
+                    <div className="p-6 rounded-xl border border-dashed border-slate-800 bg-slate-950/50 text-center space-y-2">
+                      <HardDrive className="w-8 h-8 text-slate-600 mx-auto" />
+                      <div className="text-xs font-semibold text-slate-300">
+                        No User Datasets Found in Workspace
+                      </div>
+                      <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                        Drop any NetCDF (.nc), GMT Grid (.grd), GeoTIFF (.tif), or shapefile (.shp) into
+                        your active project folder to make them selectable here.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto">
+                      {workspaceDatasets.map((ds) => {
+                        const isSelected = form.selectedDataset === `workspace:${ds.id}`;
+                        return (
+                          <div
+                            key={ds.id}
+                            onClick={() =>
+                              setForm({ ...form, selectedDataset: `workspace:${ds.id}` })
+                            }
+                            className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${
+                              isSelected
+                                ? 'border-sky-500 bg-sky-500/10 text-white'
+                                : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="min-w-0 pr-3">
+                              <div className="text-xs font-bold text-slate-200 truncate">
+                                {ds.name}
+                              </div>
+                              <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5 font-mono">
+                                <span className="uppercase px-1.5 py-0.2 bg-slate-800 rounded">
+                                  {ds.file_type}
+                                </span>
+                                <span>{ds.physical_filename}</span>
+                                <span>{(ds.size_bytes / (1024 * 1024)).toFixed(1)} MB</span>
+                              </div>
+                            </div>
+                            {isSelected && <Check className="w-4 h-4 text-sky-400 shrink-0" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={80}
-                  value={form.vertExagg}
-                  onChange={(e) => setForm({ ...form, vertExagg: Number(e.target.value) })}
-                  className="w-full"
-                />
-              </div>
+              )}
 
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span className="text-slate-300">Coastline Step (0.0 to 2.0 mm)</span>
-                  <span className="text-sky-400 font-mono">{form.coastlineStep} mm</span>
-                </div>
-                <input
-                  type="range"
-                  min={0.0}
-                  max={2.0}
-                  step={0.1}
-                  value={form.coastlineStep}
-                  onChange={(e) => setForm({ ...form, coastlineStep: Number(e.target.value) })}
-                  className="w-full"
-                />
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-4">
-              <label className="block text-xs font-semibold text-slate-300">
-                Hypsometric Colormap
-              </label>
-              <div className="grid grid-cols-2 gap-2.5">
-                {[
-                  { id: 'terrain', name: 'Terrain (Earth Relief)' },
-                  { id: 'viridis', name: 'Viridis (Scientific)' },
-                  { id: 'magma', name: 'Magma (Planetary)' },
-                  { id: 'gist_earth', name: 'Gist Earth (Paleo Classic)' },
-                  { id: 'seismic', name: 'Seismic (Diverging)' },
-                  { id: 'turbo', name: 'Turbo (High Contrast)' },
-                ].map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() => setForm({ ...form, colormap: c.id })}
-                    className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${
-                      form.colormap === c.id
-                        ? 'border-sky-500 bg-sky-500/20 text-sky-200'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <span className="text-xs font-bold">{c.name}</span>
-                    {form.colormap === c.id && <Check className="w-4 h-4 text-sky-400" />}
+              {/* Category: None (Smooth Sphere) */}
+              {form.datasetCategory === 'none' && (
+                <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2">
+                  <div className="flex items-center gap-2 text-amber-300 font-semibold text-xs">
+                    <FileQuestion className="w-4 h-4 shrink-0" />
+                    <span>Smooth Reference Sphere (Zero Displacement)</span>
                   </div>
-                ))}
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Creates an exact mathematical sphere without elevation or bathymetry relief.
+                    Ideal for pure geometric globes, custom manual sculpting, or magnetic snaps without topography.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 3: Displacement */}
+          {step === 3 && (
+            <div className="space-y-4">
+              {form.datasetCategory === 'none' || form.selectedDataset === 'none' ? (
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950 text-slate-400 text-xs">
+                  Displacement is skipped because &ldquo;None (Smooth)&rdquo; is selected. Proceed to Colouring.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                      Displacement Target
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'outer', label: 'Outer Shell Only' },
+                        { id: 'both', label: 'Outer & Inner Cavity' },
+                        { id: 'none', label: 'No Displacement' },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setForm({ ...form, displaceTarget: t.id as any })}
+                          className={`py-2 px-3 rounded-xl text-xs font-semibold border transition ${
+                            form.displaceTarget === t.id
+                              ? 'border-sky-500 bg-sky-500/20 text-sky-300'
+                              : 'border-slate-800 bg-slate-950 text-slate-400'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-300">Vertical Exaggeration</span>
+                      <span className="text-sky-400 font-mono">{form.vertExagg}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={80}
+                      value={form.vertExagg}
+                      onChange={(e) => setForm({ ...form, vertExagg: Number(e.target.value) })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs font-semibold mb-1">
+                      <span className="text-slate-300">Coastline Step (0.0 to 2.0 mm)</span>
+                      <span className="text-sky-400 font-mono">{form.coastlineStep} mm</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.0}
+                      max={2.0}
+                      step={0.1}
+                      value={form.coastlineStep}
+                      onChange={(e) => setForm({ ...form, coastlineStep: Number(e.target.value) })}
+                      className="w-full"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* STEP 4: Colour with All Builtins and Visual Gradient Previews */}
+          {step === 4 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Select Colormap / Color Scheme ({BUILTIN_COLORMAPS.length})
+                </label>
+                <span className="text-[11px] text-slate-400">Includes visual gradient previews</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+                {BUILTIN_COLORMAPS.map((c) => {
+                  const isSelected = form.colormap.toLowerCase() === c.id.toLowerCase();
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => setForm({ ...form, colormap: c.id })}
+                      className={`p-2.5 rounded-xl border cursor-pointer flex flex-col justify-between gap-2 transition ${
+                        isSelected
+                          ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+                          : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-200">{c.name}</span>
+                        {isSelected && <Check className="w-4 h-4 text-sky-400 shrink-0" />}
+                      </div>
+
+                      {/* Visual Gradient Strip */}
+                      <div
+                        className="h-3 w-full rounded-md border border-slate-700/80 shadow-inner"
+                        style={{ background: c.gradientCss }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
+          {/* STEP 5: Magnets */}
           {step === 5 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">

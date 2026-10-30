@@ -255,8 +255,16 @@ export function evaluateProjectMeshClient(
         for (let i = 0; i < numVerts; i++) {
           const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
           let dr = (z - refLevel) * scale;
-          if (stepMm !== 0 && z > stepThresh) {
-            dr += stepMm;
+          const maxAllowed = baseRadius * 0.25;
+          dr = Math.max(-maxAllowed, Math.min(maxAllowed, dr));
+          if (stepMm !== 0) {
+            const landMask = maskBuffers['land'] || maskBuffers['ne_110m_land'] || maskBuffers['default'];
+            const isLand = landMask
+              ? sampleMaskBuffer(landMask, lats[i], lons[i])
+              : z > stepThresh;
+            if (isLand) {
+              dr += stepMm;
+            }
           }
           outerRadii[i] += dr;
         }
@@ -322,9 +330,12 @@ export function evaluateProjectMeshClient(
             ? disp.scale
             : calculatePhysicalScale(innerBaseRadius, exagg, disp.grid_units || 'm');
         const refLevel = disp.reference_level ?? 0.0;
+        const maxInnerAllowed = innerBaseRadius * 0.25;
         for (let i = 0; i < numVerts; i++) {
           const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
-          innerRadii[i] += (z - refLevel) * scale;
+          let dr = (z - refLevel) * scale;
+          dr = Math.max(-maxInnerAllowed, Math.min(maxInnerAllowed, dr));
+          innerRadii[i] += dr;
         }
       } else if (disp.type === 'ConstantDisplacer') {
         const d = (disp.displacement ?? 0) * (disp.scale ?? 1.0);
@@ -428,7 +439,7 @@ export function evaluateProjectMeshClient(
     for (let i = 0; i < numVerts; i++) {
       const z = sampleGridBuffer(paleoGrid, lats[i], lons[i], paleoAge);
       let rgb: [number, number, number];
-      if (cMode === 'filament_banded' && bands.length > 0) {
+      if ((cMode === 'filament_banded' || project.filaments?.enabled) && bands.length > 0) {
         rgb = applyBandedColor(z, bands);
       } else if (cMode === 'scientific_cmap') {
         const t = (z - -6000) / (5000 - -6000);
@@ -608,7 +619,7 @@ export function evaluateProjectMeshClient(
             lon: p[0],
             lat: p[1],
           }));
-        for (const loc of pts) {
+        for (const loc of pts as any[]) {
           const rgb = loc.color ? parseColorToRgb01(loc.color) : defaultColor;
           const rDeg = loc.radius_degrees || loc.size || rad;
           for (let i = 0; i < numVerts; i++) {
@@ -651,6 +662,19 @@ export function evaluateProjectMeshClient(
           }
         }
       }
+    }
+  }
+
+  // Optical filament mixing override when "Active on 3D Globe" is checked
+  if (project.filaments?.enabled && project.filaments?.bands && project.filaments.bands.length > 0) {
+    const fGrid = gridBuffers['base_grid'] || Object.values(gridBuffers)[0];
+    const bands = project.filaments.bands;
+    for (let i = 0; i < numVerts; i++) {
+      const z = sampleGridBuffer(fGrid, lats[i], lons[i], paleoAge);
+      const rgb = applyBandedColor(z, bands);
+      outerColors[i * 3] = rgb[0];
+      outerColors[i * 3 + 1] = rgb[1];
+      outerColors[i * 3 + 2] = rgb[2];
     }
   }
 

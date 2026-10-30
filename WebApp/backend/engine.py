@@ -142,27 +142,33 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
                     grid = datasets.topography.gebco(**params)
                 elif ds_name in ("topography.mars", "mars"):
                     grid = datasets.topography.mars(**params)
-                elif ds_name in ("topography.moon", "moon"):
-                    grid = datasets.topography.moon(**params)
-                elif ds_name in ("topography.venus", "venus"):
-                    grid = datasets.topography.venus(**params)
-                elif ds_name in ("topography.mercury", "mercury"):
-                    grid = datasets.topography.mercury(**params)
-                elif ds_name in ("tomography.s40rts", "s40rts"):
+                elif "s40rts" in ds_name:
                     grid = datasets.tomography.s40rts(**params)
-                elif ds_name in ("geoid.egm2008", "egm2008"):
+                elif "egm2008" in ds_name or "geoid" in ds_name:
                     grid = datasets.geoid.egm2008(**params)
-                elif ds_name in ("crust.crust1", "crust1"):
+                elif "crust1" in ds_name:
                     grid = datasets.crust.crust1(**params)
-                elif ds_name in ("lithosphere.thickness", "lithosphere"):
+                elif "thickness" in ds_name or "lithosphere" in ds_name:
                     grid = datasets.lithosphere.thickness(**params)
-                elif ds_name in ("dynamic_topography.hoggard2016", "hoggard2016", "dynamic_topography"):
+                elif "hoggard" in ds_name or "dynamic" in ds_name:
                     grid = datasets.dynamic_topography.hoggard2016(**params)
-                elif ds_name in ("gravity.bouguer", "bouguer", "gravity"):
+                elif "bouguer" in ds_name or "gravity" in ds_name:
                     grid = datasets.gravity.bouguer(**params)
-                elif ds_name in ("magnetics.emag2", "emag2", "magnetics"):
+                elif "emag2" in ds_name or "magnetic" in ds_name:
                     grid = datasets.magnetics.emag2(**params)
-                elif ds_name in ("paleo.scotese", "scotese"):
+                elif "mars" in ds_name:
+                    grid = datasets.topography.mars(**params)
+                elif "moon" in ds_name:
+                    grid = datasets.topography.moon(**params)
+                elif "venus" in ds_name:
+                    grid = datasets.topography.venus(**params)
+                elif "mercury" in ds_name:
+                    grid = datasets.topography.mercury(**params)
+                elif "earth" in ds_name or "etopo" in ds_name:
+                    grid = datasets.topography.earth(**params)
+                elif "gebco" in ds_name:
+                    grid = datasets.topography.gebco(**params)
+                elif "scotese" in ds_name or "paleo" in ds_name:
                     grid, tex_path, meta = datasets.paleo.scotese(**params)
                 else:
                     grid = _generate_synthetic_grid("continents", params)
@@ -183,35 +189,33 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
         # Online dataset e.g. "topography.earth", "tomography.s40rts", "geoid.egm2008", "crust.crust1"
         ds_name = (grid_cfg.dataset or "topography.earth").lower()
         try:
-            if ds_name in ("topography.earth", "earth"):
-                grid = datasets.topography.earth(**params)
-            elif ds_name in ("topography.etopo", "etopo"):
-                grid = datasets.topography.etopo(**params)
-            elif ds_name in ("topography.gebco", "gebco"):
-                grid = datasets.topography.gebco(**params)
-            elif ds_name in ("topography.mars", "mars"):
-                grid = datasets.topography.mars(**params)
-            elif ds_name in ("topography.moon", "moon"):
-                grid = datasets.topography.moon(**params)
-            elif ds_name in ("topography.venus", "venus"):
-                grid = datasets.topography.venus(**params)
-            elif ds_name in ("topography.mercury", "mercury"):
-                grid = datasets.topography.mercury(**params)
-            elif ds_name in ("tomography.s40rts", "s40rts"):
+            if "s40rts" in ds_name:
                 grid = datasets.tomography.s40rts(**params)
-            elif ds_name in ("geoid.egm2008", "egm2008"):
+            elif "egm2008" in ds_name or "geoid" in ds_name:
                 grid = datasets.geoid.egm2008(**params)
-            elif ds_name in ("crust.crust1", "crust1"):
+            elif "crust1" in ds_name:
                 grid = datasets.crust.crust1(**params)
-            elif ds_name in ("lithosphere.thickness", "lithosphere"):
+            elif "thickness" in ds_name or "lithosphere" in ds_name:
                 grid = datasets.lithosphere.thickness(**params)
-            elif ds_name in ("dynamic_topography.hoggard2016", "hoggard2016", "dynamic_topography"):
+            elif "hoggard" in ds_name or "dynamic" in ds_name:
                 grid = datasets.dynamic_topography.hoggard2016(**params)
-            elif ds_name in ("gravity.bouguer", "bouguer", "gravity"):
+            elif "bouguer" in ds_name or "gravity" in ds_name:
                 grid = datasets.gravity.bouguer(**params)
-            elif ds_name in ("magnetics.emag2", "emag2", "magnetics"):
+            elif "emag2" in ds_name or "magnetic" in ds_name:
                 grid = datasets.magnetics.emag2(**params)
-            elif ds_name in ("paleo.scotese", "scotese"):
+            elif "mars" in ds_name:
+                grid = datasets.topography.mars(**params)
+            elif "moon" in ds_name:
+                grid = datasets.topography.moon(**params)
+            elif "venus" in ds_name:
+                grid = datasets.topography.venus(**params)
+            elif "mercury" in ds_name:
+                grid = datasets.topography.mercury(**params)
+            elif "earth" in ds_name or "etopo" in ds_name:
+                grid = datasets.topography.earth(**params)
+            elif "gebco" in ds_name:
+                grid = datasets.topography.gebco(**params)
+            elif "scotese" in ds_name or "paleo" in ds_name:
                 grid, tex_path, meta = datasets.paleo.scotese(**params)
             else:
                 grid = _generate_synthetic_grid("continents", params)
@@ -460,14 +464,32 @@ def _compute_displacer_scale(disp_cfg: DisplacerConfigModel, radius: float, grid
     Returns:
         float: Numeric scale factor.
     """
+    target_displacement = 0.15 * radius  # ~6mm for 40mm radius (15% of globe radius)
+
     if disp_cfg.scale_mode == "explicit":
-        return float(disp_cfg.scale)
+        scale = float(disp_cfg.scale)
+        if grid is not None:
+            span = float(np.nanmax(grid.grid) - np.nanmin(grid.grid))
+            # Safety clamp: if explicit scale would produce > 35% radius displacement on known grid,
+            # scale it appropriately to target ~15% of radius
+            if span > 0.001 and (span * abs(scale)) > 0.35 * radius:
+                scale = float((target_displacement / span) * np.sign(scale))
+        return scale
+
     if disp_cfg.scale_mode == "max_displacement_mm" and grid is not None:
         max_abs = float(np.nanmax(np.abs(grid.grid)))
         if max_abs > 1e-8:
             return float(disp_cfg.max_displacement_mm) / max_abs
         return 1.0
+
     # Default: 'auto_exagg' using unit-aware calculate_displacement_scale
+    if grid is not None:
+        span = float(np.nanmax(grid.grid) - np.nanmin(grid.grid))
+        # Small-span datasets (e.g. tomography dlnVs [-4 to +4], crustal thickness km [5 to 60], geoid [-100 to +100])
+        if 0.001 < span < 250.0:
+            exagg_mult = float(disp_cfg.vert_exagg / 40.0) if disp_cfg.vert_exagg else 1.0
+            return float((target_displacement / span) * exagg_mult)
+
     unit = disp_cfg.data_unit if disp_cfg.data_unit in ("m", "km", "cm", "mm", "ft") else "m"
     base_scale = calculate_displacement_scale(radius, grid_units=unit)
     return float(base_scale * disp_cfg.vert_exagg)
@@ -529,19 +551,21 @@ def _apply_displacers(
             g = grids_by_id.get(d_cfg.grid_id or "", first_grid)
             scale = _compute_displacer_scale(d_cfg, radius, g)
             raw_coast = float(d_cfg.coastline_step)
-            # In the UI & presets, custom GridDisplacer coastline_step <= 20 is specified in model mm
-            # (e.g. 0.8 mm), whereas GridDisplacer adds coastline_step to grid values before multiplying by scale.
-            if 0.0 < abs(raw_coast) <= 20.0 and 1e-9 < abs(scale) < 0.05:
-                eff_coast_step = raw_coast / scale
-            else:
-                eff_coast_step = raw_coast
             disp = GridDisplacer(
                 g,
                 reference_level=float(d_cfg.reference_level),
-                coastline_step=eff_coast_step,
+                coastline_step=0.0,
                 step_threshold=float(d_cfg.step_threshold),
             )
             target_proxy.displace(disp, scale=scale)
+            if raw_coast > 0.0:
+                try:
+                    land_shp = datasets.shapefiles.land()
+                    if land_shp and os.path.exists(land_shp):
+                        poly_step = PolygonDisplacer(land_shp, displacement=raw_coast, displace_inside=True)
+                        target_proxy.displace(poly_step, scale=1.0)
+                except Exception as e:
+                    print(f"[engine] Notice: land shapefile step fallback: {e}")
         elif dtype == "ConstantDisplacer":
             disp_val = float(d_cfg.displacement if d_cfg.displacement is not None else d_cfg.value)
             eff_scale = float(d_cfg.scale) if (d_cfg.scale_mode in ("explicit", "direct") and abs(d_cfg.scale) >= 0.001) else 1.0
@@ -621,7 +645,17 @@ def _apply_colourers(
         colourer_obj = None
         if ctype == "GridColourer":
             g = grids_by_id.get(c_cfg.grid_id or "", first_grid)
-            if c_cfg.use_banded_levels and c_cfg.colors and c_cfg.levels:
+            cmap_lower = str(c_cfg.cmap or "").lower()
+            if cmap_lower in ("none", "null", "disabled"):
+                colourer_obj = ConstantColourer((220 / 255.0, 226 / 255.0, 235 / 255.0))
+            elif project.filaments.enabled and getattr(project.filaments, "band_thresholds", None):
+                thresholds = sorted([float(b.threshold) for b in project.filaments.band_thresholds])
+                raw_codes = [b.code or b.color for b in sorted(project.filaments.band_thresholds, key=lambda x: float(x.threshold))]
+                rgb_list = _resolve_band_colors(project, raw_codes)
+                if len(thresholds) == len(rgb_list) and len(thresholds) >= 2:
+                    cmap_obj, norm_obj = create_banded_colormap(rgb_list, thresholds)
+                    colourer_obj = GridColourer(g, colormap=cmap_obj, norm=norm_obj)
+            elif c_cfg.use_banded_levels and c_cfg.colors and c_cfg.levels:
                 rgb_list = _resolve_band_colors(project, c_cfg.colors)
                 if len(c_cfg.levels) == len(rgb_list) - 1 or len(c_cfg.levels) == len(rgb_list) + 1:
                     cmap_obj, norm_obj = create_banded_colormap(rgb_list, c_cfg.levels)
@@ -632,7 +666,8 @@ def _apply_colourers(
                 if c_cfg.symmetric and vmin is None and vmax is None:
                     abs_max = float(np.nanmax(np.abs(g.grid)))
                     vmin, vmax = -abs_max, abs_max
-                colourer_obj = GridColourer(g, colormap=c_cfg.cmap or "terrain", vmin=vmin, vmax=vmax)
+                chosen_cmap = c_cfg.cmap if (c_cfg.cmap and c_cfg.cmap.lower() not in ("none", "null")) else "terrain"
+                colourer_obj = GridColourer(g, colormap=chosen_cmap, vmin=vmin, vmax=vmax)
 
         elif ctype == "ImageColourer":
             img_path = resolve_image_path(c_cfg.image_path)

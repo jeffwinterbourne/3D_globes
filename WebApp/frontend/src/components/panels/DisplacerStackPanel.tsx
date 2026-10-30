@@ -296,8 +296,8 @@ export const DisplacerStackPanel: React.FC = () => {
                 <input
                   type="number"
                   step="0.1"
-                  value={item.displacement ?? item.value ?? 0.8}
-                  onChange={(e) => updateItem(idx, { displacement: Number(e.target.value), value: Number(e.target.value) })}
+                  value={item.displacement ?? 0.8}
+                  onChange={(e) => updateItem(idx, { displacement: Number(e.target.value) })}
                   className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
                 />
               </div>
@@ -323,8 +323,8 @@ export const DisplacerStackPanel: React.FC = () => {
                       step="0.5"
                       min="0.1"
                       max="30"
-                      value={item.radius_degrees ?? item.radius_deg ?? 2.5}
-                      onChange={(e) => updateItem(idx, { radius_degrees: Number(e.target.value), radius_deg: Number(e.target.value) })}
+                      value={item.radius_degrees ?? 2.5}
+                      onChange={(e) => updateItem(idx, { radius_degrees: Number(e.target.value) })}
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
                     />
                   </div>
@@ -352,8 +352,8 @@ export const DisplacerStackPanel: React.FC = () => {
                       step="0.1"
                       min="0.1"
                       max="15"
-                      value={item.width_degrees ?? item.width_deg ?? 0.8}
-                      onChange={(e) => updateItem(idx, { width_degrees: Number(e.target.value), width_deg: Number(e.target.value) })}
+                      value={item.width_degrees ?? 0.8}
+                      onChange={(e) => updateItem(idx, { width_degrees: Number(e.target.value) })}
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
                     />
                   </div>

@@ -143,7 +143,26 @@ export const GridSourcesPanel: React.FC = () => {
     loadDirectory();
   }, []);
 
-  const gridEntries = Object.entries(project.grids || {});
+  const rawGrids = (project.grids || (project as any).custom_recipe?.grids || {}) as any;
+  const gridEntries: [string, GridSourceConfig][] = Array.isArray(rawGrids)
+    ? rawGrids.map((g: any, i: number) => [
+        g.id || `grid_${i + 1}`,
+        {
+          id: g.id || `grid_${i + 1}`,
+          source_type: g.source || g.source_type || 'online',
+          category: (g.dataset || 'topography.earth').split('.')[0] || 'topography',
+          name: (g.dataset || 'topography.earth').split('.')[1] || 'earth',
+          dataset: g.dataset,
+          resolution: g.params?.resolution || g.resolution || '30m',
+          depth: g.params?.depth ?? g.depth,
+          layer: g.params?.layer ?? g.layer,
+          age: g.params?.age ?? g.age,
+          local_path: g.filepath || g.local_path,
+          netcdf_vars: g.netcdf_vars || { lat_var: 'lat', lon_var: 'lon', data_var: 'z' },
+          transforms: g.transforms || g.ops || [],
+        },
+      ])
+    : Object.entries(rawGrids);
 
   const handleAddGrid = () => {
     const cleanId = (newGridId.trim() || `grid_${gridEntries.length + 1}`).replace(
@@ -298,8 +317,8 @@ export const GridSourcesPanel: React.FC = () => {
       next.step_lon = 10;
     } else if (type === 'airy_moho') {
       next.ref_thickness = 30000;
-      next.ocean_scale = 5.5;
-      next.land_scale = 6.5;
+      next.rho_c = 2670;
+      next.rho_m = 3300;
     } else if (type === 'weighted_composite') {
       next.weight_a = 1.0;
       next.weight_b = 300.0;
@@ -761,8 +780,9 @@ export const GridSourcesPanel: React.FC = () => {
 
       {/* Grid List */}
       {gridEntries.map(([gridId, cfg]) => {
+        const activeCat = cfg.category || cfg.fallback_dataset?.category || 'topography';
         const catSpec =
-          ONLINE_DATASET_CATEGORIES[cfg.category || 'topography'] ||
+          ONLINE_DATASET_CATEGORIES[activeCat] ||
           ONLINE_DATASET_CATEGORIES.topography;
 
         return (

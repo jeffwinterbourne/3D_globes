@@ -4,6 +4,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import {
   DEFAULT_FILAMENT_SPOOLS,
   DEFAULT_STARTER_PROJECT,
+  FilamentsConfig,
   FilamentSpool,
 } from '../../types/globeProject';
 import { hexToRgb01, rgb01ToHex } from '../../utils/colormaps';
@@ -112,6 +113,24 @@ export const FilamentMixerStudioContent: React.FC = () => {
     }
   };
 
+  const updateSpoolsAndBands = (
+    nextSpools: FilamentSpool[],
+    presetName: FilamentsConfig['preset'] = 'CUSTOM'
+  ) => {
+    const swatches = buildClient35Palette(nextSpools);
+    setPalette(swatches);
+    const swatchMap = new Map(swatches.map((s) => [s.code, s.hex]));
+    const updatedBands = (fil.bands || []).map((b) => ({
+      ...b,
+      hex: swatchMap.get(b.code) || b.hex,
+    }));
+    updateFilaments({
+      preset: presetName,
+      spools: nextSpools,
+      bands: updatedBands,
+    });
+  };
+
   useEffect(() => {
     syncPalette(spools, fil.preset);
   }, [fil.preset, JSON.stringify(spools)]);
@@ -182,22 +201,27 @@ export const FilamentMixerStudioContent: React.FC = () => {
     <div className="space-y-4 text-xs">
       {/* 1. Preset & 4 Spool Editors */}
       <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 font-semibold text-slate-200">
-            <Palette className="w-4 h-4 text-emerald-400" />
-            <span>4-Filament Optical Mixing Spools (Kubelka-Munk TD)</span>
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1.5 font-semibold text-slate-200 min-w-0">
+            <Palette className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs truncate">4-Filament Optical Mixing</span>
           </div>
-          <label className="flex items-center gap-1.5 cursor-pointer text-emerald-300 font-semibold">
+          <label className="flex items-center gap-1.5 cursor-pointer text-emerald-300 font-semibold text-[11px] shrink-0">
             <input
               type="checkbox"
               checked={fil.enabled}
-              onChange={(e) => updateFilaments({ enabled: e.target.checked })}
+              onChange={(e) => {
+                const isEn = e.target.checked;
+                const bands = (fil.bands?.length ?? 0) > 0 ? fil.bands : (DEFAULT_STARTER_PROJECT.filaments?.bands || []);
+                updateFilaments({ enabled: isEn, bands });
+              }}
+              className="rounded border-slate-700 text-emerald-500 focus:ring-0 w-3.5 h-3.5"
             />
-            <span>Active on 3D Globe</span>
+            <span>Active on Globe</span>
           </label>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1">
           {(['TERRAIN_4', 'CMYKW', 'RBYKW', 'EARTH_TERRAIN', 'CUSTOM'] as const).map(
             (preset) => (
               <button
@@ -207,9 +231,9 @@ export const FilamentMixerStudioContent: React.FC = () => {
                     preset !== 'CUSTOM' && DEFAULT_FILAMENT_SPOOLS[preset]
                       ? DEFAULT_FILAMENT_SPOOLS[preset]
                       : spools;
-                  updateFilaments({ preset, spools: nextSpools });
+                  updateSpoolsAndBands(nextSpools, preset);
                 }}
-                className={`px-2.5 py-1 rounded-lg font-medium border transition ${
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition ${
                   fil.preset === preset
                     ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-semibold'
                     : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
@@ -221,11 +245,11 @@ export const FilamentMixerStudioContent: React.FC = () => {
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-1.5">
           {spools.map((sp, idx) => (
             <div
               key={idx}
-              className="flex items-center gap-2 p-2 rounded-lg bg-slate-950 border border-slate-800"
+              className="flex items-center gap-2 p-1.5 rounded-lg bg-slate-950 border border-slate-800"
             >
               <input
                 type="color"
@@ -233,9 +257,9 @@ export const FilamentMixerStudioContent: React.FC = () => {
                 onChange={(e) => {
                   const next = [...spools];
                   next[idx] = { ...sp, hex: e.target.value };
-                  updateFilaments({ preset: 'CUSTOM', spools: next });
+                  updateSpoolsAndBands(next, 'CUSTOM');
                 }}
-                className="w-7 h-7 rounded cursor-pointer bg-transparent border-0"
+                className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 shrink-0"
               />
               <input
                 type="text"
@@ -243,12 +267,12 @@ export const FilamentMixerStudioContent: React.FC = () => {
                 onChange={(e) => {
                   const next = [...spools];
                   next[idx] = { ...sp, name: e.target.value };
-                  updateFilaments({ preset: 'CUSTOM', spools: next });
+                  updateSpoolsAndBands(next, 'CUSTOM');
                 }}
-                className="w-24 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-slate-100"
+                className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-[11px]"
               />
-              <div className="flex items-center gap-1 ml-auto">
-                <span className="text-[10px] text-slate-400">TD:</span>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-[10px] text-slate-400 font-mono">TD:</span>
                 <input
                   type="number"
                   step="0.2"
@@ -258,9 +282,9 @@ export const FilamentMixerStudioContent: React.FC = () => {
                   onChange={(e) => {
                     const next = [...spools];
                     next[idx] = { ...sp, td: Number(e.target.value) };
-                    updateFilaments({ preset: 'CUSTOM', spools: next });
+                    updateSpoolsAndBands(next, 'CUSTOM');
                   }}
-                  className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-1 font-mono text-sky-300"
+                  className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 font-mono text-sky-300 text-[11px]"
                 />
               </div>
             </div>

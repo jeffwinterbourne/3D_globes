@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowDown, ArrowUp, Palette, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { ColourerConfig } from '../../types/globeProject';
-import { parseColorToRgb01, rgb01ToHex } from '../../utils/colormaps';
+import { BUILTIN_COLORMAPS, getColormapCssGradient, parseColorToRgb01, rgb01ToHex } from '../../utils/colormaps';
 
 export const ColourerStackPanel: React.FC = () => {
   const { project, setColourers, setFilamentModalOpen } = useProjectStore();
@@ -224,18 +224,13 @@ export const ColourerStackPanel: React.FC = () => {
                     <select
                       value={col.colormap || 'terrain'}
                       onChange={(e) => updateItem(idx, { colormap: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1"
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
                     >
-                      <option value="terrain">terrain</option>
-                      <option value="viridis">viridis</option>
-                      <option value="RdBu_r">RdBu_r</option>
-                      <option value="RdBu">RdBu</option>
-                      <option value="plasma">plasma</option>
-                      <option value="magma">magma</option>
-                      <option value="coolwarm">coolwarm</option>
-                      <option value="YlGn">YlGn</option>
-                      <option value="Blues">Blues</option>
-                      <option value="YlOrBr">YlOrBr</option>
+                      {BUILTIN_COLORMAPS.map((cm) => (
+                        <option key={cm.id} value={cm.id}>
+                          {cm.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -256,6 +251,24 @@ export const ColourerStackPanel: React.FC = () => {
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
                     />
                   </div>
+                </div>
+
+                {/* Visual Colorbar Gradient Preview */}
+                <div className="p-2 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-slate-400">
+                      vmin: <strong className="text-sky-300">{col.vmin ?? -6000}</strong>
+                    </span>
+                    <span className="text-slate-200 font-semibold">{col.colormap || 'terrain'}</span>
+                    <span className="text-slate-400">
+                      vmax: <strong className="text-emerald-300">{col.vmax ?? 5000}</strong>
+                    </span>
+                  </div>
+                  <div
+                    className="h-4 w-full rounded-md border border-slate-700/80 shadow-inner"
+                    style={{ background: getColormapCssGradient(col.colormap || 'terrain') }}
+                    title={`Active Colormap: ${col.colormap || 'terrain'}`}
+                  />
                 </div>
               </div>
             )}

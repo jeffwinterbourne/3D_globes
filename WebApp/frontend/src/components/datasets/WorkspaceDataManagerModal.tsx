@@ -72,14 +72,14 @@ export const WorkspaceDataManagerModal: React.FC = () => {
     const ops = ds.default_ops || [];
     upsertGrid(gridId, {
       id: gridId,
-      source: 'local',
-      dataset: ds.physical_path || ds.physical_filename,
-      params: {
+      source_type: 'local',
+      local_path: ds.physical_path || ds.physical_filename,
+      netcdf_vars: {
         lat_var: ds.netcdf_vars?.lat,
         lon_var: ds.netcdf_vars?.lon,
         data_var: ds.netcdf_vars?.data,
       },
-      ops: ops,
+      transforms: ops,
     });
     setStatusMessage(`Added dataset "${ds.name}" to project grids`);
     setWorkspaceDataModalOpen(false);
@@ -434,3 +434,4 @@ export const WorkspaceDataManagerModal: React.FC = () => {
     </div>
   );
 };
+

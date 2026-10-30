@@ -289,6 +289,7 @@ class FilamentsConfigModel(StudioBaseModel):
     top_layers: int = 4
     layer_height: float = 0.08
     quantize_preview: bool = False
+    band_thresholds: List[BandThresholdModel] = Field(default_factory=list)
 
 
 class MagnetsConfigModel(StudioBaseModel):

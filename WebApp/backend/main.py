@@ -130,6 +130,28 @@ def list_presets() -> Dict[str, Any]:
     return {"presets": presets}
 
 
+@app.get("/api/presets/{preset_id:path}/thumbnail")
+def get_preset_thumbnail(preset_id: str):
+    """Returns pre-rendered thumbnail image for a preset."""
+    clean_id = os.path.splitext(os.path.basename(preset_id))[0]
+    thumb_path = os.path.join(PRESETS_DIR, "thumbnails", f"{clean_id}.png")
+    if not os.path.exists(thumb_path):
+        try:
+            from .scripts.generate_gallery_thumbnails import generate_all_preset_thumbnails
+            generate_all_preset_thumbnails()
+        except Exception:
+            pass
+
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/png")
+    
+    # Fallback to example_1
+    fallback = os.path.join(PRESETS_DIR, "thumbnails", "example_1_procedural_globe.png")
+    if os.path.exists(fallback):
+        return FileResponse(fallback, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+
 @app.get("/api/presets/{preset_id:path}")
 def get_preset(preset_id: str) -> Dict[str, Any]:
     """Loads a specific preset JSON by its ID or relative path."""
@@ -167,28 +189,6 @@ def validate_preset(project: GlobeProject) -> Dict[str, Any]:
     """Validates and normalizes a GlobeProject JSON payload."""
     dumped = project.model_dump() if hasattr(project, "model_dump") else project.dict()
     return {"valid": True, "project": dumped}
-
-
-@app.get("/api/presets/{preset_id:path}/thumbnail")
-def get_preset_thumbnail(preset_id: str):
-    """Returns pre-rendered thumbnail image for a preset."""
-    clean_id = os.path.splitext(os.path.basename(preset_id))[0]
-    thumb_path = os.path.join(PRESETS_DIR, "thumbnails", f"{clean_id}.png")
-    if not os.path.exists(thumb_path):
-        try:
-            from .scripts.generate_gallery_thumbnails import generate_all_preset_thumbnails
-            generate_all_preset_thumbnails()
-        except Exception:
-            pass
-
-    if os.path.exists(thumb_path):
-        return FileResponse(thumb_path, media_type="image/png")
-    
-    # Fallback to example_1
-    fallback = os.path.join(PRESETS_DIR, "thumbnails", "example_1_procedural_globe.png")
-    if os.path.exists(fallback):
-        return FileResponse(fallback, media_type="image/png")
-    raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
 # ---------------------------------------------------------------------------

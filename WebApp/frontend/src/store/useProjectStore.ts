@@ -62,6 +62,12 @@ function scheduleGridFetch(fn: () => void, delayMs = 150) {
   gridFetchTimer = setTimeout(fn, delayMs);
 }
 
+let autoPythonTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleAutoPython(fn: () => void, delayMs = 500) {
+  if (autoPythonTimer) clearTimeout(autoPythonTimer);
+  autoPythonTimer = setTimeout(fn, delayMs);
+}
+
 function sampleEquatorialProfileFromPositions(
   positions: Float32Array,
   fallbackRadius: number
@@ -283,6 +289,7 @@ interface ProjectStoreState {
   autoRotate: boolean;
   unlitMode: boolean;
   previewMode: 'fast_webgl' | 'exact_python';
+  autoPythonPreview: boolean;
   isRightDrawerOpen: boolean;
   isPresetModalOpen: boolean;
   isFilamentModalOpen: boolean;
@@ -331,6 +338,7 @@ interface ProjectStoreState {
   setShowAxes: (v: boolean) => void;
   setAutoRotate: (v: boolean) => void;
   setUnlitMode: (v: boolean) => void;
+  setAutoPythonPreview: (v: boolean) => void;
   setRightDrawerOpen: (v: boolean) => void;
   setPresetModalOpen: (v: boolean) => void;
   setFilamentModalOpen: (v: boolean) => void;
@@ -379,6 +387,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   autoRotate: false,
   unlitMode: false,
   previewMode: 'fast_webgl',
+  autoPythonPreview: true,
   isRightDrawerOpen: true,
   isPresetModalOpen: false,
   isFilamentModalOpen: false,
@@ -577,6 +586,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   setShowAxes: (v) => set({ showAxes: v }),
   setAutoRotate: (v) => set({ autoRotate: v }),
   setUnlitMode: (v) => set({ unlitMode: v }),
+  setAutoPythonPreview: (v) => set({ autoPythonPreview: v }),
   setRightDrawerOpen: (v) => set({ isRightDrawerOpen: v }),
   setPresetModalOpen: (v) => set({ isPresetModalOpen: v }),
   setFilamentModalOpen: (v) => set({ isFilamentModalOpen: v }),
@@ -598,6 +608,9 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       magnetAnalysis,
       jsonError: null,
     });
+    if (state.autoPythonPreview) {
+      scheduleAutoPython(() => get().renderExactPythonMesh('preview'), 500);
+    }
   },
 
   updateProject: (updater, recordHistory = true) => {
@@ -654,10 +667,15 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
   updateFilaments: (patch) => {
     get().updateProject((draft) => {
-      draft.filaments = {
-        ...(draft.filaments || DEFAULT_STARTER_PROJECT.filaments!),
+      const baseFil = draft.filaments || DEFAULT_STARTER_PROJECT.filaments!;
+      const nextFil = {
+        ...baseFil,
         ...patch,
       };
+      if (nextFil.enabled && (!nextFil.bands || nextFil.bands.length === 0)) {
+        nextFil.bands = DEFAULT_STARTER_PROJECT.filaments?.bands || [];
+      }
+      draft.filaments = nextFil;
       return draft;
     });
   },

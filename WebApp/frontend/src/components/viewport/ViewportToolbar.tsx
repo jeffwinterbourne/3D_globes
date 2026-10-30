@@ -36,6 +36,8 @@ export const ViewportToolbar: React.FC = () => {
     unlitMode,
     setUnlitMode,
     previewMode,
+    autoPythonPreview,
+    setAutoPythonPreview,
     isEvaluatingPython,
     renderExactPythonMesh,
     updateGeometry,
@@ -152,7 +154,23 @@ export const ViewportToolbar: React.FC = () => {
           <div className="h-4 w-px bg-slate-700 mx-0.5" />
 
           {/* Split Python Render Options */}
-          <div className="flex items-center gap-1 bg-slate-800/80 p-0.5 rounded border border-slate-700">
+          <div className="flex items-center gap-1.5 bg-slate-800/80 p-0.5 rounded border border-slate-700">
+            <label
+              className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-900 border border-slate-700/80 text-[11px] text-slate-300 cursor-pointer hover:text-white select-none transition"
+              title="When enabled, fast 60fps WebGL preview shows immediately while Python renders in the background"
+            >
+              <input
+                type="checkbox"
+                checked={autoPythonPreview}
+                onChange={(e) => setAutoPythonPreview(e.target.checked)}
+                className="rounded border-slate-600 text-emerald-500 focus:ring-0 w-3.5 h-3.5"
+              />
+              <span className="font-semibold text-slate-200">Auto-Python</span>
+              {isEvaluatingPython && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </label>
+
             <button
               onClick={() => renderExactPythonMesh('preview')}
               disabled={isEvaluatingPython}
@@ -193,7 +211,7 @@ export const ViewportToolbar: React.FC = () => {
               <input
                 type="range"
                 min={0}
-                max={60}
+                max={Math.round(2 * (project.geometry.radius || 40))}
                 step={1}
                 value={explodeDistance}
                 onChange={(e) => setExplodeDistance(Number(e.target.value))}

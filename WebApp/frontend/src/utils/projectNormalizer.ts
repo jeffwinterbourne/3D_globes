@@ -223,6 +223,20 @@ export function normalizeIncomingProject(raw: any): GlobeProject {
         : Number(rm.boss_thickness ?? 1.2) > 0,
   };
 
+  // Normalize Filaments
+  const rf = raw.filaments || {};
+  const filaments = {
+    ...base.filaments,
+    enabled: Boolean(rf.enabled ?? base.filaments?.enabled ?? false),
+    preset: rf.preset || base.filaments?.preset || 'TERRAIN_4',
+    spools: Array.isArray(rf.spools) && rf.spools.length > 0 ? rf.spools : (base.filaments?.spools || []),
+    total_layers: Number(rf.total_layers || base.filaments?.total_layers || 4),
+    layer_height: Number(rf.layer_height || base.filaments?.layer_height || 0.08),
+    vmin: Number(rf.vmin ?? base.filaments?.vmin ?? -6000),
+    vmax: Number(rf.vmax ?? base.filaments?.vmax ?? 4500),
+    bands: Array.isArray(rf.bands) && rf.bands.length > 0 ? rf.bands : (base.filaments?.bands || []),
+  };
+
   // Normalize Export
   const re = raw.export || {};
   const exportCfg = {
@@ -249,6 +263,7 @@ export function normalizeIncomingProject(raw: any): GlobeProject {
     outer_displacements,
     inner_displacements,
     colourers,
+    filaments,
     magnets,
     export: exportCfg,
   };
@@ -448,6 +463,12 @@ export function toBackendGlobeProjectPayload(project: GlobeProject): any {
       top_layers: Number(f.total_layers || 4),
       layer_height: Number(f.layer_height || 0.08),
       quantize_preview: false,
+      band_thresholds: (f.bands || []).map((b) => ({
+        threshold: Number(b.threshold ?? 0),
+        code: b.code || '[01]',
+        color: b.hex || '#ffffff',
+        label: b.label || '',
+      })),
     },
     magnets: {
       enabled: Boolean(project.magnets.enabled),

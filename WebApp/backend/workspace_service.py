@@ -427,3 +427,4 @@ def generate_dataset_thumbnail(working_dir: Optional[str], dataset_id: str) -> O
     except Exception as e:
         print(f"Failed to generate thumbnail for {dataset_id}: {e}")
         return None
+
