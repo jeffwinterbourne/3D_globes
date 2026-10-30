@@ -321,5 +321,95 @@ def test_online_dataset_caching_and_dual_resolution_evaluation():
     assert worker_buf["grids"]["etopo_ds"]["vmax"] > 0
 
 
+def test_declarative_grid_smooth_fill_and_chainable_math():
+    """Verifies spherical Gaussian smoothing, NaN inpainting, and chainable math operations on grids."""
+    import numpy as np
+    from WebApp.backend.engine import (
+        apply_grid_math,
+        fill_grid_nans,
+        resolve_project_grids,
+        smooth_sphere_gaussian,
+    )
+
+    lats = np.linspace(-90.0, 90.0, 91)
+    lons = np.linspace(-180.0, 180.0, 181)
+
+    # 1. Test Spherical Gaussian Smoothing (anti-meridian periodic wrapping & finite output)
+    spike_grid = np.zeros((91, 181), dtype=np.float64)
+    # Place a spike at the -180 deg boundary
+    spike_grid[45, 0] = 1000.0
+    spike_grid[45, -1] = 1000.0
+    smoothed = smooth_sphere_gaussian(spike_grid, lats, lons, width_deg=5.0)
+
+    assert np.isfinite(smoothed).all()
+    # Wrapping across -180 and +180 means both margins have smooth nonzero shoulders
+    assert smoothed[45, 1] > 0.0
+    assert smoothed[45, -2] > 0.0
+    # Center away from spike should remain near zero
+    assert smoothed[45, 90] < 1.0
+
+    # 2. Test Fill NaNs (constant, mean, nearest)
+    nan_grid = np.array([
+        [10.0, np.nan, 30.0],
+        [40.0, 50.0, np.nan],
+        [np.nan, 80.0, 90.0],
+    ])
+    filled_const = fill_grid_nans(nan_grid, mode="constant", value=-999.0)
+    assert not np.isnan(filled_const).any()
+    assert filled_const[0, 1] == -999.0
+
+    filled_mean = fill_grid_nans(nan_grid, mode="mean")
+    assert not np.isnan(filled_mean).any()
+    assert abs(filled_mean[0, 1] - 50.0) < 1e-4
+
+    filled_nearest = fill_grid_nans(nan_grid, mode="nearest")
+    assert not np.isnan(filled_nearest).any()
+    assert filled_nearest[0, 1] in (10.0, 30.0, 50.0)
+
+    # 3. Test Chainable Math Operations
+    base = np.array([[2.0, 4.0], [9.0, 16.0]])
+    assert np.allclose(apply_grid_math(base, "add", operand=3.0), base + 3.0)
+    assert np.allclose(apply_grid_math(base, "multiply", operand=2.5), base * 2.5)
+    assert np.allclose(apply_grid_math(base, "sqrt"), np.sqrt(base))
+    assert np.allclose(apply_grid_math(base, "clamp", min_val=3.0, max_val=10.0), [[3.0, 4.0], [9.0, 10.0]])
+    assert np.allclose(apply_grid_math(base, "power", operand=2.0), base ** 2)
+
+    # 4. Test Full Pipeline Execution in resolve_project_grids
+    proj = GlobeProject(
+        mode="custom",
+        geometry={
+            "distribution": "fibonacci",
+            "n_points": 300,
+            "preview_n_points": 200,
+            "radius": 40.0,
+            "hollow": False,
+        },
+        grids=[
+            GridSourceModel(
+                id="test_pipeline_grid",
+                source="synthetic",
+                synthetic_type="procedural_waves",
+                params={"step": 2.0, "amplitude": 1000.0},
+                ops=[
+                    GridOpModel(op="fill", fill_mode="constant", fill_value=0.0),
+                    GridOpModel(op="smooth", width_deg=3.0),
+                    GridOpModel(op="math", math_op="multiply", operand=2.0),
+                    GridOpModel(op="math", math_op="add", operand=500.0),
+                    GridOpModel(op="math", math_op="clamp", min_val=0.0, max_val=2000.0),
+                ],
+            )
+        ],
+    )
+
+    grids_by_id, _ = resolve_project_grids(proj)
+    assert "test_pipeline_grid" in grids_by_id
+    res_grid = grids_by_id["test_pipeline_grid"]
+    assert np.isfinite(res_grid.grid).all()
+    # Check that clamp [0, 2000] was enforced by the math chain
+    assert float(res_grid.grid.min()) >= 0.0
+    assert float(res_grid.grid.max()) <= 2000.0
+
+
+
 
 

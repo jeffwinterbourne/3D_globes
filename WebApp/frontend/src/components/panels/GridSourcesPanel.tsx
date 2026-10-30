@@ -310,6 +310,14 @@ export const GridSourcesPanel: React.FC = () => {
     } else if (type === 'scale_offset') {
       next.scale = 1.0;
       next.offset = 0.0;
+    } else if (type === 'smooth') {
+      next.width_deg = 2.0;
+    } else if (type === 'fill') {
+      next.fill_mode = 'constant';
+      next.fill_value = 0.0;
+    } else if (type === 'math') {
+      next.math_op = 'multiply';
+      next.operand = 1.0;
     }
     upsertGrid(gridId, { ...current, transforms: [...transforms, next] });
   };
@@ -1057,11 +1065,14 @@ export const GridSourcesPanel: React.FC = () => {
                   className="bg-slate-950 border border-slate-700 rounded px-2 py-0.5 text-[11px] text-sky-300"
                 >
                   <option value="">+ Add Transform...</option>
+                  <option value="smooth">Gaussian Smoothing (Spherical deg)</option>
+                  <option value="fill">Fill NaNs / Missing Data</option>
+                  <option value="math">Math Operation (+, -, *, /, pow, log, exp...)</option>
                   <option value="downsample">Downsample [::step_lat, ::step_lon]</option>
+                  <option value="scale_offset">Scale & Offset</option>
                   <option value="airy_moho">Airy Isostasy Moho Calculator</option>
                   <option value="weighted_composite">Weighted Grid Compositor</option>
                   <option value="reconstruct">GPlately Reconstruct Grid</option>
-                  <option value="scale_offset">Scale & Offset</option>
                 </select>
               </div>
 
@@ -1201,6 +1212,206 @@ export const GridSourcesPanel: React.FC = () => {
                             upsertGrid(gridId, { ...cfg, transforms: nextT });
                           }}
                           className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {tr.type === 'smooth' && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Filter Width (degrees on sphere)</span>
+                        <span className="font-mono text-emerald-400 font-bold">{tr.width_deg ?? 2.0}°</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0.2}
+                          max={25.0}
+                          step={0.2}
+                          value={tr.width_deg ?? 2.0}
+                          onChange={(e) => {
+                            const nextT = [...(cfg.transforms || [])];
+                            nextT[tIdx] = { ...tr, width_deg: Number(e.target.value) };
+                            upsertGrid(gridId, { ...cfg, transforms: nextT });
+                          }}
+                          className="flex-1 accent-emerald-500"
+                        />
+                        <input
+                          type="number"
+                          min={0.1}
+                          max={45.0}
+                          step={0.5}
+                          value={tr.width_deg ?? 2.0}
+                          onChange={(e) => {
+                            const nextT = [...(cfg.transforms || [])];
+                            nextT[tIdx] = { ...tr, width_deg: Number(e.target.value) };
+                            upsertGrid(gridId, { ...cfg, transforms: nextT });
+                          }}
+                          className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-xs"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-500">
+                        Spherical Gaussian filter: wraps periodically across longitudes and scales by cos(lat) to preserve true metric width near poles.
+                      </p>
+                    </div>
+                  )}
+
+                  {tr.type === 'fill' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-400">Fill Mode</span>
+                        <select
+                          value={tr.fill_mode || 'constant'}
+                          onChange={(e) => {
+                            const nextT = [...(cfg.transforms || [])];
+                            nextT[tIdx] = {
+                              ...tr,
+                              fill_mode: e.target.value as GridTransform['fill_mode'],
+                            };
+                            upsertGrid(gridId, { ...cfg, transforms: nextT });
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-slate-200 text-xs"
+                        >
+                          <option value="constant">Constant Value</option>
+                          <option value="mean">Grid Mean</option>
+                          <option value="min">Grid Min</option>
+                          <option value="max">Grid Max</option>
+                          <option value="nearest">Nearest-Neighbor (EDT Inpaint)</option>
+                        </select>
+                      </div>
+                      {(!tr.fill_mode || tr.fill_mode === 'constant') && (
+                        <div>
+                          <span className="text-[10px] text-slate-400">Fill Value</span>
+                          <input
+                            type="number"
+                            step={1}
+                            value={tr.fill_value ?? 0.0}
+                            onChange={(e) => {
+                              const nextT = [...(cfg.transforms || [])];
+                              nextT[tIdx] = { ...tr, fill_value: Number(e.target.value) };
+                              upsertGrid(gridId, { ...cfg, transforms: nextT });
+                            }}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tr.type === 'math' && (
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[10px] text-slate-400">Operation</span>
+                          <select
+                            value={tr.math_op || 'multiply'}
+                            onChange={(e) => {
+                              const nextT = [...(cfg.transforms || [])];
+                              nextT[tIdx] = {
+                                ...tr,
+                                math_op: e.target.value as GridTransform['math_op'],
+                              };
+                              upsertGrid(gridId, { ...cfg, transforms: nextT });
+                            }}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-slate-200 text-xs"
+                          >
+                            <option value="add">Add (x + operand)</option>
+                            <option value="subtract">Subtract (x - operand)</option>
+                            <option value="multiply">Multiply (x * operand)</option>
+                            <option value="divide">Divide (x / operand)</option>
+                            <option value="power">Power (x ^ operand)</option>
+                            <option value="log">Natural Log ln(x)</option>
+                            <option value="log10">Logarithm log10(x)</option>
+                            <option value="exp">Exponential exp(x)</option>
+                            <option value="abs">Absolute Value |x|</option>
+                            <option value="negate">Negate (-x)</option>
+                            <option value="sqrt">Square Root sqrt(x)</option>
+                            <option value="clamp">Clamp / Clip [min, max]</option>
+                          </select>
+                        </div>
+
+                        {['add', 'subtract', 'multiply', 'divide', 'power'].includes(
+                          tr.math_op || 'multiply'
+                        ) && (
+                          <div>
+                            <span className="text-[10px] text-slate-400">Operand</span>
+                            <input
+                              type="number"
+                              step={0.1}
+                              value={tr.operand ?? 1.0}
+                              onChange={(e) => {
+                                const nextT = [...(cfg.transforms || [])];
+                                nextT[tIdx] = { ...tr, operand: Number(e.target.value) };
+                                upsertGrid(gridId, { ...cfg, transforms: nextT });
+                              }}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {tr.math_op === 'clamp' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <span className="text-[10px] text-slate-400">Min Threshold</span>
+                            <input
+                              type="number"
+                              value={tr.min_val ?? -5000}
+                              onChange={(e) => {
+                                const nextT = [...(cfg.transforms || [])];
+                                nextT[tIdx] = { ...tr, min_val: Number(e.target.value) };
+                                upsertGrid(gridId, { ...cfg, transforms: nextT });
+                              }}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400">Max Threshold</span>
+                            <input
+                              type="number"
+                              value={tr.max_val ?? 5000}
+                              onChange={(e) => {
+                                const nextT = [...(cfg.transforms || [])];
+                                nextT[tIdx] = { ...tr, max_val: Number(e.target.value) };
+                                upsertGrid(gridId, { ...cfg, transforms: nextT });
+                              }}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tr.type === 'scale_offset' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-400">Scale Factor</span>
+                        <input
+                          type="number"
+                          step={0.1}
+                          value={tr.scale ?? 1.0}
+                          onChange={(e) => {
+                            const nextT = [...(cfg.transforms || [])];
+                            nextT[tIdx] = { ...tr, scale: Number(e.target.value) };
+                            upsertGrid(gridId, { ...cfg, transforms: nextT });
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400">Offset</span>
+                        <input
+                          type="number"
+                          step={1.0}
+                          value={tr.offset ?? 0.0}
+                          onChange={(e) => {
+                            const nextT = [...(cfg.transforms || [])];
+                            nextT[tIdx] = { ...tr, offset: Number(e.target.value) };
+                            upsertGrid(gridId, { ...cfg, transforms: nextT });
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-slate-100 text-xs font-mono"
                         />
                       </div>
                     </div>

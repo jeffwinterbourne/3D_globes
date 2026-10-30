@@ -34,7 +34,15 @@ export interface GeometryConfig {
 }
 
 export interface GridTransform {
-  type: 'downsample' | 'airy_moho' | 'weighted_composite' | 'reconstruct' | 'scale_offset';
+  type:
+    | 'downsample'
+    | 'airy_moho'
+    | 'weighted_composite'
+    | 'reconstruct'
+    | 'scale_offset'
+    | 'smooth'
+    | 'fill'
+    | 'math';
   step_lat?: number;
   step_lon?: number;
   // Airy Isostasy Moho parameters
@@ -51,6 +59,28 @@ export interface GridTransform {
   plate_model?: string;
   // Scale & Offset
   scale?: number;
+  // Gaussian smoothing (safe on sphere)
+  width_deg?: number;
+  // Fill NaNs
+  fill_mode?: 'constant' | 'mean' | 'min' | 'max' | 'nearest';
+  fill_value?: number;
+  // Chainable Math
+  math_op?:
+    | 'add'
+    | 'subtract'
+    | 'multiply'
+    | 'divide'
+    | 'power'
+    | 'log'
+    | 'log10'
+    | 'exp'
+    | 'abs'
+    | 'negate'
+    | 'sqrt'
+    | 'clamp';
+  operand?: number;
+  min_val?: number;
+  max_val?: number;
 }
 
 export interface GridSourceConfig {

@@ -295,6 +295,13 @@ export function toBackendGlobeProjectPayload(project: GlobeProject): any {
         plate_model: tr.plate_model || 'Scotese_PALEOMAP',
         scale: tr.scale ?? 1.0,
         offset: tr.offset ?? 0.0,
+        width_deg: tr.width_deg ?? 2.0,
+        fill_mode: tr.fill_mode ?? 'constant',
+        fill_value: tr.fill_value ?? 0.0,
+        math_op: tr.math_op ?? 'multiply',
+        operand: tr.operand ?? 1.0,
+        min_val: tr.min_val ?? null,
+        max_val: tr.max_val ?? null,
       })),
     };
   });

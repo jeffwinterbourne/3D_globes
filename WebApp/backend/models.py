@@ -152,6 +152,19 @@ class GridOpModel(StudioBaseModel):
     scale: float = 1.0
     offset: float = 0.0
 
+    # Spherical Gaussian smoothing
+    width_deg: float = 2.0
+
+    # Fill NaNs
+    fill_mode: str = "constant"  # "constant", "mean", "min", "max", "nearest"
+    fill_value: float = 0.0
+
+    # Chainable Math
+    math_op: str = "multiply"  # "add", "subtract", "multiply", "divide", "power", "log", "log10", "exp", "abs", "negate", "sqrt", "clamp"
+    operand: float = 1.0
+    min_val: Optional[float] = None
+    max_val: Optional[float] = None
+
 
 class GridSourceModel(StudioBaseModel):
     """Declarative specification for loading or computing a GeographicGrid."""

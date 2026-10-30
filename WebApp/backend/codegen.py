@@ -123,6 +123,18 @@ def generate_python_and_notebook(project: GlobeProject) -> Dict[str, str]:
                     lines.append(
                         f"grids[{gid!r}] = GeographicGrid(grids[{gid!r}].lats, grids[{gid!r}].lons, grids[{gid!r}].grid * {op.scale} + {op.offset})"
                     )
+                elif op.op == "smooth":
+                    lines.append(
+                        f"grids[{gid!r}] = GeographicGrid(grids[{gid!r}].lats, grids[{gid!r}].lons, smooth_sphere_gaussian(grids[{gid!r}].grid, grids[{gid!r}].lats, grids[{gid!r}].lons, width_deg={op.width_deg}))"
+                    )
+                elif op.op == "fill":
+                    lines.append(
+                        f"grids[{gid!r}] = GeographicGrid(grids[{gid!r}].lats, grids[{gid!r}].lons, fill_grid_nans(grids[{gid!r}].grid, mode={op.fill_mode!r}, value={op.fill_value}))"
+                    )
+                elif op.op == "math":
+                    lines.append(
+                        f"grids[{gid!r}] = GeographicGrid(grids[{gid!r}].lats, grids[{gid!r}].lons, apply_grid_math(grids[{gid!r}].grid, math_op={op.math_op!r}, operand={op.operand}, min_val={op.min_val}, max_val={op.max_val}))"
+                    )
         lines.append("")
 
         lines.append("# 3. Apply Outer & Inner Displacements")

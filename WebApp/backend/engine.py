@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image
+from scipy.ndimage import distance_transform_edt, gaussian_filter1d
 
 from globe3d import (
     ConstantColourer,
@@ -222,6 +223,130 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
     return GeographicGrid(grid.lats.copy(), grid.lons.copy(), grid.grid.copy()), tex_path, meta
 
 
+def smooth_sphere_gaussian(
+    grid_2d: np.ndarray,
+    lats: np.ndarray,
+    lons: np.ndarray,
+    width_deg: float = 2.0,
+) -> np.ndarray:
+    """Applies Gaussian smoothing with a physical spherical width in degrees.
+
+    Safe on a sphere:
+    1. Longitudes use periodic boundary wrapping (mode='wrap') to avoid an anti-meridian seam.
+    2. Longitudinal kernel size scales inversely by cos(latitude) to account for meridian convergence.
+    3. Latitudes use 1D Gaussian filtering with nearest boundary capping.
+    """
+    if len(lats) < 2 or len(lons) < 2 or width_deg <= 0.0:
+        return grid_2d.copy()
+
+    d_lat = abs(float(lats[1] - lats[0]))
+    d_lon = abs(float(lons[1] - lons[0]))
+    sigma_lat_px = float(width_deg) / max(d_lat, 1e-6)
+
+    out = grid_2d.astype(np.float64, copy=True)
+    if not np.isfinite(out).all():
+        nan_mask = ~np.isfinite(out)
+        mean_val = float(np.nanmean(out)) if not np.isnan(np.nanmean(out)) else 0.0
+        out[nan_mask] = mean_val
+
+    lat_rad = np.radians(lats)
+    cos_lat = np.cos(lat_rad)
+    cos_clamped = np.clip(np.abs(cos_lat), np.cos(np.radians(89.5)), 1.0)
+
+    n_lons = grid_2d.shape[1]
+    for i, cos_val in enumerate(cos_clamped):
+        sigma_lon_px = float(width_deg) / (cos_val * d_lon)
+        if sigma_lon_px >= n_lons * 0.4:
+            out[i, :] = np.mean(out[i, :])
+        else:
+            out[i, :] = gaussian_filter1d(out[i, :], sigma=sigma_lon_px, mode="wrap")
+
+    out = gaussian_filter1d(out, sigma=sigma_lat_px, axis=0, mode="nearest")
+    return out
+
+
+def fill_grid_nans(
+    grid_2d: np.ndarray,
+    mode: str = "constant",
+    value: float = 0.0,
+) -> np.ndarray:
+    """Fills NaN and infinite values in a 2D geographic grid array."""
+    nan_mask = ~np.isfinite(grid_2d)
+    if not np.any(nan_mask):
+        return grid_2d.copy()
+
+    out = grid_2d.astype(np.float64, copy=True)
+    m = (mode or "constant").lower()
+
+    if m == "constant":
+        out[nan_mask] = float(value)
+    elif m == "mean":
+        val = np.nanmean(grid_2d)
+        out[nan_mask] = float(val) if np.isfinite(val) else float(value)
+    elif m == "min":
+        val = np.nanmin(grid_2d)
+        out[nan_mask] = float(val) if np.isfinite(val) else float(value)
+    elif m == "max":
+        val = np.nanmax(grid_2d)
+        out[nan_mask] = float(val) if np.isfinite(val) else float(value)
+    elif m == "nearest":
+        if np.all(nan_mask):
+            out.fill(float(value))
+        else:
+            indices = distance_transform_edt(nan_mask, return_distances=False, return_indices=True)
+            out = grid_2d[tuple(indices)]
+    else:
+        out[nan_mask] = float(value)
+
+    return out
+
+
+def apply_grid_math(
+    grid_2d: np.ndarray,
+    math_op: str = "multiply",
+    operand: float = 1.0,
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+) -> np.ndarray:
+    """Applies a chainable scalar math or element-wise operation to a 2D grid array."""
+    op = (math_op or "multiply").lower()
+    val = float(operand)
+    arr = grid_2d.astype(np.float64, copy=True)
+
+    if op in ("add", "+"):
+        return arr + val
+    elif op in ("subtract", "sub", "-"):
+        return arr - val
+    elif op in ("multiply", "mul", "*"):
+        return arr * val
+    elif op in ("divide", "div", "/"):
+        denom = val if abs(val) > 1e-12 else (1e-12 if val >= 0 else -1e-12)
+        return arr / denom
+    elif op in ("power", "pow", "**", "exponentiation"):
+        if val.is_integer() and val >= 0:
+            return np.power(arr, int(val))
+        else:
+            return np.sign(arr) * np.power(np.abs(arr), val)
+    elif op in ("log", "ln"):
+        return np.log(np.maximum(arr, 1e-12))
+    elif op in ("log10",):
+        return np.log10(np.maximum(arr, 1e-12))
+    elif op in ("exp",):
+        return np.exp(np.clip(arr, -80.0, 80.0))
+    elif op in ("abs",):
+        return np.abs(arr)
+    elif op in ("negate", "neg", "-x"):
+        return -arr
+    elif op in ("sqrt",):
+        return np.sqrt(np.maximum(arr, 0.0))
+    elif op in ("clamp", "clip"):
+        lo = float(min_val if min_val is not None else -1e9)
+        hi = float(max_val if max_val is not None else 1e9)
+        return np.clip(arr, lo, hi)
+    else:
+        return arr * val
+
+
 def resolve_project_grids(project: GlobeProject) -> Tuple[Dict[str, GeographicGrid], Dict[str, Optional[str]]]:
     """Resolves and executes all declarative grid pipelines in a GlobeProject.
 
@@ -289,6 +414,28 @@ def resolve_project_grids(project: GlobeProject) -> Tuple[Dict[str, GeographicGr
                     grid = reconstruct_grid(grid, plate_model=pm, age_ma=float(op.age))
                 except Exception:
                     pass
+            elif op.op == "smooth":
+                w_deg = float(getattr(op, "width_deg", 2.0))
+                smoothed = smooth_sphere_gaussian(grid.grid, grid.lats, grid.lons, width_deg=w_deg)
+                grid = GeographicGrid(grid.lats, grid.lons, smoothed)
+            elif op.op == "fill":
+                f_mode = str(getattr(op, "fill_mode", "constant"))
+                f_val = float(getattr(op, "fill_value", 0.0))
+                filled = fill_grid_nans(grid.grid, mode=f_mode, value=f_val)
+                grid = GeographicGrid(grid.lats, grid.lons, filled)
+            elif op.op == "math":
+                m_op = str(getattr(op, "math_op", "multiply"))
+                opnd = float(getattr(op, "operand", 1.0))
+                m_min = getattr(op, "min_val", None)
+                m_max = getattr(op, "max_val", None)
+                res_grid = apply_grid_math(
+                    grid.grid,
+                    math_op=m_op,
+                    operand=opnd,
+                    min_val=m_min,
+                    max_val=m_max,
+                )
+                grid = GeographicGrid(grid.lats, grid.lons, res_grid)
 
         grids_by_id[g_cfg.id] = grid
         textures_by_id[g_cfg.id] = tex_path

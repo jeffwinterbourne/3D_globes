@@ -347,12 +347,50 @@
               "properties": {
                 "op": {
                   "type": "string",
-                  "enum": ["downsample", "airy_moho", "composite", "reconstruct", "scale_offset"]
+                  "enum": ["downsample", "airy_moho", "composite", "reconstruct", "scale_offset", "smooth", "fill", "math"]
                 },
                 "factor": {
                   "type": "integer",
                   "minimum": 1,
                   "description": "Downsample stride factor."
+                },
+                "width_deg": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "default": 2.0,
+                  "description": "Gaussian smoothing standard deviation width in degrees, safe on a sphere."
+                },
+                "fill_mode": {
+                  "type": "string",
+                  "enum": ["constant", "mean", "min", "max", "nearest"],
+                  "default": "constant",
+                  "description": "Strategy for replacing NaN / infinite grid cells."
+                },
+                "fill_value": {
+                  "type": "number",
+                  "default": 0.0,
+                  "description": "Replacement value for NaN grid cells when fill_mode is 'constant'."
+                },
+                "math_op": {
+                  "type": "string",
+                  "enum": ["add", "subtract", "multiply", "divide", "power", "log", "log10", "exp", "abs", "negate", "sqrt", "clamp"],
+                  "default": "multiply",
+                  "description": "Chainable mathematical operation applied to the grid."
+                },
+                "operand": {
+                  "type": "number",
+                  "default": 1.0,
+                  "description": "Scalar operand for math operation."
+                },
+                "min_val": {
+                  "type": ["number", "null"],
+                  "default": null,
+                  "description": "Minimum clamp threshold."
+                },
+                "max_val": {
+                  "type": ["number", "null"],
+                  "default": null,
+                  "description": "Maximum clamp threshold."
                 },
                 "t0_km": {
                   "type": "number",
