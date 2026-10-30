@@ -7,12 +7,14 @@ import {
   Download,
   Globe2,
   HardDrive,
+  Home,
   Layers,
   Magnet,
   Palette,
   PanelRightClose,
   PanelRightOpen,
   Redo2,
+  Save,
   Sparkles,
   Undo2,
 } from 'lucide-react';
@@ -37,6 +39,9 @@ import {
 } from './components/panels/DatasetCacheManager';
 import { ExportPanel } from './components/panels/ExportPanel';
 import { JsonCodeEditorPanel } from './components/panels/JsonCodeEditorPanel';
+import { LandingPage } from './components/landing/LandingPage';
+import { NewProjectWizardModal } from './components/wizard/NewProjectWizardModal';
+import { WorkspaceDataManagerModal } from './components/datasets/WorkspaceDataManagerModal';
 
 const NAV_TABS: { id: ActiveTab; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'paleo', label: 'Paleo', icon: Globe2 },
@@ -62,6 +67,10 @@ export const App: React.FC = () => {
     setPresetModalOpen,
     setFilamentModalOpen,
     setDatasetModalOpen,
+    currentView,
+    setCurrentView,
+    saveCurrentProjectToWorkspace,
+    setWorkspaceDataModalOpen,
     undo,
     redo,
     past,
@@ -74,28 +83,42 @@ export const App: React.FC = () => {
     fetchGridDataFromBackend();
   }, []);
 
+  if (currentView === 'landing') {
+    return (
+      <>
+        <LandingPage />
+        <NewProjectWizardModal />
+        <WorkspaceDataManagerModal />
+        <PresetBrowserModal />
+        <FilamentMixerModal />
+        <DatasetCacheManagerModal />
+      </>
+    );
+  }
+
   return (
     <div className="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
       {/* Top Studio Header Bar */}
       <header className="h-13 px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0 z-20">
         {/* Left: Brand & Editable Project Title */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-emerald-500 flex items-center justify-center shadow">
-              <Globe2 className="w-5 h-5 text-slate-950" />
-            </div>
-            <div>
-              <div className="text-xs font-extrabold tracking-wide text-white flex items-center gap-1.5">
-                <span>GLOBE3D STUDIO</span>
-                <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 text-[10px] font-mono">
-                  v4.0
-                </span>
-              </div>
-              <div className="text-[10px] text-slate-400">
-                Scientific 3D Printable Geophysical & Paleo CAD
-              </div>
-            </div>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCurrentView('landing')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
+            title="Return to Landing Page & Projects Manager"
+          >
+            <Home className="w-3.5 h-3.5 text-sky-400" />
+            <span>Projects</span>
+          </button>
+
+          <button
+            onClick={() => saveCurrentProjectToWorkspace()}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 text-xs font-semibold transition shadow"
+            title="Save changes to workspace folder"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save</span>
+          </button>
 
           <div className="h-6 w-px bg-slate-800 mx-1" />
 
@@ -108,7 +131,7 @@ export const App: React.FC = () => {
                 return d;
               }, false)
             }
-            className="bg-slate-950/90 border border-slate-700/80 hover:border-slate-600 focus:border-sky-500 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-100 w-64 focus:outline-none"
+            className="bg-slate-950/90 border border-slate-700/80 hover:border-slate-600 focus:border-sky-500 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-100 w-56 focus:outline-none"
           />
 
           <button
@@ -164,6 +187,14 @@ export const App: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setWorkspaceDataModalOpen(true)}
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/30 text-xs font-semibold transition"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Data Manager</span>
+          </button>
+
+          <button
             onClick={() => setFilamentModalOpen(true)}
             className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 text-xs font-medium"
           >
@@ -175,8 +206,8 @@ export const App: React.FC = () => {
             onClick={() => setDatasetModalOpen(true)}
             className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-xs font-medium"
           >
-            <Database className="w-3.5 h-3.5" />
-            <span>Datasets</span>
+            <HardDrive className="w-3.5 h-3.5" />
+            <span>Cache</span>
           </button>
 
           <button
@@ -253,6 +284,8 @@ export const App: React.FC = () => {
       </div>
 
       {/* Studio Modals */}
+      <NewProjectWizardModal />
+      <WorkspaceDataManagerModal />
       <PresetBrowserModal />
       <FilamentMixerModal />
       <DatasetCacheManagerModal />

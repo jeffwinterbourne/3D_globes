@@ -255,6 +255,7 @@ export const PresetBrowserModal: React.FC = () => {
     setPresetModalOpen,
     project,
     setProject,
+    setCurrentView,
     setStatusMessage,
     fetchGridDataFromBackend,
   } = useProjectStore();
@@ -327,6 +328,7 @@ export const PresetBrowserModal: React.FC = () => {
         setProject(loaded);
         setStatusMessage(`Loaded preset: ${loaded.name || meta.name}`);
         setPresetModalOpen(false);
+        setCurrentView('editor');
         setTimeout(() => fetchGridDataFromBackend(), 50);
         return;
       }
@@ -340,6 +342,7 @@ export const PresetBrowserModal: React.FC = () => {
     setProject(fallback);
     setStatusMessage(`Loaded preset: ${meta.name}`);
     setPresetModalOpen(false);
+    setCurrentView('editor');
   };
 
   const handleUploadJson = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -453,6 +456,17 @@ export const PresetBrowserModal: React.FC = () => {
                 }`}
               >
                 <div>
+                  <div className="w-full h-24 rounded-lg bg-slate-950/80 border border-slate-700/60 overflow-hidden mb-2.5 flex items-center justify-center">
+                    <img
+                      src={`/api/presets/${encodeURIComponent(item.id)}/thumbnail`}
+                      alt={item.name}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <span className="px-2 py-0.5 rounded bg-slate-900 text-[10px] font-semibold text-sky-400 border border-slate-700">
                       {catLabel}

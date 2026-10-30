@@ -39,6 +39,24 @@ from .models import (
     MagnetTestPieceRequest,
     ReconstructPointsRequest,
     RevealFileRequest,
+    WorkspaceConfigUpdateRequest,
+    WorkspaceDatasetDuplicateRequest,
+    WorkspaceDatasetRegisterRequest,
+    WorkspaceProjectDuplicateRequest,
+    WorkspaceProjectOpenRequest,
+    WorkspaceProjectSaveRequest,
+)
+from .workspace_service import (
+    duplicate_workspace_dataset,
+    duplicate_workspace_project,
+    generate_dataset_thumbnail,
+    get_stored_config,
+    list_workspace_datasets,
+    list_workspace_projects,
+    open_workspace_project,
+    register_or_update_dataset,
+    save_stored_config,
+    save_workspace_project,
 )
 from .preview_service import (
     evaluate_preview_mesh,
@@ -149,6 +167,134 @@ def validate_preset(project: GlobeProject) -> Dict[str, Any]:
     """Validates and normalizes a GlobeProject JSON payload."""
     dumped = project.model_dump() if hasattr(project, "model_dump") else project.dict()
     return {"valid": True, "project": dumped}
+
+
+@app.get("/api/presets/{preset_id:path}/thumbnail")
+def get_preset_thumbnail(preset_id: str):
+    """Returns pre-rendered thumbnail image for a preset."""
+    clean_id = os.path.splitext(os.path.basename(preset_id))[0]
+    thumb_path = os.path.join(PRESETS_DIR, "thumbnails", f"{clean_id}.png")
+    if not os.path.exists(thumb_path):
+        try:
+            from .scripts.generate_gallery_thumbnails import generate_all_preset_thumbnails
+            generate_all_preset_thumbnails()
+        except Exception:
+            pass
+
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/png")
+    
+    # Fallback to example_1
+    fallback = os.path.join(PRESETS_DIR, "thumbnails", "example_1_procedural_globe.png")
+    if os.path.exists(fallback):
+        return FileResponse(fallback, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+
+# ---------------------------------------------------------------------------
+# Workspace & Project Management Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/workspace/config")
+def workspace_config() -> Dict[str, Any]:
+    """Gets active workspace working directory and basic counts."""
+    cfg = get_stored_config()
+    projects = list_workspace_projects(cfg["working_dir"])
+    datasets_list = list_workspace_datasets(cfg["working_dir"])
+    return {
+        "working_dir": cfg["working_dir"],
+        "projects_count": len(projects),
+        "datasets_count": len(datasets_list),
+    }
+
+
+@app.post("/api/workspace/config")
+def workspace_set_config(req: WorkspaceConfigUpdateRequest) -> Dict[str, Any]:
+    """Sets active workspace working directory."""
+    if not req.working_dir or not os.path.isabs(req.working_dir):
+        raise HTTPException(status_code=400, detail="working_dir must be an absolute filesystem path.")
+    cfg = save_stored_config(req.working_dir)
+    return {
+        "status": "ok",
+        "working_dir": cfg["working_dir"],
+    }
+
+
+@app.get("/api/workspace/projects")
+def workspace_list_projects(working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Lists saved projects inside the workspace projects/ directory."""
+    projects = list_workspace_projects(working_dir)
+    return {"projects": projects}
+
+
+@app.post("/api/workspace/projects/save")
+def workspace_save_project(req: WorkspaceProjectSaveRequest, working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Saves a project to the workspace."""
+    try:
+        return save_workspace_project(working_dir, req.project, slug=req.slug)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workspace/projects/open")
+def workspace_open_project(req: WorkspaceProjectOpenRequest, working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Loads a project from the workspace."""
+    try:
+        data = open_workspace_project(working_dir, req.slug_or_path)
+        return {"project": data}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/workspace/projects/duplicate")
+def workspace_duplicate_project(req: WorkspaceProjectDuplicateRequest, working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Duplicates a workspace project (Open as Copy)."""
+    try:
+        return duplicate_workspace_project(working_dir, req.slug, req.new_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/workspace/datasets")
+def workspace_list_datasets(working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Lists workspace datasets with virtual duplicate profiles."""
+    datasets_list = list_workspace_datasets(working_dir)
+    return {"datasets": datasets_list}
+
+
+@app.post("/api/workspace/datasets/register")
+def workspace_register_dataset(req: WorkspaceDatasetRegisterRequest, working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Updates metadata/default ops for a dataset profile in dataset_registry.json."""
+    try:
+        entry = register_or_update_dataset(working_dir, req.entry)
+        return {"status": "ok", "dataset": entry}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workspace/datasets/duplicate")
+def workspace_duplicate_dataset(req: WorkspaceDatasetDuplicateRequest, working_dir: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Zero-copy dataset duplication: registers new virtual profile referencing same file."""
+    try:
+        new_entry = duplicate_workspace_dataset(
+            working_dir,
+            source_id=req.source_id,
+            new_id=req.new_id,
+            new_name=req.new_name,
+            default_ops=req.default_ops,
+        )
+        return {"status": "ok", "dataset": new_entry}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/workspace/datasets/{dataset_id}/thumbnail")
+def workspace_dataset_thumbnail(dataset_id: str, working_dir: Optional[str] = Query(default=None)):
+    """Generates and serves a small 2D PNG thumbnail for a workspace dataset."""
+    thumb_path = generate_dataset_thumbnail(working_dir, dataset_id)
+    if thumb_path and os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Thumbnail could not be generated.")
 
 
 @app.get("/api/paleo/catalog")

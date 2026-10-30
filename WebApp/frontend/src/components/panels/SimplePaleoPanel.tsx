@@ -67,7 +67,7 @@ export const SimplePaleoPanel: React.FC = () => {
       .then((data) => {
         if (data && Array.isArray(data.maps) && data.maps.length > 0) {
           const mapped: ScoteseSlice[] = data.maps.map((m: any) => {
-            const age = Number(m.age ?? 0);
+            const age = Number(m.age_ma ?? m.age ?? 0);
             const era =
               age <= 66 ? 'Cenozoic' : age <= 252 ? 'Mesozoic' : 'Paleozoic';
             return {
@@ -202,8 +202,8 @@ export const SimplePaleoPanel: React.FC = () => {
             onChange={(e) => updatePaleo({ age: Number(e.target.value) })}
             className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
           >
-            {catalogSlices.map((s) => (
-              <option key={s.age} value={s.age}>
+            {catalogSlices.map((s, idx) => (
+              <option key={`${s.age}_${s.name}_${idx}`} value={s.age}>
                 {s.age} Ma — {s.name} [{s.era}]
               </option>
             ))}

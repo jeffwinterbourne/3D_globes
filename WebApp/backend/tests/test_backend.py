@@ -410,6 +410,98 @@ def test_declarative_grid_smooth_fill_and_chainable_math():
     assert float(res_grid.grid.max()) <= 2000.0
 
 
+def test_scotese_metadata_age_field():
+    """Verifies Scotese maps have both 'age_ma' and 'age' populated for frontend dropdown."""
+    from globe3d import datasets
+    maps = datasets.paleo.list_scotese_maps()
+    assert len(maps) >= 88
+    for m in maps:
+        assert "age_ma" in m
+        assert "age" in m
+        assert m["age"] == m["age_ma"]
+    # Check that ages span beyond 0 Ma (e.g. up to 540 Ma)
+    ages = [m["age"] for m in maps]
+    assert max(ages) >= 500
+    assert min(ages) == 0.0
+
+
+def test_workspace_service_and_dataset_virtual_duplication(tmp_path):
+    """Verifies workspace project CRUD, dataset management, and zero-copy virtual duplication."""
+    from WebApp.backend.workspace_service import (
+        ensure_workspace_structure,
+        save_workspace_project,
+        list_workspace_projects,
+        open_workspace_project,
+        duplicate_workspace_project,
+        list_workspace_datasets,
+        register_or_update_dataset,
+        duplicate_workspace_dataset,
+    )
+
+    work_dir = str(tmp_path / "test_workspace")
+    ensure_workspace_structure(work_dir)
+
+    # 1. Test Project Save & List
+    dummy_proj = {
+        "id": "my_mars_globe",
+        "name": "My Mars Globe",
+        "category": "user",
+        "mode": "custom",
+        "geometry": {"radius": 45.0, "hollow": True},
+    }
+    saved = save_workspace_project(work_dir, dummy_proj)
+    assert saved["status"] == "ok"
+    assert saved["slug"] == "my_mars_globe"
+
+    projects = list_workspace_projects(work_dir)
+    assert len(projects) == 1
+    assert projects[0]["slug"] == "my_mars_globe"
+    assert projects[0]["name"] == "My Mars Globe"
+
+    # 2. Test Project Open & Duplicate
+    opened = open_workspace_project(work_dir, "my_mars_globe")
+    assert opened["id"] == "my_mars_globe"
+    assert opened["geometry"]["radius"] == 45.0
+
+    dup = duplicate_workspace_project(work_dir, "my_mars_globe")
+    assert dup["status"] == "ok"
+    projects_after_dup = list_workspace_projects(work_dir)
+    assert len(projects_after_dup) == 2
+
+    # 3. Test Dataset physical file auto-discovery
+    ds_dir = os.path.join(work_dir, "datasets")
+    test_grid_path = os.path.join(ds_dir, "custom_elevation.nc")
+    with open(test_grid_path, "w") as f:
+        f.write("mock_netcdf_bytes")
+
+    datasets = list_workspace_datasets(work_dir)
+    assert len(datasets) == 1
+    ds_entry = datasets[0]
+    assert ds_entry["physical_filename"] == "custom_elevation.nc"
+    assert ds_entry["file_type"] == "grid"
+    assert ds_entry["is_virtual"] is False
+
+    # 4. Test Zero-Copy Virtual Dataset Duplication
+    virtual_dup = duplicate_workspace_dataset(
+        work_dir,
+        source_id=ds_entry["id"],
+        new_name="Custom Elevation (Gaussian Smoothed)",
+        default_ops=[{"op": "smooth", "width_deg": 2.0}],
+    )
+    assert virtual_dup["is_virtual"] is True
+    assert virtual_dup["physical_filename"] == "custom_elevation.nc"
+    assert len(virtual_dup["default_ops"]) == 1
+    assert virtual_dup["default_ops"][0]["op"] == "smooth"
+
+    all_ds = list_workspace_datasets(work_dir)
+    assert len(all_ds) == 2
+    # Verify no second file was created on disk!
+    files_on_disk = os.listdir(ds_dir)
+    assert len(files_on_disk) == 1
+    assert files_on_disk[0] == "custom_elevation.nc"
+
+
+
 
 
 

@@ -379,3 +379,44 @@ class RevealFileRequest(BaseModel):
     """Request payload for revealing a file in Windows File Explorer."""
 
     path: str
+
+
+class WorkspaceConfigUpdateRequest(BaseModel):
+    """Request payload for updating active working directory."""
+
+    working_dir: str
+
+
+class WorkspaceProjectSaveRequest(BaseModel):
+    """Request payload for saving a project into the workspace."""
+
+    project: Dict[str, Any]
+    slug: Optional[str] = None
+
+
+class WorkspaceProjectOpenRequest(BaseModel):
+    """Request payload for opening a project from workspace."""
+
+    slug_or_path: str
+
+
+class WorkspaceProjectDuplicateRequest(BaseModel):
+    """Request payload for duplicating a workspace project."""
+
+    slug: str
+    new_name: Optional[str] = None
+
+
+class WorkspaceDatasetRegisterRequest(BaseModel):
+    """Request payload for registering or updating a dataset profile."""
+
+    entry: Dict[str, Any]
+
+
+class WorkspaceDatasetDuplicateRequest(BaseModel):
+    """Request payload for zero-copy duplication of a dataset profile."""
+
+    source_id: str
+    new_id: Optional[str] = None
+    new_name: Optional[str] = None
+    default_ops: Optional[List[Dict[str, Any]]] = None

@@ -842,6 +842,7 @@ class PaleoNamespace:
                 reader = csv.DictReader(f)
                 for r in reader:
                     r["age_ma"] = float(r["age_ma"])
+                    r["age"] = r["age_ma"]
                     r["map_id"] = int(r["map_id"])
                     records.append(r)
         self._maps = records

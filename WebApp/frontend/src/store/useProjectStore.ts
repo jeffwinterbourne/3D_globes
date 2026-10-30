@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   ActiveTab,
+  BLANK_GLOBE_PROJECT,
   BuilderMode,
   ColourerConfig,
   DEFAULT_STARTER_PROJECT,
@@ -12,7 +13,10 @@ import {
   GridSourceConfig,
   MagnetSettingsConfig,
   PaleoConfig,
+  ProjectSummary,
   ViewMode,
+  WorkspaceConfig,
+  WorkspaceDatasetEntry,
 } from '../types/globeProject';
 import {
   decodeBase64ToFloat32,
@@ -293,7 +297,30 @@ interface ProjectStoreState {
   meshData: EvaluatedMeshResult;
   magnetAnalysis: MagnetOptimizationResult;
 
+  // Workspace & Navigation
+  currentView: 'landing' | 'editor';
+  isWizardOpen: boolean;
+  isWorkspaceDataModalOpen: boolean;
+  workingDir: string;
+  projectsList: ProjectSummary[];
+  workspaceDatasets: WorkspaceDatasetEntry[];
+  currentProjectSlug: string | null;
+
   // Actions
+  setCurrentView: (view: 'landing' | 'editor') => void;
+  setWizardOpen: (open: boolean) => void;
+  setWorkspaceDataModalOpen: (open: boolean) => void;
+  fetchWorkspaceConfig: () => Promise<void>;
+  setWorkingDir: (dir: string) => Promise<void>;
+  fetchWorkspaceProjects: () => Promise<void>;
+  openWorkspaceProject: (slug: string) => Promise<void>;
+  openWorkspaceProjectAsCopy: (slug: string) => Promise<void>;
+  saveCurrentProjectToWorkspace: (slug?: string) => Promise<void>;
+  loadBlankProject: () => void;
+  fetchWorkspaceDatasets: () => Promise<void>;
+  registerWorkspaceDataset: (entry: Partial<WorkspaceDatasetEntry>) => Promise<void>;
+  duplicateWorkspaceDataset: (sourceId: string, newName?: string, defaultOps?: any[]) => Promise<void>;
+
   setActiveTab: (tab: ActiveTab) => void;
   setViewMode: (mode: ViewMode) => void;
   setWireframe: (v: boolean) => void;
@@ -356,9 +383,183 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   isPresetModalOpen: false,
   isFilamentModalOpen: false,
   isDatasetModalOpen: false,
+  isWizardOpen: false,
+  isWorkspaceDataModalOpen: false,
   isEvaluatingPython: false,
   statusMessage: 'Ready — 60fps WebGL Preview Active',
   jsonError: null,
+
+  currentView: 'landing',
+  workingDir: '',
+  projectsList: [],
+  workspaceDatasets: [],
+  currentProjectSlug: null,
+
+  setCurrentView: (view) => set({ currentView: view }),
+  setWizardOpen: (open) => set({ isWizardOpen: open }),
+  setWorkspaceDataModalOpen: (open) => set({ isWorkspaceDataModalOpen: open }),
+
+  fetchWorkspaceConfig: async () => {
+    try {
+      const res = await fetch('/api/workspace/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.working_dir) {
+        set({ workingDir: data.working_dir });
+      }
+    } catch {}
+  },
+
+  setWorkingDir: async (dir: string) => {
+    try {
+      const res = await fetch('/api/workspace/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ working_dir: dir }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        set({ workingDir: data.working_dir });
+        get().fetchWorkspaceProjects();
+        get().fetchWorkspaceDatasets();
+      }
+    } catch {}
+  },
+
+  fetchWorkspaceProjects: async () => {
+    try {
+      const res = await fetch('/api/workspace/projects');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.projects)) {
+        set({ projectsList: data.projects });
+      }
+    } catch {}
+  },
+
+  openWorkspaceProject: async (slug: string) => {
+    try {
+      set({ statusMessage: `Opening project ${slug}...` });
+      const res = await fetch('/api/workspace/projects/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug_or_path: slug }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data && data.project) {
+        const normalized = normalizeIncomingProject(data.project);
+        set({
+          project: normalized,
+          past: [],
+          future: [],
+          currentProjectSlug: slug,
+          currentView: 'editor',
+          statusMessage: `Opened ${normalized.name || slug}`,
+        });
+        get().fetchGridDataFromBackend();
+      }
+    } catch (err: any) {
+      set({ statusMessage: `Failed to open project: ${err.message}` });
+    }
+  },
+
+  openWorkspaceProjectAsCopy: async (slug: string) => {
+    try {
+      set({ statusMessage: `Duplicating project ${slug}...` });
+      const res = await fetch('/api/workspace/projects/duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data && data.slug) {
+        await get().fetchWorkspaceProjects();
+        await get().openWorkspaceProject(data.slug);
+      }
+    } catch (err: any) {
+      set({ statusMessage: `Failed to duplicate project: ${err.message}` });
+    }
+  },
+
+  saveCurrentProjectToWorkspace: async (slug?: string) => {
+    const { project, currentProjectSlug } = get();
+    const targetSlug = slug || currentProjectSlug || undefined;
+    try {
+      set({ statusMessage: 'Saving project to workspace...' });
+      const res = await fetch('/api/workspace/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project: toBackendGlobeProjectPayload(project), slug: targetSlug }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data && data.slug) {
+        set({
+          currentProjectSlug: data.slug,
+          statusMessage: `Project saved successfully (${data.slug})`,
+        });
+        get().fetchWorkspaceProjects();
+      }
+    } catch (err: any) {
+      set({ statusMessage: `Save failed: ${err.message}` });
+    }
+  },
+
+  loadBlankProject: () => {
+    const fresh = JSON.parse(JSON.stringify(BLANK_GLOBE_PROJECT));
+    set({
+      project: fresh,
+      past: [],
+      future: [],
+      currentProjectSlug: null,
+      currentView: 'editor',
+      statusMessage: 'Loaded blank hollow globe project',
+    });
+    get().recomputeFastPreview();
+  },
+
+  fetchWorkspaceDatasets: async () => {
+    try {
+      const res = await fetch('/api/workspace/datasets');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.datasets)) {
+        set({ workspaceDatasets: data.datasets });
+      }
+    } catch {}
+  },
+
+  registerWorkspaceDataset: async (entry: Partial<WorkspaceDatasetEntry>) => {
+    try {
+      const res = await fetch('/api/workspace/datasets/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry }),
+      });
+      if (res.ok) {
+        get().fetchWorkspaceDatasets();
+      }
+    } catch {}
+  },
+
+  duplicateWorkspaceDataset: async (sourceId: string, newName?: string, defaultOps?: any[]) => {
+    try {
+      set({ statusMessage: 'Creating virtual dataset profile...' });
+      const res = await fetch('/api/workspace/datasets/duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId, new_name: newName, default_ops: defaultOps }),
+      });
+      if (res.ok) {
+        set({ statusMessage: 'Virtual dataset profile created (0-byte overhead)' });
+        get().fetchWorkspaceDatasets();
+      }
+    } catch (err: any) {
+      set({ statusMessage: `Failed to duplicate dataset: ${err.message}` });
+    }
+  },
 
   gridBuffers: {},
   maskBuffers: {},

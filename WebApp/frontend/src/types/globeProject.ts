@@ -502,3 +502,135 @@ export const DEFAULT_STARTER_PROJECT: GlobeProject = {
     color_tolerance: 8.0,
   },
 };
+
+export interface WorkspaceConfig {
+  working_dir: string;
+  projects_count: number;
+  datasets_count: number;
+}
+
+export interface ProjectSummary {
+  slug: string;
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  mode: 'custom' | 'paleo';
+  paleo_enabled: boolean;
+  paleo_age: number;
+  updated_at: number;
+  updated_at_iso: string;
+  path: string;
+  has_thumbnail: boolean;
+}
+
+export interface WorkspaceDatasetEntry {
+  id: string;
+  name: string;
+  physical_filename: string;
+  physical_path?: string;
+  file_type: 'grid' | 'vector' | 'raster';
+  file_ext: string;
+  size_bytes: number;
+  netcdf_vars?: {
+    lat?: string;
+    lon?: string;
+    data?: string;
+  } | null;
+  default_ops?: GridTransform[];
+  parent_dataset_id?: string | null;
+  is_virtual?: boolean;
+  exists?: boolean;
+  created_at?: number;
+}
+
+export const BLANK_GLOBE_PROJECT: GlobeProject = {
+  $schema: '../../schemas/globe_project.schema.json',
+  id: 'blank_globe',
+  name: 'New Blank Globe',
+  category: 'user',
+  description: 'Clean hollow base globe with no datasets or displacements applied.',
+  mode: 'custom',
+  paleo: {
+    enabled: false,
+    age: 0,
+    resolution: '1d',
+    plate_model: 'Scotese_PALEOMAP',
+    vert_exagg: 40,
+    coastline_step: 1000,
+    color_mode: 'palette',
+    colormap: 'terrain',
+    undo_shading: true,
+    palette_colors: null,
+    mark_poles: true,
+    tracked_locations: [],
+  },
+  geometry: {
+    method: 'fibonacci',
+    n_points: 500000,
+    preview_n_points: 60000,
+    radius: 40,
+    center: [0, 0, 0],
+    hollow: true,
+    inner_ratio: 0.5,
+    inner_n_points: null,
+    fix_intersection: {
+      enabled: true,
+      min_thickness: 1.8,
+      mode: 'inner',
+    },
+  },
+  custom_recipe: {
+    grids: [],
+    outer_displacements: [],
+    inner_displacements: [],
+    colourers: [],
+  },
+  filaments: {
+    enabled: false,
+    preset: 'TERRAIN_4',
+    spools: DEFAULT_FILAMENT_SPOOLS.TERRAIN_4,
+    total_layers: 4,
+    layer_height: 0.08,
+    vmin: -6000,
+    vmax: 4500,
+    bands: [],
+  },
+  magnets: {
+    enabled: true,
+    diameter: 5.0,
+    height: 2.0,
+    n_magnets: 3,
+    position: 0.0,
+    horizontal_tolerance: 0.15,
+    vertical_tolerance: 0.1,
+    vertical_offset: 0.2,
+    min_thickness: 1.5,
+    allow_bosses: true,
+    min_magnets: 2,
+    min_angular_spacing: 60.0,
+    step_degrees: 2.0,
+    placement_strategy: 'cluster_peaks',
+    angle_tolerance: 0.0,
+  },
+  export: {
+    mode: 'hemispheres',
+    format: '3mf',
+    single_file_3mf: true,
+    filename: 'blank_globe.3mf',
+    top_filename: 'blank_top.obj',
+    bottom_filename: 'blank_bottom.obj',
+    output_dir: 'outputs',
+    hollow: true,
+    engine: 'manifold',
+    plane_normal: [0.0, 0.0, 1.0],
+    plane_origin: [0.0, 0.0, 0.0],
+    flip_bottom: true,
+    offset_distance: 85.0,
+    include_color: true,
+    fix_normals: true,
+    printer_profile: 'snapmaker_u1',
+    color_tolerance: 8.0,
+  },
+};
+
