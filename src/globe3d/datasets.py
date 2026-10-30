@@ -792,6 +792,21 @@ class ShapefilesNamespace:
 class PaleoNamespace:
     """Namespace for paleogeographic and deep-time plate tectonic datasets."""
 
+    SCOTESE_URLS = {
+        "6m": [
+            "https://zenodo.org/records/5460860/files/Scotese_Wright_2018_Maps_1-88_6minX6min_PaleoDEMS_nc.zip?download=1",
+            "https://www.earthbyte.org/webdav/ftp/earthbyte/Scotese_Wright_2018_Maps_1-88_6minX6min_PaleoDEMS_nc.zip",
+        ],
+        "1d": [
+            "https://zenodo.org/records/5460860/files/Scotese_Wright_2018_Maps_1-88_1degX1deg_PaleoDEMS_nc.zip?download=1",
+            "https://www.earthbyte.org/webdav/ftp/earthbyte/Scotese_Wright_2018_Maps_1-88_1degX1deg_PaleoDEMS_nc.zip",
+        ],
+        "atlas": [
+            "https://www.earthbyte.org/webdav/ftp/earthbyte/Scotese_PaleoAtlas_v3.zip",
+            "https://zenodo.org/records/5460860/files/Scotese_PaleoAtlas_v3.zip?download=1",
+        ],
+    }
+
     def __init__(self):
         self._maps = None
 
@@ -846,7 +861,70 @@ class PaleoNamespace:
                 return os.path.abspath(c)
         return None
 
-    def scotese(self, age=None, name=None, resolution="6m", data_dir=None):
+    def download_scotese_data(self, resolution="6m", include_atlas=True, cache_dir=None, url=None):
+        """Downloads and extracts Scotese & Wright (2018) PALEOMAP archives into the cache directory.
+
+        Args:
+            resolution (str, optional): DEM resolution ('6m' for 6 arc-minute, '1d' for 1 degree).
+                Defaults to '6m'.
+            include_atlas (bool, optional): Whether to also download the PaleoAtlas v3 rasters and
+                plate model archive. Defaults to True.
+            cache_dir (str, optional): Custom cache directory. Defaults to None.
+            url (str, optional): Custom override URL for the DEM archive. Defaults to None.
+
+        Returns:
+            str: Path to the extracted Scotese cache directory.
+        """
+        base_cache = _get_cache_dir(cache_dir)
+        scotese_dir = os.path.join(base_cache, "scotese")
+        os.makedirs(scotese_dir, exist_ok=True)
+
+        res_key = "6m" if str(resolution).lower() in ("6m", "6min") else "1d"
+        dem_zip_name = (
+            "Scotese_Wright_2018_Maps_1-88_6minX6min_PaleoDEMS_nc.zip"
+            if res_key == "6m"
+            else "Scotese_Wright_2018_Maps_1-88_1degX1deg_PaleoDEMS_nc.zip"
+        )
+        dem_urls = [url] if url else self.SCOTESE_URLS[res_key]
+
+        last_err = None
+        dem_zip_path = None
+        for candidate_url in dem_urls:
+            try:
+                dem_zip_path = _download_file(candidate_url, dem_zip_name, scotese_dir)
+                break
+            except Exception as e:
+                last_err = e
+        if dem_zip_path is None:
+            raise RuntimeError(f"Failed to download Scotese PaleoDEM archive ({res_key}): {last_err}")
+
+        dem_extract_marker = os.path.join(scotese_dir, f".extracted_{res_key}")
+        if not os.path.exists(dem_extract_marker):
+            with zipfile.ZipFile(dem_zip_path, "r") as zf:
+                zf.extractall(scotese_dir)
+            with open(dem_extract_marker, "w", encoding="utf-8") as mf:
+                mf.write("ok")
+
+        if include_atlas:
+            atlas_zip_name = "Scotese_PaleoAtlas_v3.zip"
+            atlas_extract_marker = os.path.join(scotese_dir, ".extracted_atlas")
+            if not os.path.exists(atlas_extract_marker):
+                atlas_zip_path = None
+                for candidate_url in self.SCOTESE_URLS["atlas"]:
+                    try:
+                        atlas_zip_path = _download_file(candidate_url, atlas_zip_name, scotese_dir)
+                        break
+                    except Exception:
+                        continue
+                if atlas_zip_path and os.path.exists(atlas_zip_path):
+                    with zipfile.ZipFile(atlas_zip_path, "r") as zf:
+                        zf.extractall(scotese_dir)
+                    with open(atlas_extract_marker, "w", encoding="utf-8") as mf:
+                        mf.write("ok")
+
+        return scotese_dir
+
+    def scotese(self, age=None, name=None, resolution="6m", data_dir=None, auto_download=True):
         """Loads a Scotese & Wright (2018) PaleoDEM grid and matching PaleoAtlas texture.
 
         Args:
@@ -857,6 +935,8 @@ class PaleoNamespace:
             resolution (str, optional): Grid resolution ('6m' for 6 arc-minute, '1d' for 1 degree).
                 Defaults to '6m'.
             data_dir (str, optional): Directory containing Scotese data folders. Defaults to None.
+            auto_download (bool, optional): Automatically download from online sources (Zenodo /
+                EarthByte) if local files are missing. Defaults to True.
 
         Returns:
             tuple[GeographicGrid, str, dict]: (grid, texture_image_path, metadata)
@@ -885,6 +965,9 @@ class PaleoNamespace:
             selected = maps[0]  # Holocene 0 Ma default
 
         base_dir = self.find_scotese_data_dir(data_dir)
+        if base_dir is None and auto_download and data_dir is None:
+            base_dir = self.download_scotese_data(resolution=resolution, include_atlas=True)
+
         if base_dir is None:
             raise FileNotFoundError(
                 "Scotese dataset directory not found. Please provide data_dir or set "
@@ -895,16 +978,23 @@ class PaleoNamespace:
         dem_filename = selected["dem_file_6min"] if resolution.lower() in ("6m", "6min") else selected["dem_file_1deg"]
         raster_filename = selected["raster_file"]
 
-        # Search for dem and raster files in base_dir
-        dem_path = None
-        raster_path = None
-        for root, _, files in os.walk(base_dir):
-            if dem_filename in files and dem_path is None:
-                dem_path = os.path.join(root, dem_filename)
-            if raster_filename in files and raster_path is None:
-                raster_path = os.path.join(root, raster_filename)
-            if dem_path and raster_path:
-                break
+        def _locate_files(search_dir):
+            found_dem = None
+            found_raster = None
+            for root, _, files in os.walk(search_dir):
+                if dem_filename in files and found_dem is None:
+                    found_dem = os.path.join(root, dem_filename)
+                if raster_filename in files and found_raster is None:
+                    found_raster = os.path.join(root, raster_filename)
+                if found_dem and found_raster:
+                    break
+            return found_dem, found_raster
+
+        dem_path, raster_path = _locate_files(base_dir)
+
+        if (dem_path is None or not os.path.exists(dem_path)) and auto_download and data_dir is None:
+            base_dir = self.download_scotese_data(resolution=resolution, include_atlas=True)
+            dem_path, raster_path = _locate_files(base_dir)
 
         if dem_path is None or not os.path.exists(dem_path):
             raise FileNotFoundError(f"PaleoDEM file '{dem_filename}' not found in '{base_dir}'.")
@@ -914,11 +1004,13 @@ class PaleoNamespace:
 
         return grid, raster_path, selected
 
-    def scotese_plate_model(self, data_dir=None):
+    def scotese_plate_model(self, data_dir=None, auto_download=True):
         """Loads the Scotese PALEOMAP Global Plate Model as a PlateModel instance.
 
         Args:
             data_dir (str, optional): Directory containing Scotese data folders. Defaults to None.
+            auto_download (bool, optional): Automatically download from online sources if missing.
+                Defaults to True.
 
         Returns:
             PlateModel: Loaded plate reconstruction model.
@@ -929,18 +1021,28 @@ class PaleoNamespace:
         from globe3d.reconstruction import PlateModel
 
         base_dir = self.find_scotese_data_dir(data_dir)
+        if base_dir is None and auto_download and data_dir is None:
+            base_dir = self.download_scotese_data(resolution="1d", include_atlas=True)
+
         if base_dir is None:
             raise FileNotFoundError("Scotese dataset directory not found.")
 
-        rot_path = None
-        gpml_path = None
-        for root, _, files in os.walk(base_dir):
-            if "PALEOMAP_PlateModel.rot" in files and rot_path is None:
-                rot_path = os.path.join(root, "PALEOMAP_PlateModel.rot")
-            if "PALEOMAP_PlatePolygons.gpml" in files and gpml_path is None:
-                gpml_path = os.path.join(root, "PALEOMAP_PlatePolygons.gpml")
-            if rot_path and gpml_path:
-                break
+        def _locate_rot(search_dir):
+            r_path = None
+            g_path = None
+            for root, _, files in os.walk(search_dir):
+                if "PALEOMAP_PlateModel.rot" in files and r_path is None:
+                    r_path = os.path.join(root, "PALEOMAP_PlateModel.rot")
+                if "PALEOMAP_PlatePolygons.gpml" in files and g_path is None:
+                    g_path = os.path.join(root, "PALEOMAP_PlatePolygons.gpml")
+                if r_path and g_path:
+                    break
+            return r_path, g_path
+
+        rot_path, gpml_path = _locate_rot(base_dir)
+        if (rot_path is None or gpml_path is None) and auto_download and data_dir is None:
+            base_dir = self.download_scotese_data(resolution="1d", include_atlas=True)
+            rot_path, gpml_path = _locate_rot(base_dir)
 
         if rot_path is None or gpml_path is None:
             raise FileNotFoundError("PALEOMAP_PlateModel.rot or PALEOMAP_PlatePolygons.gpml not found.")

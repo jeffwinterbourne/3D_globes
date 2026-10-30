@@ -1,0 +1,282 @@
+{
+  "$schema": "../../schemas/globe_project.schema.json",
+  "schema_version": "1.0",
+  "metadata": {
+    "id": "example_6_paleo_kt_boundary_66ma",
+    "name": "Example 6B: Cretaceous-Paleogene (K-Pg) Boundary (66 Ma, 4-Filament)",
+    "description": "End-Cretaceous world at 66 Ma rendered in 4-filament banded hypsometric mode with Chicxulub crater, London, New York, Sydney, and Beijing plate-reconstructed to their Late Cretaceous positions.",
+    "category": "examples",
+    "collection": "Deep-Time Paleo Reconstructions",
+    "author": "Globe3D Studio",
+    "tags": ["paleo", "66ma", "cretaceous", "k-pg", "chicxulub", "4-filament", "3mf"]
+  },
+  "mode": "paleo",
+  "paleo_config": {
+    "enabled": true,
+    "age": 66.0,
+    "name": "K-Pg Boundary (Late Maastrichtian)",
+    "resolution": "6m",
+    "plate_model": "PALEOMAP",
+    "data_dir": null,
+    "vert_exagg": 45.0,
+    "coastline_step": 1000.0,
+    "color_mode": "banded_4filament",
+    "cmap": "terrain",
+    "filament_spools": [
+      {
+        "slot": 1,
+        "name": "Deep Ocean Blue",
+        "color": "#0F2C67",
+        "rgb": [0.059, 0.173, 0.404],
+        "td": 2.2
+      },
+      {
+        "slot": 2,
+        "name": "Forest Green",
+        "color": "#1E6F43",
+        "rgb": [0.118, 0.435, 0.263],
+        "td": 2.4
+      },
+      {
+        "slot": 3,
+        "name": "Terracotta Brown",
+        "color": "#A2673B",
+        "rgb": [0.635, 0.404, 0.231],
+        "td": 2.1
+      },
+      {
+        "slot": 4,
+        "name": "Pure White",
+        "color": "#FFFFFF",
+        "rgb": [1.0, 1.0, 1.0],
+        "td": 3.5
+      }
+    ],
+    "band_thresholds": [-6500, -4200, -2200, -180, 0, 250, 1100, 2600, 6500],
+    "tracked_locations": [
+      {
+        "name": "Chicxulub Impact Site",
+        "lat": 21.40,
+        "lon": -89.51,
+        "symbol": "star",
+        "color": "#EF4444",
+        "size_deg": 4.5,
+        "reference": "modern"
+      },
+      {
+        "name": "London",
+        "lat": 51.5074,
+        "lon": -0.1278,
+        "symbol": "circle",
+        "color": "#FFFFFF",
+        "size_deg": 3.2,
+        "reference": "modern"
+      },
+      {
+        "name": "New York",
+        "lat": 40.7128,
+        "lon": -74.0060,
+        "symbol": "circle",
+        "color": "#FFFFFF",
+        "size_deg": 3.2,
+        "reference": "modern"
+      },
+      {
+        "name": "Sydney",
+        "lat": -33.8688,
+        "lon": 151.2093,
+        "symbol": "triangle",
+        "color": "#FFFFFF",
+        "size_deg": 3.2,
+        "reference": "modern"
+      },
+      {
+        "name": "Beijing",
+        "lat": 39.9042,
+        "lon": 116.4074,
+        "symbol": "square",
+        "color": "#FFFFFF",
+        "size_deg": 3.2,
+        "reference": "modern"
+      }
+    ],
+    "mark_poles": true,
+    "pole_style": "NS_letters",
+    "pole_label_size_deg": 5.0,
+    "location_marker_size_deg": 3.5
+  },
+  "geometry": {
+    "distribution": "fibonacci",
+    "n_points": 500000,
+    "preview_n_points": 40000,
+    "radius": 45.0,
+    "center": [0.0, 0.0, 0.0],
+    "hollow": true,
+    "inner_ratio": 0.6,
+    "inner_n_points": 40000,
+    "create_inner_mesh_from_outer_thickness": null,
+    "fix_intersection": {
+      "enabled": true,
+      "min_thickness": 1.6,
+      "mode": "inner"
+    }
+  },
+  "grids": [
+    {
+      "id": "paleo_dem_66ma",
+      "source": "paleo",
+      "dataset": "paleo.scotese",
+      "params": {
+        "age": 66.0,
+        "resolution": "6m"
+      },
+      "filepath": null,
+      "synthetic_type": null,
+      "ops": []
+    }
+  ],
+  "outer_displacements": [
+    {
+      "id": "disp_paleo_66",
+      "name": "Scotese 66 Ma PaleoDEM (45x)",
+      "type": "GridDisplacer",
+      "enabled": true,
+      "grid_id": "paleo_dem_66ma",
+      "scale_mode": "auto_exagg",
+      "scale": 0.00031,
+      "vert_exagg": 45.0,
+      "data_unit": "m",
+      "reference_level": 0.0,
+      "coastline_step": 0.85,
+      "step_threshold": 0.0,
+      "points": [],
+      "lines": [],
+      "polygons": [],
+      "shapefile": null,
+      "value": 0.0,
+      "radius_deg": 2.0,
+      "width_deg": 0.5,
+      "profile": "flat",
+      "height": 0.0,
+      "mode": "add"
+    }
+  ],
+  "inner_displacements": [],
+  "colourers": [
+    {
+      "id": "col_paleo_66_banded",
+      "name": "4-Filament 8-Band Hypsometry (66 Ma)",
+      "type": "GridColourer",
+      "enabled": true,
+      "target": "outer",
+      "selection": "outward_facing",
+      "blend_mode": "replace",
+      "opacity": 1.0,
+      "grid_id": "paleo_dem_66ma",
+      "cmap": "terrain",
+      "vmin": -6500.0,
+      "vmax": 6500.0,
+      "symmetric": false,
+      "use_banded_levels": true,
+      "levels": [-6500, -4200, -2200, -180, 0, 250, 1100, 2600, 6500],
+      "colors": [
+        "#0F2C67",
+        "#1E56A0",
+        "#4E89AE",
+        "#94C9E1",
+        "#1E6F43",
+        "#5D9C59",
+        "#A2673B",
+        "#FFFFFF"
+      ],
+      "image_source": null,
+      "image_path": null,
+      "preprocessors": [],
+      "color": null,
+      "points": [],
+      "lines": [],
+      "polygons": [],
+      "shapefile": null,
+      "radius_deg": 2.0,
+      "width_deg": 0.5,
+      "feather_deg": 0.1,
+      "symbol": null,
+      "lat": null,
+      "lon": null,
+      "size_deg": 4.0,
+      "rotation_deg": 0.0,
+      "text": null,
+      "font_path": null,
+      "mark_north": true,
+      "mark_south": true,
+      "north_text": "N",
+      "south_text": "S"
+    }
+  ],
+  "filaments": {
+    "enabled": true,
+    "preset": "TERRAIN_4",
+    "spools": [
+      {
+        "slot": 1,
+        "name": "Deep Ocean Blue",
+        "color": "#0F2C67",
+        "rgb": [0.059, 0.173, 0.404],
+        "td": 2.2,
+        "material": "PLA"
+      },
+      {
+        "slot": 2,
+        "name": "Forest Green",
+        "color": "#1E6F43",
+        "rgb": [0.118, 0.435, 0.263],
+        "td": 2.4,
+        "material": "PLA"
+      },
+      {
+        "slot": 3,
+        "name": "Terracotta Brown",
+        "color": "#A2673B",
+        "rgb": [0.635, 0.404, 0.231],
+        "td": 2.1,
+        "material": "PLA"
+      },
+      {
+        "slot": 4,
+        "name": "Pure White",
+        "color": "#FFFFFF",
+        "rgb": [1.0, 1.0, 1.0],
+        "td": 3.5,
+        "material": "PLA"
+      }
+    ],
+    "base_layers": 3,
+    "top_layers": 4,
+    "layer_height": 0.16,
+    "quantize_preview": true
+  },
+  "magnets": {
+    "enabled": true,
+    "count": 4,
+    "Optimize_positions": true,
+    "optimize_positions": true,
+    "diameter": 5.0,
+    "height": 2.0,
+    "clearance": 0.15,
+    "min_margin": 1.5,
+    "boss_thickness": 1.8,
+    "manual_angles": [],
+    "magnet_type": "cylindrical",
+    "width": 5.0,
+    "length": 10.0,
+    "embed_depth": 0.2
+  },
+  "export": {
+    "split_hemispheres": true,
+    "format": "3mf",
+    "dual_files": false,
+    "filament_mode": "orca_3mf",
+    "output_dir": "outputs",
+    "filename_prefix": "paleo_66ma_kt_boundary"
+  }
+}

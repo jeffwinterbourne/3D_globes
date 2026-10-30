@@ -1,0 +1,257 @@
+{
+  "schema_version": "1.0",
+  "total_presets": 27,
+  "collections": [
+    "Standard Examples",
+    "Deep-Time Paleo Reconstructions",
+    "PREM Earth Interior",
+    "Planetary Topography",
+    "Seismic Matryoshka",
+    "Paper Recreations"
+  ],
+  "presets": [
+    {
+      "id": "example_1_procedural_globe",
+      "path": "examples/example_1_procedural_globe.json",
+      "name": "Example 1: Procedural Spherical Harmonic Globe",
+      "description": "Solid 40mm Fibonacci sphere (30k pts) displaced by a synthetic spherical harmonic wave grid and coloured with the 'viridis' colormap. Ideal zero-download starter globe.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["starter", "synthetic", "procedural", "fibonacci", "solid", "stl"]
+    },
+    {
+      "id": "example_2_hollow_globe",
+      "path": "examples/example_2_hollow_globe.json",
+      "name": "Example 2: Hollow Globe with Equatorial Split & Magnets",
+      "description": "Hollow 40mm Earth globe (inner_ratio=0.55) with 40x ETOPO topography, 0.8mm coastline step, split into Northern and Southern hemispheres with 4 equatorial 5x2mm magnets.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["hollow", "hemispheres", "magnets", "etopo", "coastline"]
+    },
+    {
+      "id": "example_3_earth_topography",
+      "path": "examples/example_3_earth_topography.json",
+      "name": "Example 3: High-Resolution Earth Hypsometric Relief",
+      "description": "Classic 50mm Earth physical relief globe using ETOPO 2022 at 40x vertical exaggeration, 0.8mm coastline step, and high-contrast 'terrain' bathymetric/topographic colouring.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["earth", "topography", "bathymetry", "etopo", "terrain", "relief"]
+    },
+    {
+      "id": "example_4_tectonic_globe",
+      "path": "examples/example_4_tectonic_globe.json",
+      "name": "Example 4: Global Tectonic Plates, Trenches & Volcanoes",
+      "description": "Multi-layer vector + grid recipe combining ETOPO relief with raised tectonic plate boundaries (LineDisplacer), land polygons (PolygonColourer), and major hotspots/capitals (PointColourer).",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["tectonics", "shapefiles", "plates", "coastlines", "vector", "capitals"]
+    },
+    {
+      "id": "example_5_3mf_multicolor_globe",
+      "path": "examples/example_5_3mf_multicolor_globe.json",
+      "name": "Example 5: 4-Filament Optical Mixing & OrcaSlicer 3MF Globe",
+      "description": "Multi-material 3D printable Earth globe using Kubelka-Munk 4-filament optical mixing (TERRAIN_4 spools: Deep Blue, Forest Green, Terracotta Brown, Pure White) with 8 discrete hypsometric elevation bands.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["3mf", "multicolor", "filaments", "orcaslicer", "snapmaker", "bambu", "banded"]
+    },
+    {
+      "id": "example_6_paleo_permian_triassic_250ma",
+      "path": "examples/example_6_paleo_permian_triassic_250ma.json",
+      "name": "Example 6A: Supercontinent Pangaea (Permian-Triassic 250 Ma)",
+      "description": "Deep-time Paleo-globe at 250 Ma (Permian-Triassic boundary) using Scotese 6-arc-minute PaleoDEM & PaleoAtlas texture, plate-reconstructed modern cities (London, New York, Sydney, Beijing), and N/S rotational poles.",
+      "category": "examples",
+      "collection": "Deep-Time Paleo Reconstructions",
+      "tags": ["paleo", "pangaea", "250ma", "permian", "triassic", "scotese", "gplately"]
+    },
+    {
+      "id": "example_6_paleo_kt_boundary_66ma",
+      "path": "examples/example_6_paleo_kt_boundary_66ma.json",
+      "name": "Example 6B: Cretaceous-Paleogene (K-Pg) Boundary (66 Ma, 4-Filament)",
+      "description": "End-Cretaceous world at 66 Ma rendered in 4-filament banded hypsometric mode with Chicxulub crater, London, New York, Sydney, and Beijing plate-reconstructed to their Late Cretaceous positions.",
+      "category": "examples",
+      "collection": "Deep-Time Paleo Reconstructions",
+      "tags": ["paleo", "66ma", "cretaceous", "k-pg", "chicxulub", "4-filament", "3mf"]
+    },
+    {
+      "id": "example_6_paleo_cambrian_540ma",
+      "path": "examples/example_6_paleo_cambrian_540ma.json",
+      "name": "Example 6C: Dawn of the Phanerozoic (Early Cambrian 540 Ma)",
+      "description": "Early Cambrian (540 Ma) paleogeographic reconstruction showing Gondwana assembly in the Southern Hemisphere and Panthalassic Ocean, with tracked continental cratons and polar markers.",
+      "category": "examples",
+      "collection": "Deep-Time Paleo Reconstructions",
+      "tags": ["paleo", "540ma", "cambrian", "gondwana", "scotese", "paleoatlas"]
+    },
+    {
+      "id": "example_7_custom_text_symbols",
+      "path": "examples/example_7_custom_text_symbols.json",
+      "name": "Example 7: Custom Typography, Gnomonic Symbols & Texture Filters",
+      "description": "Showcases ImageColourer with hillshade removal & bilateral filtering, spherical TextColourer labels ('PACIFIC OCEAN', 'PANGAEA'), gnomonic SymbolColourer stars/compasses, and PoleLabelColourer.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["typography", "text", "symbols", "poles", "image", "preprocessors"]
+    },
+    {
+      "id": "example_8_magnet_optimization",
+      "path": "examples/example_8_magnet_optimization.json",
+      "name": "Example 8: Equatorial Magnet Optimization (8 Magnets, Boss-Free)",
+      "description": "Demonstrates automated equatorial wall-thickness profiling and boss-free magnet placement (8x 5x2mm cylindrical magnets) on a thin-walled hollow globe with outer ETOPO relief and inner Moho cavity.",
+      "category": "examples",
+      "collection": "Standard Examples",
+      "tags": ["magnets", "optimization", "equator", "hollow", "cavity", "calibration"]
+    },
+    {
+      "id": "01_seismic_tomography_s40rts_cmb",
+      "path": "paper_recreations/01_seismic_tomography_s40rts_cmb.json",
+      "name": "Paper 01: S40RTS Core-Mantle Boundary (2850 km) Tomography Globe",
+      "description": "Recreates the dual-surface mantle tomography globe: outer shell displaced by ETOPO + S40RTS (2850 km LLSVPs), inner cavity displaced by CMB shear-wave velocity anomalies, coloured with 'RdBu_r'.",
+      "category": "paper_recreations",
+      "collection": "Paper Recreations",
+      "tags": ["tomography", "s40rts", "cmb", "llsvp", "mantle", "seismology"]
+    },
+    {
+      "id": "02_airy_vs_crust1_moho",
+      "path": "paper_recreations/02_airy_vs_crust1_moho.json",
+      "name": "Paper 02: Airy Isostasy & CRUST1.0 Moho Depth Globe",
+      "description": "Hollow isostatic Earth model where the outer surface displays 35x surface topography (ETOPO) while the inner cavity (inner_ratio=0.75) mirrors deep continental crustal roots (Himalayas, Andes) via Airy Moho calculation.",
+      "category": "paper_recreations",
+      "collection": "Paper Recreations",
+      "tags": ["crust", "moho", "isostasy", "airy", "crust1", "inner-displacement"]
+    },
+    {
+      "id": "03_geoid_undulation_egm2008",
+      "path": "paper_recreations/03_geoid_undulation_egm2008.json",
+      "name": "Paper 03: EGM2008 Geoid Undulation & Topography Composite",
+      "description": "Weighted composite globe combining long-wavelength EGM2008 geoid height undulations (-106m Indian Ocean low to +85m New Guinea high, weighted 300x) with sharp surface topography and coastline steps.",
+      "category": "paper_recreations",
+      "collection": "Paper Recreations",
+      "tags": ["geoid", "egm2008", "gravity", "composite", "undulation"]
+    },
+    {
+      "id": "04_prem_inner_core",
+      "path": "paper_recreations/04_prem_inner_core.json",
+      "name": "Paper 04A: PREM Earth Interior — Solid Inner Core (1221 km)",
+      "description": "Innermost nesting sphere of the scale-accurate Preliminary Reference Earth Model (PREM): solid 7.66 mm radius inner core coloured in metallic gold/amber.",
+      "category": "paper_recreations",
+      "collection": "PREM Earth Interior",
+      "tags": ["prem", "inner-core", "interior", "nested", "solid"]
+    },
+    {
+      "id": "04_prem_outer_core",
+      "path": "paper_recreations/04_prem_outer_core.json",
+      "name": "Paper 04B: PREM Earth Interior — Liquid Outer Core Shell (3480 km)",
+      "description": "Middle nesting shell of the PREM Earth Interior set: 21.85 mm outer radius, inner_ratio=0.36 (housing the Inner Core), with 4x 3x1.5mm equatorial magnets and molten orange-red colouring.",
+      "category": "paper_recreations",
+      "collection": "PREM Earth Interior",
+      "tags": ["prem", "outer-core", "interior", "nested", "shell", "magnets"]
+    },
+    {
+      "id": "04_prem_mantle_crust",
+      "path": "paper_recreations/04_prem_mantle_crust.json",
+      "name": "Paper 04C: PREM Earth Interior — Mantle & Crust Outer Shell (6371 km)",
+      "description": "Outermost nesting shell of the PREM Earth Interior set: 40.0 mm outer radius with 45x ETOPO relief, inner_ratio=0.555 (CMB cavity housing the Outer Core), and 6x 5x2mm equatorial magnets.",
+      "category": "paper_recreations",
+      "collection": "PREM Earth Interior",
+      "tags": ["prem", "mantle", "crust", "interior", "nested", "shell", "magnets"]
+    },
+    {
+      "id": "05_dynamic_topography_hoggard",
+      "path": "paper_recreations/05_dynamic_topography_hoggard.json",
+      "name": "Paper 05: Residual Dynamic Topography (Hoggard et al. 2016)",
+      "description": "Visualizes mantle-convection-driven surface deflections (+/- 2 km residual dynamic topography) superimposed with continental outlines and a diverging 'coolwarm' colormap.",
+      "category": "paper_recreations",
+      "collection": "Paper Recreations",
+      "tags": ["dynamic-topography", "hoggard", "mantle-convection", "geodynamics"]
+    },
+    {
+      "id": "06_planetary_earth",
+      "path": "paper_recreations/06_planetary_earth.json",
+      "name": "Paper 06A: Planetary Comparison — Earth (R=40.0 mm, 50x Exagg)",
+      "description": "Reference planet in the true-to-scale Terrestrial Planetary Topography suite: 40.0 mm radius Earth with 50x vertical exaggeration and full bathymetric/topographic relief.",
+      "category": "paper_recreations",
+      "collection": "Planetary Topography",
+      "tags": ["planetary", "earth", "etopo", "comparison", "solar-system"]
+    },
+    {
+      "id": "06_planetary_mars",
+      "path": "paper_recreations/06_planetary_mars.json",
+      "name": "Paper 06B: Planetary Comparison — Mars MOLA (R=21.3 mm, 20x Exagg)",
+      "description": "Scale-accurate Mars globe (53.2% of Earth's radius = 21.3 mm) using MGS MOLA topography at 20x vertical exaggeration, showcasing Olympus Mons (+21.2 km), Tharsis, Valles Marineris, and Hellas Basin.",
+      "category": "paper_recreations",
+      "collection": "Planetary Topography",
+      "tags": ["planetary", "mars", "mola", "olympus-mons", "valles-marineris"]
+    },
+    {
+      "id": "06_planetary_moon",
+      "path": "paper_recreations/06_planetary_moon.json",
+      "name": "Paper 06C: Planetary Comparison — The Moon LOLA (R=10.9 mm, 14x Exagg)",
+      "description": "Scale-accurate Lunar globe (27.3% of Earth's radius = 10.9 mm) using LRO LOLA elevation data at 14x vertical exaggeration, highlighting the South Pole-Aitken Basin and lunar maria.",
+      "category": "paper_recreations",
+      "collection": "Planetary Topography",
+      "tags": ["planetary", "moon", "lunar", "lola", "craters"]
+    },
+    {
+      "id": "06_planetary_venus",
+      "path": "paper_recreations/06_planetary_venus.json",
+      "name": "Paper 06D: Planetary Comparison — Venus Magellan (R=38.0 mm, 40x Exagg)",
+      "description": "Scale-accurate Venusian globe (95.0% of Earth's radius = 38.0 mm) using Magellan radar altimetry at 40x vertical exaggeration, featuring Maxwell Montes, Ishtar Terra, and Aphrodite Terra.",
+      "category": "paper_recreations",
+      "collection": "Planetary Topography",
+      "tags": ["planetary", "venus", "magellan", "maxwell-montes", "radar"]
+    },
+    {
+      "id": "06_planetary_mercury",
+      "path": "paper_recreations/06_planetary_mercury.json",
+      "name": "Paper 06E: Planetary Comparison — Mercury MESSENGER (R=15.3 mm, 25x Exagg)",
+      "description": "Scale-accurate Hermean globe (38.3% of Earth's radius = 15.3 mm) using MESSENGER MLA/stereo topography at 25x exaggeration, showing Caloris Basin and Borealis Planitia.",
+      "category": "paper_recreations",
+      "collection": "Planetary Topography",
+      "tags": ["planetary", "mercury", "messenger", "caloris-basin"]
+    },
+    {
+      "id": "07_matryoshka_crust_shell",
+      "path": "paper_recreations/07_matryoshka_crust_shell.json",
+      "name": "Paper 07A: Seismic Matryoshka — Shell 1: Upper Mantle 50 km (Olivine)",
+      "description": "Outermost shell (R=40.0 mm, inner_ratio=0.72) of the 4-layer Seismic Matryoshka nesting set: S40RTS 50 km depth slice (olivine lithosphere/asthenosphere) coloured in 'YlGn' with 5x2mm magnets.",
+      "category": "paper_recreations",
+      "collection": "Seismic Matryoshka",
+      "tags": ["matryoshka", "s40rts", "50km", "olivine", "nested", "tomography"]
+    },
+    {
+      "id": "07_matryoshka_mantle_410km",
+      "path": "paper_recreations/07_matryoshka_mantle_410km.json",
+      "name": "Paper 07B: Seismic Matryoshka — Shell 2: Transition Zone 410 km (Wadsleyite)",
+      "description": "Second shell (R=28.0 mm, inner_ratio=0.68) of the Seismic Matryoshka set: S40RTS 410 km phase-transition depth slice coloured in 'GnBu' with 4x1.5mm equatorial magnets.",
+      "category": "paper_recreations",
+      "collection": "Seismic Matryoshka",
+      "tags": ["matryoshka", "s40rts", "410km", "wadsleyite", "transition-zone", "nested"]
+    },
+    {
+      "id": "07_matryoshka_mantle_660km",
+      "path": "paper_recreations/07_matryoshka_mantle_660km.json",
+      "name": "Paper 07C: Seismic Matryoshka — Shell 3: Discontinuity 660 km (Ringwoodite)",
+      "description": "Third shell (R=18.5 mm, inner_ratio=0.65) of the Seismic Matryoshka set: S40RTS 660 km discontinuity depth slice showing stagnating subducted slabs, coloured in 'Blues' with 3x1.5mm magnets.",
+      "category": "paper_recreations",
+      "collection": "Seismic Matryoshka",
+      "tags": ["matryoshka", "s40rts", "660km", "ringwoodite", "subduction", "nested"]
+    },
+    {
+      "id": "07_matryoshka_cmb_2850km",
+      "path": "paper_recreations/07_matryoshka_cmb_2850km.json",
+      "name": "Paper 07D: Seismic Matryoshka — Core 4: CMB 2850 km (Bridgmanite / Post-Perovskite)",
+      "description": "Innermost core sphere (R=11.5 mm, solid) of the Seismic Matryoshka set: S40RTS 2850 km Core-Mantle Boundary slice highlighting the African and Pacific LLSVP superplumes in 'YlOrBr'.",
+      "category": "paper_recreations",
+      "collection": "Seismic Matryoshka",
+      "tags": ["matryoshka", "s40rts", "2850km", "bridgmanite", "llsvp", "cmb", "nested"]
+    },
+    {
+      "id": "08_lithosphere_asthenosphere_boundary",
+      "path": "paper_recreations/08_lithosphere_asthenosphere_boundary.json",
+      "name": "Paper 08: Lithosphere-Asthenosphere Boundary (LAB) & Cratonic Keels",
+      "description": "Dual-surface lithospheric thickness globe: outer surface shows 35x ETOPO relief while the inner cavity (inner_ratio=0.72) is displaced by the LITHO1.0 / Priestley LAB depth showing >250 km Archean cratonic keels.",
+      "category": "paper_recreations",
+      "collection": "Paper Recreations",
+      "tags": ["lithosphere", "lab", "cratons", "keels", "litho1", "inner-displacement"]
+    }
+  ]
+}

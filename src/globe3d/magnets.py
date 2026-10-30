@@ -455,7 +455,10 @@ def find_valid_magnet_positions_no_bosses(
         sin_t = np.sin(theta)
 
         # 1. Bisect for d_max (outer containment)
-        low = min_inner_radius
+        # Note: low must start at 0.0 (not min_inner_radius) because when the shell wall
+        # is thinner than r_enc, the maximum center distance d_max that keeps (d + r_enc)
+        # inside outer_mesh is less than min_inner_radius.
+        low = 0.0
         high = max_outer_radius
         for _ in range(bisection_iters):
             mid = (low + high) / 2.0
@@ -467,8 +470,11 @@ def find_valid_magnet_positions_no_bosses(
         d_max = low
 
         # 2. Bisect for d_min (inner clearance)
-        low = min_inner_radius
-        high = max_outer_radius
+        # Note: high must extend to max_outer_radius + 2 * r_enc because clearing the
+        # inner cavity requires (d - r_enc) >= r_inner, so d_min can exceed max_outer_radius
+        # when the shell wall is thinner than r_enc.
+        low = 0.0
+        high = max_outer_radius + 2.0 * r_enc
         for _ in range(bisection_iters):
             mid = (low + high) / 2.0
             in_m, _ = eval_margins(mid, cos_t, sin_t)

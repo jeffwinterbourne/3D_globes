@@ -1,0 +1,1019 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://globe3d.org/schemas/globe_project.schema.json",
+  "title": "GlobeProject",
+  "description": "Complete declarative project configuration schema for Globe3D Studio WebApp.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "metadata",
+    "mode",
+    "geometry",
+    "grids",
+    "outer_displacements",
+    "inner_displacements",
+    "colourers",
+    "filaments",
+    "magnets",
+    "export"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URI to the JSON Schema definition."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Schema version identifier."
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "description", "category"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique preset or project identifier."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable project name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed summary of the globe model and scientific configuration."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["examples", "paper_recreations", "custom"],
+          "default": "custom",
+          "description": "Top-level project category."
+        },
+        "collection": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional multi-shell or thematic collection name."
+        },
+        "author": {
+          "type": "string",
+          "default": "Globe3D Studio",
+          "description": "Project creator or citation reference."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Searchable keywords and topic tags."
+        }
+      },
+      "additionalProperties": true
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["custom", "paleo"],
+      "default": "custom",
+      "description": "Primary builder mode: 'custom' for general layer stack or 'paleo' for streamlined deep-time Paleo-globe reconstruction."
+    },
+    "paleo_config": {
+      "type": "object",
+      "description": "Configuration for Simple Paleo Mode (wrapping GlobeModel.from_paleo).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "age": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 750.0,
+          "default": 250.0,
+          "description": "Geological reconstruction age in millions of years ago (Ma)."
+        },
+        "name": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional Scotese PALEOMAP map name or epoch label."
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["6m", "1d"],
+          "default": "6m",
+          "description": "PaleoDEM grid resolution ('6m' for 6 arc-minutes, '1d' for 1 degree)."
+        },
+        "plate_model": {
+          "type": "string",
+          "default": "PALEOMAP",
+          "description": "GPlately plate reconstruction model (e.g., 'PALEOMAP', 'Muller2019', 'Merdith2021', 'Cao2020')."
+        },
+        "data_dir": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional local directory override for Scotese PaleoDEM and PaleoAtlas files."
+        },
+        "vert_exagg": {
+          "type": "number",
+          "default": 40.0,
+          "description": "Physical vertical exaggeration factor for paleo-topography and bathymetry."
+        },
+        "coastline_step": {
+          "type": "number",
+          "default": 1000.0,
+          "description": "Additional radial elevation step at the paleo-coastline (in meters or mm depending on scaling)."
+        },
+        "color_mode": {
+          "type": "string",
+          "enum": ["paleoatlas", "banded_4filament", "colormap"],
+          "default": "paleoatlas",
+          "description": "Paleo surface colouring mode."
+        },
+        "cmap": {
+          "type": "string",
+          "default": "terrain",
+          "description": "Matplotlib colormap name when color_mode is 'colormap'."
+        },
+        "filament_spools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "color": { "type": "string" },
+              "rgb": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "td": { "type": "number" }
+            },
+            "additionalProperties": true
+          },
+          "default": [],
+          "description": "4-filament spool definitions for optical mixing in banded_4filament mode."
+        },
+        "band_thresholds": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [-6000, -4000, -2000, -200, 0, 200, 1000, 2500, 6000],
+          "description": "Elevation thresholds (meters) for discrete hypsometric color bands."
+        },
+        "tracked_locations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "lat", "lon"],
+            "properties": {
+              "name": { "type": "string" },
+              "lat": { "type": "number", "minimum": -90.0, "maximum": 90.0 },
+              "lon": { "type": "number", "minimum": -180.0, "maximum": 180.0 },
+              "symbol": { "type": "string", "default": "star" },
+              "color": {
+                "oneOf": [
+                  { "type": "string" },
+                  {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ],
+                "default": "#FF2222"
+              },
+              "size_deg": { "type": "number", "default": 3.5 },
+              "reference": {
+                "type": "string",
+                "enum": ["modern", "paleo"],
+                "default": "modern"
+              }
+            },
+            "additionalProperties": true
+          },
+          "default": [],
+          "description": "Modern or paleo locations to plate-reconstruct and stamp onto the globe."
+        },
+        "mark_poles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to stamp North (N) and South (S) rotational pole markers."
+        },
+        "pole_style": {
+          "type": "string",
+          "enum": ["NS_letters", "crosshair", "circle", "star"],
+          "default": "NS_letters"
+        },
+        "pole_label_size_deg": {
+          "type": "number",
+          "default": 5.0
+        },
+        "location_marker_size_deg": {
+          "type": "number",
+          "default": 3.5
+        }
+      },
+      "additionalProperties": true
+    },
+    "geometry": {
+      "type": "object",
+      "required": ["distribution", "n_points", "radius", "hollow"],
+      "properties": {
+        "distribution": {
+          "type": "string",
+          "enum": ["fibonacci", "icosahedron"],
+          "default": "fibonacci",
+          "description": "Spherical vertex distribution algorithm."
+        },
+        "n_points": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 10000000,
+          "default": 500000,
+          "description": "Number of vertices on the outer sphere for final Python mesh generation."
+        },
+        "preview_n_points": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1000000,
+          "default": 60000,
+          "description": "Number of vertices used in the real-time 60fps WebGL preview."
+        },
+        "radius": {
+          "type": "number",
+          "minimum": 2.0,
+          "maximum": 500.0,
+          "default": 40.0,
+          "description": "Reference outer sphere radius in millimeters (mm)."
+        },
+        "center": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0.0, 0.0, 0.0],
+          "description": "3D Cartesian center of the globe in mm [x, y, z]."
+        },
+        "hollow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to generate an interior cavity shell."
+        },
+        "inner_ratio": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 0.98,
+          "default": 0.5,
+          "description": "Inner cavity sphere radius as a fraction of outer radius."
+        },
+        "inner_n_points": {
+          "type": ["integer", "null"],
+          "default": null,
+          "description": "Optional explicit vertex count for the inner cavity sphere."
+        },
+        "create_inner_mesh_from_outer_thickness": {
+          "type": ["number", "null"],
+          "default": null,
+          "description": "If set, creates the inner shell at a constant radial thickness (mm) below the outer sphere."
+        },
+        "fix_intersection": {
+          "type": "object",
+          "required": ["enabled", "min_thickness", "mode"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "min_thickness": {
+              "type": "number",
+              "minimum": 0.1,
+              "default": 1.6,
+              "description": "Minimum wall thickness (mm) enforced between outer and inner shells."
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["inner", "outer", "both"],
+              "default": "inner",
+              "description": "Which shell surface to adjust when enforcing minimum thickness."
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "grids": {
+      "type": "array",
+      "description": "Declarative geographic grids and processing pipelines available to displacers and colourers.",
+      "items": {
+        "type": "object",
+        "required": ["id", "source"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier referenced by displacers and colourers."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["online", "local", "synthetic", "paleo"],
+            "description": "Data source type for this grid."
+          },
+          "dataset": {
+            "type": ["string", "null"],
+            "default": null,
+            "description": "Built-in dataset identifier (e.g., 'topography.earth', 'tomography.s40rts', 'geoid.egm2008', 'crust.crust1', 'lithosphere.thickness', 'dynamic_topography.hoggard2016')."
+          },
+          "params": {
+            "type": "object",
+            "default": {},
+            "description": "Dataset parameters such as resolution ('30m', '10m', '6m'), depth (km), layer ('moho', 'lab'), or age (Ma)."
+          },
+          "filepath": {
+            "type": ["string", "null"],
+            "default": null,
+            "description": "Local file path for NetCDF (.nc, .grd) or GeoTIFF (.tif) grids."
+          },
+          "synthetic_type": {
+            "type": ["string", "null"],
+            "enum": ["spherical_harmonic", "procedural_tectonic", "gaussian_bumps", "checkerboard", "lat_lon_wave", null],
+            "default": null,
+            "description": "Procedural generator type when source is 'synthetic'."
+          },
+          "ops": {
+            "type": "array",
+            "default": [],
+            "description": "Ordered pipeline of grid transformations.",
+            "items": {
+              "type": "object",
+              "required": ["op"],
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": ["downsample", "airy_moho", "composite", "reconstruct", "scale_offset"]
+                },
+                "factor": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Downsample stride factor."
+                },
+                "t0_km": {
+                  "type": "number",
+                  "description": "Reference zero-elevation crustal thickness in km for Airy isostasy."
+                },
+                "ocean_scale": {
+                  "type": "number",
+                  "description": "Isostatic root scaling factor for oceanic depths."
+                },
+                "land_scale": {
+                  "type": "number",
+                  "description": "Isostatic root scaling factor for continental elevations."
+                },
+                "inputs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["grid_id", "weight"],
+                    "properties": {
+                      "grid_id": { "type": "string" },
+                      "weight": { "type": "number" }
+                    },
+                    "additionalProperties": true
+                  },
+                  "description": "Input grids and weights for composite operation."
+                },
+                "normalize": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "clamp_min": {
+                  "type": ["number", "null"],
+                  "default": null
+                },
+                "clamp_max": {
+                  "type": ["number", "null"],
+                  "default": null
+                },
+                "age": {
+                  "type": "number",
+                  "description": "Target age in Ma for plate reconstruction."
+                },
+                "plate_model": {
+                  "type": "string",
+                  "description": "Plate model name for grid reconstruction."
+                },
+                "scale": {
+                  "type": "number",
+                  "default": 1.0
+                },
+                "offset": {
+                  "type": "number",
+                  "default": 0.0
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "outer_displacements": {
+      "type": "array",
+      "description": "Ordered stack of radial displacement layers applied to the outer shell.",
+      "items": { "$ref": "#/$defs/displacer" }
+    },
+    "inner_displacements": {
+      "type": "array",
+      "description": "Ordered stack of radial displacement layers applied to the inner cavity shell.",
+      "items": { "$ref": "#/$defs/displacer" }
+    },
+    "colourers": {
+      "type": "array",
+      "description": "Ordered stack of surface colouring layers applied to outer and/or inner vertices.",
+      "items": { "$ref": "#/$defs/colourer" }
+    },
+    "filaments": {
+      "type": "object",
+      "required": ["enabled", "preset", "spools"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Kubelka-Munk multi-filament optical mixing and discrete toolhead assignment."
+        },
+        "preset": {
+          "type": "string",
+          "enum": ["TERRAIN_4", "CMYKW", "RBYKW", "EARTH_TERRAIN", "custom"],
+          "default": "TERRAIN_4",
+          "description": "Named filament spool preset."
+        },
+        "spools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "color"],
+            "properties": {
+              "slot": { "type": "integer", "minimum": 1, "maximum": 16 },
+              "name": { "type": "string" },
+              "color": { "type": "string", "description": "Hex color code (#RRGGBB)." },
+              "rgb": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "td": {
+                "type": "number",
+                "default": 2.5,
+                "description": "Filament transmission distance (mm) for optical blending."
+              },
+              "material": { "type": "string", "default": "PLA" }
+            },
+            "additionalProperties": true
+          },
+          "default": []
+        },
+        "base_layers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        },
+        "top_layers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 4
+        },
+        "layer_height": {
+          "type": "number",
+          "minimum": 0.04,
+          "maximum": 0.4,
+          "default": 0.16,
+          "description": "Slicer layer height in mm."
+        },
+        "quantize_preview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Quantize 3D viewport colours to the achievable optical filament palette."
+        }
+      },
+      "additionalProperties": true
+    },
+    "magnets": {
+      "type": "object",
+      "required": ["enabled", "count", "diameter", "height"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Insert magnet cavities along the equatorial split plane."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24,
+          "default": 4,
+          "description": "Number of magnet pairs around the equator."
+        },
+        "Optimize_positions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically optimize equatorial magnet angles to maximize wall thickness and avoid support bosses."
+        },
+        "optimize_positions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Alias for Optimize_positions."
+        },
+        "diameter": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 30.0,
+          "default": 5.0,
+          "description": "Nominal cylindrical magnet diameter in mm."
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 20.0,
+          "default": 2.0,
+          "description": "Single magnet height (thickness) in mm."
+        },
+        "clearance": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.15,
+          "description": "Radial and axial fit clearance added to magnet pockets in mm."
+        },
+        "min_margin": {
+          "type": "number",
+          "minimum": 0.2,
+          "maximum": 10.0,
+          "default": 1.5,
+          "description": "Minimum solid wall margin required between magnet pocket and inner/outer surfaces (mm)."
+        },
+        "boss_thickness": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 10.0,
+          "default": 1.8,
+          "description": "Radial reinforcement boss thickness (mm) when inner cavity wall is thinner than required."
+        },
+        "manual_angles": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [],
+          "description": "Explicit equatorial longitude angles (degrees) when automatic optimization is disabled."
+        },
+        "magnet_type": {
+          "type": "string",
+          "enum": ["cylindrical", "rectangular"],
+          "default": "cylindrical"
+        },
+        "width": {
+          "type": "number",
+          "default": 5.0,
+          "description": "Width in mm for rectangular magnets."
+        },
+        "length": {
+          "type": "number",
+          "default": 10.0,
+          "description": "Length in mm for rectangular magnets."
+        },
+        "embed_depth": {
+          "type": "number",
+          "default": 0.2,
+          "description": "Recess depth below the equatorial cut plane (mm)."
+        }
+      },
+      "additionalProperties": true
+    },
+    "export": {
+      "type": "object",
+      "required": ["split_hemispheres", "format"],
+      "properties": {
+        "split_hemispheres": {
+          "type": "boolean",
+          "default": true,
+          "description": "Split the globe along the equator into printable Northern and Southern hemispheres."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["3mf", "obj", "stl"],
+          "default": "3mf",
+          "description": "Target 3D mesh file format."
+        },
+        "dual_files": {
+          "type": "boolean",
+          "default": false,
+          "description": "Export Northern and Southern hemispheres as two separate files instead of a single build-plate file."
+        },
+        "filament_mode": {
+          "type": "string",
+          "enum": ["orca_3mf", "vertex_color", "monochrome"],
+          "default": "orca_3mf",
+          "description": "Color encoding strategy for exported meshes."
+        },
+        "output_dir": {
+          "type": "string",
+          "default": "outputs",
+          "description": "Target output directory relative to repository root."
+        },
+        "filename_prefix": {
+          "type": "string",
+          "default": "globe3d_model",
+          "description": "Base filename prefix for exported files."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "displacer": {
+      "type": "object",
+      "required": ["type", "enabled"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "GridDisplacer",
+            "ConstantDisplacer",
+            "PointDisplacer",
+            "LineDisplacer",
+            "PolygonDisplacer"
+          ]
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "grid_id": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "ID of the source grid in the grids array (for GridDisplacer)."
+        },
+        "scale_mode": {
+          "type": "string",
+          "enum": ["auto_exagg", "explicit", "max_displacement_mm"],
+          "default": "auto_exagg",
+          "description": "How grid values are converted into radial millimeter displacements."
+        },
+        "scale": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Explicit radial multiplier (mm per grid unit) or overall layer scale."
+        },
+        "vert_exagg": {
+          "type": "number",
+          "default": 40.0,
+          "description": "Physical vertical exaggeration factor relative to planetary radius."
+        },
+        "data_unit": {
+          "type": "string",
+          "enum": ["m", "km", "cm", "mm", "ft", "pct"],
+          "default": "m",
+          "description": "Physical unit of the input grid data."
+        },
+        "reference_level": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Grid value corresponding to zero radial displacement."
+        },
+        "coastline_step": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Additional radial step height (mm) added to values above step_threshold."
+        },
+        "step_threshold": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Threshold value (e.g. 0.0 m sea level) at which coastline_step is applied."
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lon": { "type": "number" },
+              "label": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "default": []
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "default": []
+        },
+        "polygons": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "default": []
+        },
+        "shapefile": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Built-in shapefile dataset ('coastline', 'land', 'plates', 'trenches', 'ridges') or local .shp path."
+        },
+        "value": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Constant radial displacement in mm (for ConstantDisplacer)."
+        },
+        "radius_deg": {
+          "type": "number",
+          "default": 2.0,
+          "description": "Angular radius in degrees for PointDisplacer."
+        },
+        "width_deg": {
+          "type": "number",
+          "default": 0.6,
+          "description": "Angular stroke width in degrees for LineDisplacer."
+        },
+        "profile": {
+          "type": "string",
+          "enum": ["flat", "gaussian", "cosine", "cone"],
+          "default": "flat",
+          "description": "Cross-sectional elevation profile for point/line features."
+        },
+        "height": {
+          "type": "number",
+          "default": 0.8,
+          "description": "Feature displacement height in mm for Point/Line/PolygonDisplacer."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["add", "max", "min", "replace"],
+          "default": "add",
+          "description": "How this displacement layer combines with previous layers."
+        }
+      },
+      "additionalProperties": true
+    },
+    "colourer": {
+      "type": "object",
+      "required": ["type", "enabled"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "GridColourer",
+            "ImageColourer",
+            "ConstantColourer",
+            "PointColourer",
+            "LineColourer",
+            "PolygonColourer",
+            "SymbolColourer",
+            "PoleLabelColourer",
+            "TextColourer"
+          ]
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "target": {
+          "type": "string",
+          "enum": ["outer", "inner", "all"],
+          "default": "outer",
+          "description": "Which shell mesh to colour."
+        },
+        "selection": {
+          "type": "string",
+          "enum": ["all", "outward_facing", "inward_facing"],
+          "default": "all",
+          "description": "Vertex normal orientation filter."
+        },
+        "blend_mode": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "alpha",
+            "multiply",
+            "add",
+            "screen",
+            "overlay",
+            "darken",
+            "lighten"
+          ],
+          "default": "replace"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 1.0
+        },
+        "grid_id": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Source grid ID for GridColourer."
+        },
+        "cmap": {
+          "type": "string",
+          "default": "terrain",
+          "description": "Colormap name (e.g. 'terrain', 'viridis', 'RdBu_r', 'YlGn', 'Blues', 'YlOrBr', 'coolwarm', 'magma')."
+        },
+        "vmin": {
+          "type": ["number", "null"],
+          "default": null,
+          "description": "Minimum value for colormap normalization."
+        },
+        "vmax": {
+          "type": ["number", "null"],
+          "default": null,
+          "description": "Maximum value for colormap normalization."
+        },
+        "symmetric": {
+          "type": "boolean",
+          "default": false,
+          "description": "Center colormap symmetrically around zero."
+        },
+        "use_banded_levels": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use discrete banded thresholds and explicit colors (ListedColormap / BoundaryNorm)."
+        },
+        "levels": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [],
+          "description": "Boundary thresholds for discrete colour bands."
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            ]
+          },
+          "default": [],
+          "description": "Explicit band colors (hex strings or RGB arrays)."
+        },
+        "image_source": {
+          "type": ["string", "null"],
+          "enum": ["local", "builtin_earth_day", "builtin_paleoatlas", "procedural_gradient", null],
+          "default": null
+        },
+        "image_path": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "preprocessors": {
+          "type": "array",
+          "default": [],
+          "description": "Image preprocessing filters applied before spherical texture projection.",
+          "items": {
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "undo_hillshading",
+                  "median_filter",
+                  "bilateral_filter",
+                  "quantize_colors"
+                ]
+              },
+              "strength": { "type": "number" },
+              "kernel_size": { "type": "integer" },
+              "d": { "type": "integer" },
+              "sigma_color": { "type": "number" },
+              "sigma_space": { "type": "number" },
+              "n_colors": { "type": "integer" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "color": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            { "type": "null" }
+          ],
+          "default": "#3388FF",
+          "description": "Primary RGB color (hex string '#RRGGBB' or normalized [r, g, b] array)."
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "lat": { "type": "number" },
+              "lon": { "type": "number" },
+              "color": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "default": []
+        },
+        "lines": {
+          "type": "array",
+          "default": []
+        },
+        "polygons": {
+          "type": "array",
+          "default": []
+        },
+        "shapefile": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "radius_deg": {
+          "type": "number",
+          "default": 2.5
+        },
+        "width_deg": {
+          "type": "number",
+          "default": 0.5
+        },
+        "feather_deg": {
+          "type": "number",
+          "default": 0.15
+        },
+        "symbol": {
+          "type": ["string", "null"],
+          "enum": ["star", "circle", "square", "triangle", "cross", "diamond", "ring", "compass", null],
+          "default": null
+        },
+        "lat": {
+          "type": ["number", "null"],
+          "default": null
+        },
+        "lon": {
+          "type": ["number", "null"],
+          "default": null
+        },
+        "size_deg": {
+          "type": "number",
+          "default": 4.0
+        },
+        "rotation_deg": {
+          "type": "number",
+          "default": 0.0
+        },
+        "text": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "font_path": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "mark_north": {
+          "type": "boolean",
+          "default": true
+        },
+        "mark_south": {
+          "type": "boolean",
+          "default": true
+        },
+        "north_text": {
+          "type": "string",
+          "default": "N"
+        },
+        "south_text": {
+          "type": "string",
+          "default": "S"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

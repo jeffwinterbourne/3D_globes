@@ -1,0 +1,9 @@
+# Node & Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/

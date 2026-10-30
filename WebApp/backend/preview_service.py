@@ -1,0 +1,372 @@
+"""Preview evaluation service providing binary WebGL buffers, WebWorker grid buffers, and 2D maps."""
+
+import base64
+import io
+import os
+from typing import Any, Dict, Optional
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from scipy.interpolate import RegularGridInterpolator
+
+from globe3d import apply_banded_colormap, create_banded_colormap, datasets, parse_color
+from .engine import _generate_synthetic_grid, compile_globe_model, resolve_project_grids
+from .filament_service import generate_palette_response
+from .models import GlobeProject
+
+
+def _array_to_b64(arr: np.ndarray, dtype) -> str:
+    """Encodes a contiguous NumPy array into a base64 string."""
+    contig = np.ascontiguousarray(arr, dtype=dtype)
+    return base64.b64encode(contig.tobytes()).decode("ascii")
+
+
+def evaluate_preview_mesh(project: GlobeProject, preview_n_points: Optional[int] = None) -> Dict[str, Any]:
+    """Evaluates the authoritative Python GlobeModel and returns base64 typed-array buffers.
+
+    Args:
+        project (GlobeProject): Project configuration.
+        preview_n_points (int, optional): Vertex count override. Defaults to None (uses
+            project.geometry.preview_n_points or project.geometry.n_points).
+
+    Returns:
+        dict: Base64 buffers for outer/inner positions, indices, colors, and mesh statistics.
+    """
+    n_pts = int(preview_n_points or project.geometry.preview_n_points or project.geometry.n_points)
+    model = compile_globe_model(project, n_points_override=n_pts)
+
+    outer_v = model.outer_vertices
+    outer_f = model.outer_faces
+    outer_c = (
+        model.outer_colors
+        if model.outer_colors is not None
+        else np.ones((len(outer_v), 3), dtype=np.float32)
+    )
+
+    r_outer = np.linalg.norm(outer_v, axis=1)
+    min_r = float(np.min(r_outer))
+    max_r = float(np.max(r_outer))
+
+    has_inner = model.inner_vertices is not None and model.inner_faces is not None
+    if has_inner:
+        inner_v = model.inner_vertices
+        inner_f = model.inner_faces
+        inner_c = (
+            model.inner_colors
+            if model.inner_colors is not None
+            else np.ones((len(inner_v), 3), dtype=np.float32)
+        )
+        r_inner = np.linalg.norm(inner_v, axis=1)
+        min_thickness = float(np.min(r_outer) - np.max(r_inner))
+    else:
+        inner_v = np.zeros((0, 3), dtype=np.float32)
+        inner_f = np.zeros((0, 3), dtype=np.uint32)
+        inner_c = np.zeros((0, 3), dtype=np.float32)
+        min_thickness = min_r
+
+    return {
+        "n_outer": int(len(outer_v)),
+        "n_inner": int(len(inner_v)),
+        "outer_positions_b64": _array_to_b64(outer_v, np.float32),
+        "outer_indices_b64": _array_to_b64(outer_f, np.uint32),
+        "outer_colors_b64": _array_to_b64(outer_c, np.float32),
+        "inner_positions_b64": _array_to_b64(inner_v, np.float32) if has_inner else "",
+        "inner_indices_b64": _array_to_b64(inner_f, np.uint32) if has_inner else "",
+        "inner_colors_b64": _array_to_b64(inner_c, np.float32) if has_inner else "",
+        "stats": {
+            "min_radius": round(min_r, 3),
+            "max_radius": round(max_r, 3),
+            "min_thickness": round(min_thickness, 3),
+            "vertex_count": int(len(outer_v) + len(inner_v)),
+            "face_count": int(len(outer_f) + len(inner_f)),
+        },
+    }
+
+
+def get_grid_buffer_for_worker(project: GlobeProject, height: int = 180, width: int = 360) -> Dict[str, Any]:
+    """Produces a standardized (height, width) equirectangular elevation & RGB buffer for the WebWorker.
+
+    Args:
+        project (GlobeProject): Project configuration.
+        height (int, optional): Latitude samples (-90 to +90). Defaults to 180.
+        width (int, optional): Longitude samples (-180 to +180). Defaults to 360.
+
+    Returns:
+        dict: Grid dimensions, value bounds, base64 Float32 elevation buffer, and base64 Uint8 RGB buffer.
+    """
+    grids_out: Dict[str, Any] = {}
+    target_lats = np.linspace(90.0, -90.0, height)
+    target_lons = np.linspace(-180.0, 180.0, width)
+    lon_m, lat_m = np.meshgrid(target_lons, target_lats)
+    sample_pts = np.stack((lat_m, lon_m), axis=-1)
+
+    def _sample_north_up(g_obj):
+        interp_fn = RegularGridInterpolator(
+            (g_obj.lats, g_obj.lons),
+            np.nan_to_num(g_obj.grid),
+            bounds_error=False,
+            fill_value=None,
+        )
+        return interp_fn(sample_pts).astype(np.float32)
+
+    tex_path = None
+    if project.mode == "paleo" or project.paleo_config.enabled:
+        pc = project.paleo_config
+        try:
+            grid, tex_path, _ = datasets.paleo.scotese(
+                age=pc.age,
+                name=pc.name,
+                resolution=pc.resolution,
+                data_dir=pc.data_dir,
+            )
+        except Exception:
+            grid = _generate_synthetic_grid("continents", {"amplitude": 3500.0})
+        sampled_elev = _sample_north_up(grid)
+        for g_cfg in project.grids:
+            grids_out[g_cfg.id] = {
+                "width": width,
+                "height": height,
+                "vmin": round(float(np.min(sampled_elev)), 2),
+                "vmax": round(float(np.max(sampled_elev)), 2),
+                "elevation_f32_b64": _array_to_b64(sampled_elev, np.float32),
+            }
+    else:
+        grids_by_id, textures_by_id = resolve_project_grids(project)
+        grid = next(iter(grids_by_id.values()))
+        tex_path = next(iter(textures_by_id.values()))
+        sampled_elev = None
+        for gid, g_obj in grids_by_id.items():
+            s_elev = _sample_north_up(g_obj)
+            if sampled_elev is None:
+                sampled_elev = s_elev
+            grids_out[gid] = {
+                "width": width,
+                "height": height,
+                "vmin": round(float(np.min(s_elev)), 2),
+                "vmax": round(float(np.max(s_elev)), 2),
+                "elevation_f32_b64": _array_to_b64(s_elev, np.float32),
+            }
+        if sampled_elev is None:
+            sampled_elev = _sample_north_up(grid)
+
+    # Also build an RGB texture (height x width x 3, row 0 = +90 deg North to match target_lats)
+    if tex_path and os.path.exists(tex_path) and (
+        project.mode != "paleo" or project.paleo_config.color_mode == "paleoatlas"
+    ):
+        img = Image.open(tex_path).convert("RGB").resize((width, height))
+        rgb_arr = np.asarray(img, dtype=np.uint8)
+    else:
+        cmap_name = (
+            project.paleo_config.cmap
+            if project.mode == "paleo"
+            else (project.colourers[0].cmap if project.colourers else "terrain")
+        )
+        vmin = float(np.nanmin(sampled_elev))
+        vmax = float(np.nanmax(sampled_elev))
+        span = (vmax - vmin) if vmax > vmin else 1.0
+        norm_v = np.clip((sampled_elev - vmin) / span, 0.0, 1.0)
+        cmap = plt.get_cmap(cmap_name or "terrain")
+        rgb_arr = (cmap(norm_v)[:, :, :3] * 255.0).astype(np.uint8)
+
+    return {
+        "width": width,
+        "height": height,
+        "vmin": round(float(np.min(sampled_elev)), 2),
+        "vmax": round(float(np.max(sampled_elev)), 2),
+        "elevation_f32_b64": _array_to_b64(sampled_elev, np.float32),
+        "rgb_u8_b64": _array_to_b64(rgb_arr, np.uint8),
+        "grids": grids_out,
+    }
+
+
+def render_2d_map_and_colorbar(project: GlobeProject) -> Dict[str, Any]:
+    """Renders 2D equirectangular map and colorbar PNG data URLs matching the active globe colouring.
+
+    Args:
+        project (GlobeProject): Project configuration.
+
+    Returns:
+        dict: Data URLs for the 2D map and colorbar images, plus value bounds and band metadata.
+    """
+    grids_by_id, textures_by_id = resolve_project_grids(project)
+    default_grid = next(iter(grids_by_id.values()))
+    default_tex = next(iter(textures_by_id.values()))
+    grid = default_grid
+    tex_path = default_tex
+
+    if project.mode == "paleo" or project.paleo_config.enabled:
+        try:
+            grid, tex_path, _ = datasets.paleo.scotese(
+                age=project.paleo_config.age,
+                resolution=project.paleo_config.resolution,
+                data_dir=project.paleo_config.data_dir,
+            )
+        except Exception:
+            grid = default_grid
+
+    palette_resp = generate_palette_response(project.filaments)
+    by_code = {e["code"]: tuple(e["rgb"]) for e in palette_resp["entries"]}
+
+    bands_out = []
+    rgb_map = None
+    cmap_obj = plt.get_cmap("terrain")
+    vmin_val = float(np.nanmin(grid.grid))
+    vmax_val = float(np.nanmax(grid.grid))
+    norm_obj = plt.Normalize(vmin=vmin_val, vmax=vmax_val)
+
+    def _build_banded_from_pc():
+        nonlocal rgb_map, cmap_obj, norm_obj, bands_out
+        pc = project.paleo_config
+        colors = []
+        thresholds = []
+        for i, b in enumerate(pc.band_thresholds):
+            rgb = parse_color(b.color) if b.color else by_code.get(b.code, (128, 128, 128))
+            colors.append(rgb)
+            bands_out.append({
+                "threshold": b.threshold,
+                "code": b.code,
+                "label": b.label or f"Band {i + 1}",
+                "rgb": list(rgb),
+            })
+            if i < len(pc.band_thresholds) - 1:
+                thresholds.append(float(b.threshold))
+        if len(colors) >= 2 and len(thresholds) == len(colors) - 1:
+            rgb_map = apply_banded_colormap(grid, colors, thresholds)
+            cmap_obj, norm_obj = create_banded_colormap(colors, thresholds)
+
+    if project.mode == "paleo" or project.paleo_config.enabled:
+        pc = project.paleo_config
+        if pc.color_mode == "banded_4filament" or project.filaments.enabled:
+            _build_banded_from_pc()
+        elif pc.color_mode == "paleoatlas" and tex_path and os.path.exists(tex_path):
+            pil_img = Image.open(tex_path).convert("RGB")
+            rgb_map = np.asarray(pil_img, dtype=np.uint8)
+            cmap_obj = plt.get_cmap(pc.cmap or "terrain")
+            norm_obj = plt.Normalize(vmin=vmin_val, vmax=vmax_val)
+        else:
+            cmap_obj = plt.get_cmap(pc.cmap or "terrain")
+            span = (vmax_val - vmin_val) if vmax_val > vmin_val else 1.0
+            norm_v = np.clip((np.flipud(grid.grid) - vmin_val) / span, 0.0, 1.0)
+            norm_obj = plt.Normalize(vmin=vmin_val, vmax=vmax_val)
+            rgb_map = (cmap_obj(norm_v)[:, :, :3] * 255.0).astype(np.uint8)
+    else:
+        # Custom recipe mode: inspect enabled outer/all colourers
+        if project.filaments.enabled and project.paleo_config.band_thresholds:
+            _build_banded_from_pc()
+        else:
+            outer_cols = [
+                c for c in project.colourers
+                if c.enabled and c.target in ("outer", "all")
+            ]
+            primary_col = outer_cols[0] if outer_cols else (project.colourers[0] if project.colourers else None)
+            for c in outer_cols:
+                if c.type in ("GridColourer", "ImageColourer", "PolygonColourer", "ConstantColourer"):
+                    primary_col = c
+                    break
+
+            if primary_col is not None:
+                if primary_col.type == "GridColourer":
+                    grid = grids_by_id.get(primary_col.grid_id or "", default_grid)
+                    g_min = float(np.nanmin(grid.grid))
+                    g_max = float(np.nanmax(grid.grid))
+                    if primary_col.use_banded_levels and primary_col.colors and primary_col.levels:
+                        colors = []
+                        for c_item in primary_col.colors:
+                            if isinstance(c_item, str) and c_item.strip() in by_code:
+                                colors.append(by_code[c_item.strip()])
+                            else:
+                                try:
+                                    colors.append(parse_color(c_item))
+                                except Exception:
+                                    colors.append((128, 128, 128))
+                        lvls = [float(x) for x in primary_col.levels]
+                        if len(lvls) == len(colors) + 1:
+                            thresholds = lvls[1:-1]
+                        elif len(lvls) == len(colors):
+                            thresholds = lvls[:-1]
+                        else:
+                            thresholds = lvls[: max(0, len(colors) - 1)]
+                        if len(colors) >= 2 and len(thresholds) == len(colors) - 1:
+                            rgb_map = apply_banded_colormap(grid, colors, thresholds)
+                            cmap_obj, norm_obj = create_banded_colormap(colors, thresholds)
+                            for idx_b, col_rgb in enumerate(colors):
+                                th_val = thresholds[idx_b] if idx_b < len(thresholds) else g_max
+                                bands_out.append({
+                                    "threshold": th_val,
+                                    "code": str(primary_col.colors[idx_b]),
+                                    "label": f"Band {idx_b + 1}",
+                                    "rgb": list(col_rgb),
+                                })
+                    if rgb_map is None:
+                        vmin_val = float(primary_col.vmin) if primary_col.vmin is not None else g_min
+                        vmax_val = float(primary_col.vmax) if primary_col.vmax is not None else g_max
+                        if primary_col.symmetric and primary_col.vmin is None and primary_col.vmax is None:
+                            abs_m = max(abs(g_min), abs(g_max), 1e-6)
+                            vmin_val, vmax_val = -abs_m, abs_m
+                        span = (vmax_val - vmin_val) if vmax_val > vmin_val else 1.0
+                        norm_v = np.clip((np.flipud(grid.grid) - vmin_val) / span, 0.0, 1.0)
+                        try:
+                            cmap_obj = plt.get_cmap(primary_col.cmap or "terrain")
+                        except Exception:
+                            cmap_obj = plt.get_cmap("terrain")
+                        norm_obj = plt.Normalize(vmin=vmin_val, vmax=vmax_val)
+                        rgb_map = (cmap_obj(norm_v)[:, :, :3] * 255.0).astype(np.uint8)
+
+                elif primary_col.type == "ImageColourer":
+                    img_p = primary_col.image_path or default_tex
+                    if img_p and os.path.exists(img_p):
+                        pil_img = Image.open(img_p).convert("RGB")
+                        rgb_map = np.asarray(pil_img, dtype=np.uint8)
+                elif primary_col.type == "ConstantColourer":
+                    c_rgb = parse_color(primary_col.color or "#3b82f6")
+                    rgb_map = np.full((180, 360, 3), c_rgb, dtype=np.uint8)
+                elif primary_col.type == "PolygonColourer":
+                    fg_rgb = parse_color(primary_col.color or "#22c55e")
+                    north_up = np.flipud(grid.grid)
+                    rgb_map = np.zeros((north_up.shape[0], north_up.shape[1], 3), dtype=np.uint8)
+                    rgb_map[:, :] = (30, 64, 175)
+                    rgb_map[north_up >= 0] = fg_rgb
+
+    if rgb_map is None:
+        vmin_val = float(np.nanmin(grid.grid))
+        vmax_val = float(np.nanmax(grid.grid))
+        span = (vmax_val - vmin_val) if vmax_val > vmin_val else 1.0
+        norm_v = np.clip((np.flipud(grid.grid) - vmin_val) / span, 0.0, 1.0)
+        cmap_obj = plt.get_cmap("terrain")
+        norm_obj = plt.Normalize(vmin=vmin_val, vmax=vmax_val)
+        rgb_map = (cmap_obj(norm_v)[:, :, :3] * 255.0).astype(np.uint8)
+
+    # Encode 2D map as PNG data URL
+    pil_map = Image.fromarray(rgb_map)
+    if pil_map.width > 720:
+        pil_map = pil_map.resize((720, 360))
+    map_buf = io.BytesIO()
+    pil_map.save(map_buf, format="PNG")
+    map_b64 = base64.b64encode(map_buf.getvalue()).decode("ascii")
+
+    # Render colorbar as PNG data URL
+    fig, ax = plt.subplots(figsize=(7.5, 1.1), dpi=110)
+    fig.patch.set_facecolor("#0f172a")
+    ax.set_facecolor("#0f172a")
+    cb = plt.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap_obj, norm=norm_obj),
+        cax=ax,
+        orientation="horizontal",
+    )
+    cb.ax.tick_params(colors="#e2e8f0", labelsize=8)
+    cb.outline.set_edgecolor("#475569")
+    plt.tight_layout()
+    cbar_buf = io.BytesIO()
+    fig.savefig(cbar_buf, format="PNG", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    cbar_b64 = base64.b64encode(cbar_buf.getvalue()).decode("ascii")
+
+    return {
+        "map_image_data_url": f"data:image/png;base64,{map_b64}",
+        "colorbar_image_data_url": f"data:image/png;base64,{cbar_b64}",
+        "vmin": round(vmin_val, 2),
+        "vmax": round(vmax_val, 2),
+        "bands": bands_out,
+    }

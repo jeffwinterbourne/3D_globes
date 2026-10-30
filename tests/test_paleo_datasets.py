@@ -100,3 +100,33 @@ def test_globe_model_from_paleo_custom_texture():
     # Check that colors reflect custom image green (30/255, 85/255, 40/255)
     assert pytest.approx(model.outer_colors[0, 1], abs=0.05) == 85 / 255.0
 
+
+def test_download_scotese_data_mocked(tmp_path, monkeypatch):
+    """Verifies online download and extraction for Scotese PALEOMAP archives using mocked download."""
+    import os
+    import zipfile
+
+    def fake_download(url, filename, cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+        zip_path = os.path.join(cache_dir, filename)
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            if "PaleoDEMS" in filename:
+                zf.writestr("Map01a_Holocene_000.nc", b"dummy_nc")
+            else:
+                zf.writestr("Map01a_Holocene_000.jpg", b"dummy_jpg")
+                zf.writestr("PALEOMAP_PlateModel.rot", b"dummy_rot")
+                zf.writestr("PALEOMAP_PlatePolygons.gpml", b"dummy_gpml")
+        return zip_path
+
+    monkeypatch.setattr(datasets, "_download_file", fake_download)
+    scotese_dir = datasets.paleo.download_scotese_data(
+        resolution="1d",
+        include_atlas=True,
+        cache_dir=str(tmp_path),
+    )
+    assert os.path.isdir(scotese_dir)
+    assert os.path.exists(os.path.join(scotese_dir, "Map01a_Holocene_000.nc"))
+    assert os.path.exists(os.path.join(scotese_dir, "Map01a_Holocene_000.jpg"))
+    assert os.path.exists(os.path.join(scotese_dir, "PALEOMAP_PlateModel.rot"))
+
+

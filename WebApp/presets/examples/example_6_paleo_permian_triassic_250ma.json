@@ -1,0 +1,209 @@
+{
+  "$schema": "../../schemas/globe_project.schema.json",
+  "schema_version": "1.0",
+  "metadata": {
+    "id": "example_6_paleo_permian_triassic_250ma",
+    "name": "Example 6A: Supercontinent Pangaea (Permian-Triassic 250 Ma)",
+    "description": "Deep-time Paleo-globe at 250 Ma (Permian-Triassic boundary) using Scotese 6-arc-minute PaleoDEM & PaleoAtlas texture, plate-reconstructed modern cities (London, New York, Sydney, Beijing), and N/S rotational poles.",
+    "category": "examples",
+    "collection": "Deep-Time Paleo Reconstructions",
+    "author": "Globe3D Studio",
+    "tags": ["paleo", "pangaea", "250ma", "permian", "triassic", "scotese", "gplately"]
+  },
+  "mode": "paleo",
+  "paleo_config": {
+    "enabled": true,
+    "age": 250.0,
+    "name": "Early Triassic (Induan / Permian-Triassic Boundary)",
+    "resolution": "6m",
+    "plate_model": "PALEOMAP",
+    "data_dir": null,
+    "vert_exagg": 40.0,
+    "coastline_step": 1000.0,
+    "color_mode": "paleoatlas",
+    "cmap": "terrain",
+    "filament_spools": [
+      { "name": "Deep Ocean Blue", "color": "#0F2C67", "rgb": [0.059, 0.173, 0.404], "td": 2.2 },
+      { "name": "Forest Green", "color": "#1E6F43", "rgb": [0.118, 0.435, 0.263], "td": 2.4 },
+      { "name": "Terracotta Brown", "color": "#A2673B", "rgb": [0.635, 0.404, 0.231], "td": 2.1 },
+      { "name": "Pure White", "color": "#FFFFFF", "rgb": [1.0, 1.0, 1.0], "td": 3.5 }
+    ],
+    "band_thresholds": [-6000, -4000, -2000, -200, 0, 200, 1000, 2500, 6000],
+    "tracked_locations": [
+      {
+        "name": "London",
+        "lat": 51.5074,
+        "lon": -0.1278,
+        "symbol": "star",
+        "color": "#EF4444",
+        "size_deg": 3.5,
+        "reference": "modern"
+      },
+      {
+        "name": "New York",
+        "lat": 40.7128,
+        "lon": -74.0060,
+        "symbol": "star",
+        "color": "#F59E0B",
+        "size_deg": 3.5,
+        "reference": "modern"
+      },
+      {
+        "name": "Sydney",
+        "lat": -33.8688,
+        "lon": 151.2093,
+        "symbol": "circle",
+        "color": "#EC4899",
+        "size_deg": 3.5,
+        "reference": "modern"
+      },
+      {
+        "name": "Beijing",
+        "lat": 39.9042,
+        "lon": 116.4074,
+        "symbol": "triangle",
+        "color": "#FACC15",
+        "size_deg": 3.5,
+        "reference": "modern"
+      }
+    ],
+    "mark_poles": true,
+    "pole_style": "NS_letters",
+    "pole_label_size_deg": 5.0,
+    "location_marker_size_deg": 3.5
+  },
+  "geometry": {
+    "distribution": "fibonacci",
+    "n_points": 500000,
+    "preview_n_points": 40000,
+    "radius": 45.0,
+    "center": [0.0, 0.0, 0.0],
+    "hollow": true,
+    "inner_ratio": 0.6,
+    "inner_n_points": 40000,
+    "create_inner_mesh_from_outer_thickness": null,
+    "fix_intersection": {
+      "enabled": true,
+      "min_thickness": 1.6,
+      "mode": "inner"
+    }
+  },
+  "grids": [
+    {
+      "id": "paleo_dem_250ma",
+      "source": "paleo",
+      "dataset": "paleo.scotese",
+      "params": {
+        "age": 250.0,
+        "resolution": "6m"
+      },
+      "filepath": null,
+      "synthetic_type": null,
+      "ops": []
+    }
+  ],
+  "outer_displacements": [
+    {
+      "id": "disp_paleo_250",
+      "name": "Scotese 250 Ma PaleoDEM (40x)",
+      "type": "GridDisplacer",
+      "enabled": true,
+      "grid_id": "paleo_dem_250ma",
+      "scale_mode": "auto_exagg",
+      "scale": 0.00028,
+      "vert_exagg": 40.0,
+      "data_unit": "m",
+      "reference_level": 0.0,
+      "coastline_step": 0.75,
+      "step_threshold": 0.0,
+      "points": [],
+      "lines": [],
+      "polygons": [],
+      "shapefile": null,
+      "value": 0.0,
+      "radius_deg": 2.0,
+      "width_deg": 0.5,
+      "profile": "flat",
+      "height": 0.0,
+      "mode": "add"
+    }
+  ],
+  "inner_displacements": [],
+  "colourers": [
+    {
+      "id": "col_paleoatlas_250",
+      "name": "Scotese 250 Ma PaleoAtlas Texture",
+      "type": "ImageColourer",
+      "enabled": true,
+      "target": "outer",
+      "selection": "outward_facing",
+      "blend_mode": "replace",
+      "opacity": 1.0,
+      "grid_id": null,
+      "cmap": "terrain",
+      "vmin": null,
+      "vmax": null,
+      "symmetric": false,
+      "use_banded_levels": false,
+      "levels": [],
+      "colors": [],
+      "image_source": "builtin_paleoatlas",
+      "image_path": null,
+      "preprocessors": [
+        { "op": "undo_hillshading", "strength": 0.75 }
+      ],
+      "color": null,
+      "points": [],
+      "lines": [],
+      "polygons": [],
+      "shapefile": null,
+      "radius_deg": 2.0,
+      "width_deg": 0.5,
+      "feather_deg": 0.1,
+      "symbol": null,
+      "lat": null,
+      "lon": null,
+      "size_deg": 4.0,
+      "rotation_deg": 0.0,
+      "text": null,
+      "font_path": null,
+      "mark_north": true,
+      "mark_south": true,
+      "north_text": "N",
+      "south_text": "S"
+    }
+  ],
+  "filaments": {
+    "enabled": false,
+    "preset": "TERRAIN_4",
+    "spools": [],
+    "base_layers": 3,
+    "top_layers": 4,
+    "layer_height": 0.16,
+    "quantize_preview": false
+  },
+  "magnets": {
+    "enabled": true,
+    "count": 4,
+    "Optimize_positions": true,
+    "optimize_positions": true,
+    "diameter": 5.0,
+    "height": 2.0,
+    "clearance": 0.15,
+    "min_margin": 1.5,
+    "boss_thickness": 1.8,
+    "manual_angles": [],
+    "magnet_type": "cylindrical",
+    "width": 5.0,
+    "length": 10.0,
+    "embed_depth": 0.2
+  },
+  "export": {
+    "split_hemispheres": true,
+    "format": "3mf",
+    "dual_files": false,
+    "filament_mode": "orca_3mf",
+    "output_dir": "outputs",
+    "filename_prefix": "paleo_250ma_pangaea"
+  }
+}

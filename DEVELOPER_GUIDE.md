@@ -662,9 +662,17 @@ This module provides tools for 3D print texture preparation and spherical vector
 
 Provides namespaces for standard datasets:
 - **`datasets.paleo`**: Catalog of 108 Scotese & Wright (2018) PALEOMAP PaleoDEM elevation grids and matching PaleoAtlas full-color textures spanning 0 to 540 Ma.
-  - `datasets.paleo.scotese(age=...)`: Automatically locates and loads the closest PaleoDEM grid and texture.
-  - `datasets.paleo.scotese_plate_model()`: Returns the initialized Scotese PALEOMAP `PlateModel`.
+  - `datasets.paleo.scotese(age=..., auto_download=True)`: Automatically locates and loads the closest PaleoDEM grid and texture, downloading and caching from Zenodo Record 5460860 / EarthByte if not present locally.
+  - `datasets.paleo.scotese_plate_model(auto_download=True)`: Returns the initialized Scotese PALEOMAP `PlateModel`.
+  - `datasets.paleo.download_scotese_data(resolution='6m', include_atlas=True)`: Downloads and extracts Scotese PALEOMAP archives into `.download_cache/scotese`.
   - `datasets.paleo.list_scotese_maps()`: Lists all 108 registered time slices.
+
+### `WebApp/` — Interactive Web Studio (FastAPI + React/Three.js)
+
+`WebApp/` contains a full-featured graphical web studio isolated from the headless `src/globe3d/` library:
+- **`WebApp/backend/`**: FastAPI server (`main.py`, `engine.py`, `preview_service.py`, `magnet_service.py`, `filament_service.py`, `dataset_service.py`, `codegen.py`) that compiles declarative `GlobeProject` JSON configurations into authoritative `GlobeModel` instances, serves binary WebGL preview buffers, optimizes magnet positions, and exports `.3mf`/`.obj`/`.stl` files.
+- **`WebApp/frontend/`**: React + TypeScript + Three.js + WebWorker (`meshPreviewWorker.ts`) + Monaco Editor frontend providing 60fps interactive 3D previews, Simple Paleo Mode, Custom Recipe Builder, Optical Filament Mixer, Equatorial Magnet Studio, and two-way JSON/Python code sync.
+- **`WebApp/presets/` & `WebApp/schemas/`**: JSON Schema (`globe_project.schema.json`) and 27 loadable JSON project presets replicating all standard examples and paper recreations.
 
 ### `io.py` & Multi-Color 3MF Export (OrcaSlicer & Snapmaker U1)
 
