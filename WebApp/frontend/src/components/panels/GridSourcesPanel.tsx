@@ -844,10 +844,19 @@ export const GridSourcesPanel: React.FC = () => {
                       }
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
                     >
-                      <option value="1d">1d (1 degree)</option>
-                      <option value="30m">30m (30 arc-min)</option>
-                      <option value="15m">15m (15 arc-min)</option>
-                      <option value="6m">6m (6 arc-min)</option>
+                      {activeCat === 'paleo' ? (
+                        <>
+                          <option value="1d">1d (1 degree)</option>
+                          <option value="6m">6m (6 arc-min)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="01d">01d (1 degree / ~110km)</option>
+                          <option value="30m">30m (30 arc-min / ~55km)</option>
+                          <option value="15m">15m (15 arc-min / ~28km)</option>
+                          <option value="10m">10m (10 arc-min / ~18km)</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 )}

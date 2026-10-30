@@ -369,11 +369,13 @@ export const DEFAULT_STARTER_PROJECT: GlobeProject = {
   },
   grids: {
     etopo_ds: {
-      source_type: 'local_or_dataset',
-      local_path: '../inputs/ETOPO_2022_v1_60s_N90W180_surface.nc',
+      source_type: 'online',
+      category: 'topography',
+      name: 'earth',
+      resolution: '30m',
       fallback_dataset: { category: 'topography', name: 'earth', resolution: '30m' },
       netcdf_vars: { lat_var: 'lat', lon_var: 'lon', data_var: 'z' },
-      transforms: [{ type: 'downsample', step_lat: 10, step_lon: 10 }],
+      transforms: [],
     },
   },
   outer_displacements: [

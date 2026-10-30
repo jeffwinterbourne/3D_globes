@@ -330,7 +330,7 @@ interface ProjectStoreState {
 
   recomputeFastPreview: (overridePoints?: number) => void;
   fetchGridDataFromBackend: () => Promise<void>;
-  renderExactPythonMesh: () => Promise<void>;
+  renderExactPythonMesh: (mode?: 'preview' | 'full') => Promise<void>;
   optimizeMagnetsBackend: () => Promise<void>;
 }
 
@@ -753,12 +753,16 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     }
   },
 
-  renderExactPythonMesh: async () => {
+  renderExactPythonMesh: async (mode: 'preview' | 'full' = 'preview') => {
     const state = get();
-    const targetPts = state.project.geometry.preview_n_points || 60000;
+    const targetPts =
+      mode === 'full'
+        ? state.project.geometry.n_points || 500000
+        : state.project.geometry.preview_n_points || 60000;
+    const modeLabel = mode === 'full' ? 'Full Output' : 'Preview';
     set({
       isEvaluatingPython: true,
-      statusMessage: `Running definitive Python GlobeModel evaluation (${targetPts.toLocaleString()} pts)...`,
+      statusMessage: `Running definitive Python GlobeModel evaluation (${modeLabel} — ${targetPts.toLocaleString()} pts)...`,
     });
     try {
       const res = await fetch(`/api/preview/eval?preview_n_points=${targetPts}`, {
@@ -793,7 +797,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
           magnetAnalysis,
           previewMode: 'exact_python',
           isEvaluatingPython: false,
-          statusMessage: `Definitive Python Mesh Active (${(
+          statusMessage: `Definitive Python Mesh Active (${modeLabel} — ${(
             data.stats?.vertex_count || outerPositions.length / 3
           ).toLocaleString()} vertices)`,
         });

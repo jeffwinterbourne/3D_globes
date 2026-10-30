@@ -113,11 +113,9 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
 
     if src == "synthetic":
         grid = _generate_synthetic_grid(grid_cfg.synthetic_type or "procedural_waves", params)
-    elif src == "local":
-        if not grid_cfg.filepath or not os.path.exists(grid_cfg.filepath):
-            # Fallback to synthetic if local path doesn't exist yet
-            grid = _generate_synthetic_grid("continents", params)
-        else:
+    elif src in ("local", "local_or_dataset"):
+        local_exists = bool(grid_cfg.filepath and os.path.exists(grid_cfg.filepath))
+        if local_exists:
             ext = os.path.splitext(grid_cfg.filepath)[1].lower()
             if ext in (".tif", ".tiff"):
                 grid = datasets._load_tiff_grid(
@@ -131,6 +129,47 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
                     lon_var=grid_cfg.lon_var,
                     data_var=grid_cfg.data_var,
                 )
+        elif grid_cfg.dataset:
+            # Fall back to specified online dataset instead of procedural grid
+            ds_name = (grid_cfg.dataset or "topography.earth").lower()
+            try:
+                if ds_name in ("topography.earth", "earth"):
+                    grid = datasets.topography.earth(**params)
+                elif ds_name in ("topography.etopo", "etopo"):
+                    grid = datasets.topography.etopo(**params)
+                elif ds_name in ("topography.gebco", "gebco"):
+                    grid = datasets.topography.gebco(**params)
+                elif ds_name in ("topography.mars", "mars"):
+                    grid = datasets.topography.mars(**params)
+                elif ds_name in ("topography.moon", "moon"):
+                    grid = datasets.topography.moon(**params)
+                elif ds_name in ("topography.venus", "venus"):
+                    grid = datasets.topography.venus(**params)
+                elif ds_name in ("topography.mercury", "mercury"):
+                    grid = datasets.topography.mercury(**params)
+                elif ds_name in ("tomography.s40rts", "s40rts"):
+                    grid = datasets.tomography.s40rts(**params)
+                elif ds_name in ("geoid.egm2008", "egm2008"):
+                    grid = datasets.geoid.egm2008(**params)
+                elif ds_name in ("crust.crust1", "crust1"):
+                    grid = datasets.crust.crust1(**params)
+                elif ds_name in ("lithosphere.thickness", "lithosphere"):
+                    grid = datasets.lithosphere.thickness(**params)
+                elif ds_name in ("dynamic_topography.hoggard2016", "hoggard2016", "dynamic_topography"):
+                    grid = datasets.dynamic_topography.hoggard2016(**params)
+                elif ds_name in ("gravity.bouguer", "bouguer", "gravity"):
+                    grid = datasets.gravity.bouguer(**params)
+                elif ds_name in ("magnetics.emag2", "emag2", "magnetics"):
+                    grid = datasets.magnetics.emag2(**params)
+                elif ds_name in ("paleo.scotese", "scotese"):
+                    grid, tex_path, meta = datasets.paleo.scotese(**params)
+                else:
+                    grid = _generate_synthetic_grid("continents", params)
+            except Exception as e:
+                print(f"[engine] Warning: fallback dataset '{ds_name}' failed ({e}), using synthetic grid.")
+                grid = _generate_synthetic_grid("continents", params)
+        else:
+            grid = _generate_synthetic_grid("continents", params)
     elif src == "paleo":
         age = float(params.get("age", 250.0))
         res = str(params.get("resolution", "1d"))
@@ -175,8 +214,8 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
                 grid, tex_path, meta = datasets.paleo.scotese(**params)
             else:
                 grid = _generate_synthetic_grid("continents", params)
-        except Exception:
-            # Graceful fallback to synthetic grid when offline and dataset isn't cached yet
+        except Exception as e:
+            print(f"[engine] Warning: dataset '{ds_name}' failed ({e}), using synthetic grid.")
             grid = _generate_synthetic_grid("continents", params)
 
     _GRID_CACHE[cache_key] = (grid, tex_path, meta)

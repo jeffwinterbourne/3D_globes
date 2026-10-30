@@ -188,6 +188,22 @@ def _load_tiff_grid(filepath, downsample_factor=1):
     return GeographicGrid(lats, lons, grid)
 
 
+def _normalize_gmt_resolution(resolution: str) -> str:
+    """Normalizes resolution strings (e.g. '1d' -> '01d', '30m' -> '30m') for GMT server filenames."""
+    res = str(resolution or "30m").strip().lower()
+    if res in ("1d", "1deg", "1_deg", "01deg"):
+        return "01d"
+    if res in ("30m", "30min", "30_min"):
+        return "30m"
+    if res in ("15m", "15min", "15_min"):
+        return "15m"
+    if res in ("10m", "10min", "10_min"):
+        return "10m"
+    if res in ("5m", "05m", "05min"):
+        return "05m"
+    return res
+
+
 class TopographyNamespace:
     """Namespace for topographic datasets (Earth, Mars, Moon, Venus, Mercury, Vesta)."""
 
@@ -198,8 +214,8 @@ class TopographyNamespace:
         If resolution is "high", downloads the ETOPO1 bedrock relief grid.
 
         Args:
-            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "10m",
-                "05m", "01d", or "high". Defaults to "30m".
+            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "15m", "10m",
+                "01d", or "high". Defaults to "30m".
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
@@ -207,6 +223,7 @@ class TopographyNamespace:
             GeographicGrid: Loaded Earth topography grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
+        resolution = _normalize_gmt_resolution(resolution)
 
         if resolution == "high":
             filename_gz = "ETOPO1_Bed_g_gmt4.grd.gz"
@@ -277,8 +294,8 @@ class TopographyNamespace:
         If resolution="high", downloads the full-resolution MOLA DEM GeoTIFF from USGS.
 
         Args:
-            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "10m",
-                "05m", "01d", or "high". Defaults to "30m".
+            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "15m", "10m",
+                "01d", or "high". Defaults to "30m".
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
@@ -286,6 +303,7 @@ class TopographyNamespace:
             GeographicGrid: Loaded Mars topography grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
+        resolution = _normalize_gmt_resolution(resolution)
 
         if resolution == "high":
             filename = "Mars_MGS_MOLA_DEM_mosaic_global_463m.tif"
@@ -305,8 +323,8 @@ class TopographyNamespace:
         If resolution="high", downloads the full-resolution LRO LOLA DEM GeoTIFF from USGS.
 
         Args:
-            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "10m",
-                "05m", "01d", or "high". Defaults to "30m".
+            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "15m", "10m",
+                "01d", or "high". Defaults to "30m".
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
@@ -314,6 +332,7 @@ class TopographyNamespace:
             GeographicGrid: Loaded Moon topography grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
+        resolution = _normalize_gmt_resolution(resolution)
 
         if resolution == "high":
             filename = "Lunar_LRO_LOLA_Global_LDEM_118m_Mar2014.tif"
@@ -333,8 +352,8 @@ class TopographyNamespace:
         If resolution="high", downloads the Magellan GTDR NetCDF topography grid.
 
         Args:
-            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "10m",
-                "05m", "01d", or "high". Defaults to "30m".
+            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "15m", "10m",
+                "01d", or "high". Defaults to "30m".
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
@@ -342,6 +361,7 @@ class TopographyNamespace:
             GeographicGrid: Loaded Venus topography grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
+        resolution = _normalize_gmt_resolution(resolution)
 
         if resolution == "high":
             filename = "Venus_Magellan_Topography_Global_4641m_v02.nc"
@@ -360,8 +380,8 @@ class TopographyNamespace:
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the MESSENGER mission.
 
         Args:
-            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "10m",
-                "05m", or "01d". Defaults to "30m".
+            resolution (str, optional): Resolution of the grid. Can be "30m" (default), "15m", "10m",
+                or "01d". Defaults to "30m".
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
@@ -369,6 +389,7 @@ class TopographyNamespace:
             GeographicGrid: Loaded Mercury topography grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
+        resolution = _normalize_gmt_resolution(resolution)
         filename = f"mercury_relief_{resolution}_g.grd"
         download_url = url or f"https://oceania.generic-mapping-tools.org/server/mercury/mercury_relief/mercury_relief_{resolution}_g.grd"
         filepath = _download_file(download_url, filename, cache_dir)

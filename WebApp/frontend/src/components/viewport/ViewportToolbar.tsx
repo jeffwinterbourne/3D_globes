@@ -151,18 +151,36 @@ export const ViewportToolbar: React.FC = () => {
 
           <div className="h-4 w-px bg-slate-700 mx-0.5" />
 
-          <button
-            onClick={() => renderExactPythonMesh()}
-            disabled={isEvaluatingPython}
-            className="flex items-center gap-1.5 px-3 py-1 rounded bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow transition disabled:opacity-50"
-          >
-            <Cpu className="w-3.5 h-3.5" />
-            <span>
-              {isEvaluatingPython
-                ? 'Evaluating Python Mesh...'
-                : 'Render Exact High-Res Python Mesh in Viewport'}
-            </span>
-          </button>
+          {/* Split Python Render Options */}
+          <div className="flex items-center gap-1 bg-slate-800/80 p-0.5 rounded border border-slate-700">
+            <button
+              onClick={() => renderExactPythonMesh('preview')}
+              disabled={isEvaluatingPython}
+              title={`Render preview resolution with python (${(
+                project.geometry.preview_n_points || 60000
+              ).toLocaleString()} vertices)`}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition disabled:opacity-50"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>
+                {isEvaluatingPython ? 'Rendering...' : 'Python Preview'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => renderExactPythonMesh('full')}
+              disabled={isEvaluatingPython}
+              title={`Render full output resolution with python (${(
+                project.geometry.n_points || 500000
+              ).toLocaleString()} vertices)`}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold shadow transition disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>
+                {isEvaluatingPython ? 'Rendering...' : 'Python Full Res'}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 

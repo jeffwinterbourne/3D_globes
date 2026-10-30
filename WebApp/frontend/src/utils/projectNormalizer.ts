@@ -265,7 +265,7 @@ export function toBackendGlobeProjectPayload(project: GlobeProject): any {
   const gridsArray = Object.entries(project.grids || {}).map(([gid, g]) => {
     const sourceMap: Record<string, string> = {
       online: 'online',
-      local_or_dataset: g.local_path ? 'local' : 'online',
+      local_or_dataset: 'local_or_dataset',
       local: 'local',
       paleo: 'paleo',
       synthetic: 'synthetic',

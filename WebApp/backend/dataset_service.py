@@ -37,15 +37,18 @@ def get_datasets_catalog() -> Dict[str, Any]:
     cache_dir = datasets._get_cache_dir()
     scotese_dir = datasets.paleo.find_scotese_data_dir()
 
+    import fnmatch
+
     catalog_specs = [
         {
             "id": "topography.earth",
             "category": "topography",
             "dataset": "earth",
-            "name": "Earth Global Relief (ETOPO 2022 15m)",
-            "description": "NOAA ETOPO 2022 global bedrock/surface relief grid.",
-            "expected_file": "ETOPO_2022_v1_15m_N90W180_bed.nc",
-            "default_params": {"resolution": "15m"},
+            "name": "Earth Global Relief (ETOPO / GEBCO)",
+            "description": "Earth global bedrock/surface relief grid from GMT server or ETOPO.",
+            "expected_file": "earth_relief_30m_g.grd",
+            "expected_patterns": ["earth_relief_*_g.grd", "ETOPO*.nc", "ETOPO*.grd*"],
+            "default_params": {"resolution": "30m"},
         },
         {
             "id": "topography.gebco",
@@ -53,7 +56,8 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "dataset": "gebco",
             "name": "GEBCO Global Bathymetry & Relief",
             "description": "Global ocean bathymetry and land topography grid.",
-            "expected_file": "gebco_downsampled.nc",
+            "expected_file": "gebco_grid.nc",
+            "expected_patterns": ["gebco*.nc", "gebco_grid.nc"],
             "default_params": {},
         },
         {
@@ -62,7 +66,8 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "dataset": "mars",
             "name": "Mars MOLA Global Topography",
             "description": "Mars Orbiter Laser Altimeter planetary relief.",
-            "expected_file": "mars_relief_30m.nc",
+            "expected_file": "mars_relief_30m_g.grd",
+            "expected_patterns": ["mars_relief_*_g.grd", "Mars_MGS_MOLA*.tif", "mars_relief_30m.nc"],
             "default_params": {"resolution": "30m"},
         },
         {
@@ -71,7 +76,8 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "dataset": "moon",
             "name": "Moon LOLA Global Topography",
             "description": "Lunar Orbiter Laser Altimeter global elevation.",
-            "expected_file": "moon_relief_30m.nc",
+            "expected_file": "moon_relief_30m_g.grd",
+            "expected_patterns": ["moon_relief_*_g.grd", "Lunar_LRO_LOLA*.tif", "moon_relief_30m.nc"],
             "default_params": {"resolution": "30m"},
         },
         {
@@ -80,7 +86,8 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "dataset": "venus",
             "name": "Venus Magellan Global Topography",
             "description": "Magellan radar altimetry global relief of Venus.",
-            "expected_file": "venus_relief_30m.nc",
+            "expected_file": "venus_relief_30m_g.grd",
+            "expected_patterns": ["venus_relief_*_g.grd", "Venus_Magellan*.nc", "venus_relief_30m.nc"],
             "default_params": {"resolution": "30m"},
         },
         {
@@ -88,9 +95,10 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "category": "topography",
             "dataset": "mercury",
             "name": "Mercury MESSENGER Global Topography",
-            "description": "USGS MESSENGER global DEM of Mercury.",
-            "expected_file": "Mercury_Messenger_USGS_DEM_Global_665m_v2.tif",
-            "default_params": {"downsample_factor": 10},
+            "description": "MESSENGER global relief of Mercury.",
+            "expected_file": "mercury_relief_30m_g.grd",
+            "expected_patterns": ["mercury_relief_*_g.grd", "Mercury_Messenger*.tif"],
+            "default_params": {"resolution": "30m"},
         },
         {
             "id": "tomography.s40rts",
@@ -99,6 +107,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "S40RTS Seismic Mantle Tomography",
             "description": "3D shear-wave velocity perturbations in the Earth's mantle.",
             "expected_file": "S40RTS_dvs.nc",
+            "expected_patterns": ["S40RTS*.nc"],
             "default_params": {"depth": 2850.0},
         },
         {
@@ -108,6 +117,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "EGM2008 Global Geoid Undulation",
             "description": "Earth Gravitational Model 2008 geoid height anomaly.",
             "expected_file": "us_nga_egm2008_1.tif",
+            "expected_patterns": ["*egm2008*.tif", "*egm2008*.nc"],
             "default_params": {"downsample_factor": 5},
         },
         {
@@ -117,6 +127,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "CRUST1.0 Global Crustal Boundaries",
             "description": "1x1 degree global crustal layers and Moho depth.",
             "expected_file": "crust1.0.tar.gz",
+            "expected_patterns": ["crust1*"],
             "default_params": {"layer": "moho"},
         },
         {
@@ -126,6 +137,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "LITHO1.0 Lithospheric Thickness & LAB",
             "description": "Global depth to the Lithosphere-Asthenosphere Boundary.",
             "expected_file": "LITHO1.0.nc",
+            "expected_patterns": ["LITHO*.nc"],
             "default_params": {"parameter": "lab"},
         },
         {
@@ -135,6 +147,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "Hoggard et al. (2016) Residual Dynamic Topography",
             "description": "Observational residual dynamic topography spot grid.",
             "expected_file": "spot.dat",
+            "expected_patterns": ["spot.dat", "*Hoggard*.csv"],
             "default_params": {"grid_step": 1.0},
         },
         {
@@ -144,6 +157,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "NOAA Global Bouguer Gravity Anomaly",
             "description": "Global Bouguer gravity anomaly grid.",
             "expected_file": "bouguer_anomaly.nc",
+            "expected_patterns": ["bouguer*.nc"],
             "default_params": {},
         },
         {
@@ -153,6 +167,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "EMAG2v3 Global Magnetic Anomalies",
             "description": "Earth Magnetic Anomaly Grid (2-arc-minute resolution).",
             "expected_file": "EMAG2_V3_Upward_Continued_GeoTIFF.zip",
+            "expected_patterns": ["EMAG2*.zip", "EMAG2*"],
             "default_params": {"downsample_factor": 5},
         },
         {
@@ -162,6 +177,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "Natural Earth 1:110m Land Polygons",
             "description": "Global continental and island polygon boundaries.",
             "expected_file": "ne_110m_land.zip",
+            "expected_patterns": ["ne_110m_land.zip", "ne_110m_land"],
             "default_params": {},
         },
         {
@@ -171,6 +187,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "Natural Earth 1:110m Coastline Vectors",
             "description": "Global coastline line vectors.",
             "expected_file": "ne_110m_coastline.zip",
+            "expected_patterns": ["ne_110m_coastline.zip", "ne_110m_coastline"],
             "default_params": {},
         },
         {
@@ -180,6 +197,7 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "Scotese PALEOMAP 1° PaleoDEMs & PaleoAtlas (0-540 Ma)",
             "description": "88 deep-time paleogeographic DEMs (1 deg) + PaleoAtlas v3 rasters & PlateModel.",
             "expected_file": "scotese",
+            "expected_patterns": ["scotese*"],
             "default_params": {"resolution": "1d"},
         },
         {
@@ -189,12 +207,14 @@ def get_datasets_catalog() -> Dict[str, Any]:
             "name": "Scotese PALEOMAP 6-arcmin High-Res PaleoDEMs (0-540 Ma)",
             "description": "88 high-resolution (6 arc-minute) PaleoDEMs from Zenodo Record 5460860.",
             "expected_file": "scotese",
+            "expected_patterns": ["scotese*"],
             "default_params": {"resolution": "6m"},
         },
     ]
 
     entries = []
     for spec in catalog_specs:
+        fields_meta: Dict[str, Any] = {}
         if spec["category"] == "paleo":
             cached = scotese_dir is not None and os.path.isdir(scotese_dir)
             size_bytes = 0
@@ -207,15 +227,53 @@ def get_datasets_catalog() -> Dict[str, Any]:
                         except OSError:
                             pass
         else:
-            local_path = os.path.join(cache_dir, spec["expected_file"])
-            cached = os.path.exists(local_path) and os.path.getsize(local_path) > 0
-            size_bytes = os.path.getsize(local_path) if cached else 0
+            pats = spec.get("expected_patterns") or [spec.get("expected_file", "")]
+            cached = False
+            size_bytes = 0
+            local_path = os.path.join(cache_dir, pats[0])
+
+            if os.path.isdir(cache_dir):
+                for item in sorted(os.listdir(cache_dir)):
+                    for pat in pats:
+                        if fnmatch.fnmatch(item.lower(), pat.lower()):
+                            p = os.path.join(cache_dir, item)
+                            try:
+                                if os.path.isfile(p) and os.path.getsize(p) > 0:
+                                    cached = True
+                                    size_bytes = os.path.getsize(p)
+                                    local_path = p
+                                    break
+                                elif os.path.isdir(p):
+                                    sz = sum(os.path.getsize(os.path.join(r, f)) for r, _, fl in os.walk(p) for f in fl)
+                                    if sz > 0:
+                                        cached = True
+                                        size_bytes = sz
+                                        local_path = p
+                                        break
+                            except OSError:
+                                pass
+                    if cached:
+                        break
+
+            if cached and os.path.isfile(local_path) and local_path.endswith((".nc", ".grd")):
+                try:
+                    insp = inspect_netcdf_file(local_path)
+                    fields_meta = {
+                        "detected_lat": insp.get("detected_lat"),
+                        "detected_lon": insp.get("detected_lon"),
+                        "detected_data": insp.get("detected_data"),
+                        "dimensions": insp.get("dimensions"),
+                        "variables": [v["name"] for v in insp.get("variables", [])],
+                    }
+                except Exception:
+                    pass
 
         entries.append({
             **spec,
             "cached": bool(cached),
             "size_bytes": int(size_bytes),
             "local_path": local_path,
+            **fields_meta,
         })
 
     return {

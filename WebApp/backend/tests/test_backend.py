@@ -255,4 +255,71 @@ def test_polygon_displacer_and_available_media():
     assert "scale=1.0" in code["python_script"]
 
 
+def test_online_dataset_caching_and_dual_resolution_evaluation():
+    """Verifies dataset caching detection, NetCDF variable auto-detection, and dual preview/full evaluation."""
+    from WebApp.backend.dataset_service import get_datasets_catalog
+    from WebApp.backend.preview_service import evaluate_preview_mesh, get_grid_buffer_for_worker
+
+    # 1. Test dataset catalog correctly detects cached grids and coordinates
+    cat = get_datasets_catalog()
+    assert "datasets" in cat
+    mars_entry = next((d for d in cat["datasets"] if d["id"] == "topography.mars"), None)
+    assert mars_entry is not None
+    assert mars_entry["cached"] is True
+    assert mars_entry["size_bytes"] > 0
+    assert mars_entry.get("detected_lat") == "lat"
+    assert mars_entry.get("detected_lon") == "lon"
+    assert mars_entry.get("detected_data") == "z"
+
+    earth_entry = next((d for d in cat["datasets"] if d["id"] == "topography.earth"), None)
+    assert earth_entry is not None
+    assert earth_entry["cached"] is True
+    assert earth_entry.get("detected_lat") == "lat"
+
+    # 2. Test evaluate_preview_mesh with preview vs full resolution override
+    proj = GlobeProject(
+        mode="custom",
+        geometry={
+            "distribution": "fibonacci",
+            "n_points": 500,
+            "preview_n_points": 200,
+            "radius": 40.0,
+            "hollow": False,
+        },
+        grids=[
+            GridSourceModel(
+                id="etopo_ds",
+                source="online",
+                dataset="topography.earth",
+                params={"resolution": "30m"},
+            )
+        ],
+        outer_displacements=[
+            DisplacerConfigModel(
+                type="GridDisplacer",
+                grid_id="etopo_ds",
+                scale_mode="physical",
+                vertical_exagg=40.0,
+                coastline_step=0.8,
+            )
+        ],
+    )
+
+    # Preview evaluation (uses preview_n_points = 200)
+    preview_res = evaluate_preview_mesh(proj, preview_n_points=200)
+    assert preview_res["n_outer"] == 200
+
+    # Full output evaluation (uses n_points = 500)
+    full_res = evaluate_preview_mesh(proj, preview_n_points=500)
+    assert full_res["n_outer"] == 500
+
+    # Grid worker buffer generation returns valid elevation
+    worker_buf = get_grid_buffer_for_worker(proj)
+    assert "grids" in worker_buf
+    assert "etopo_ds" in worker_buf["grids"]
+    assert worker_buf["grids"]["etopo_ds"]["vmin"] < 0
+    assert worker_buf["grids"]["etopo_ds"]["vmax"] > 0
+
+
+
 
