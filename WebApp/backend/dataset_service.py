@@ -7,6 +7,8 @@ from netCDF4 import Dataset as NCFile
 from globe3d import datasets
 from .models import DatasetDownloadRequest
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 SUPPORTED_EXTENSIONS = {
     ".nc",
@@ -352,4 +354,98 @@ def inspect_netcdf_file(filepath: str) -> Dict[str, Any]:
         "detected_lat": lat_var,
         "detected_lon": lon_var,
         "detected_data": data_var,
+    }
+
+
+def get_media_and_datasets() -> Dict[str, Any]:
+    """Discovers and categorizes all available vectors (shapefiles/GeoJSON), raster images,
+    and user uploads across the project and cache directories.
+    """
+    cache_dir = datasets._get_cache_dir()
+    uploads_dir = os.path.join(cache_dir, "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    land_shp = os.path.join(cache_dir, "ne_110m_land", "ne_110m_land.shp")
+    coast_shp = os.path.join(cache_dir, "ne_110m_coastline", "ne_110m_coastline.shp")
+
+    vectors: List[Dict[str, Any]] = [
+        {
+            "id": "builtin_land",
+            "name": "Natural Earth 1:110m Land Polygons (Built-in)",
+            "type": "polygon",
+            "category": "Built-in Vectors",
+            "identifier": "land",
+            "path": land_shp,
+            "cached": os.path.isfile(land_shp),
+            "description": "Standard continental landmass polygons for PolygonDisplacer & PolygonColourer.",
+        },
+        {
+            "id": "builtin_coastline",
+            "name": "Natural Earth 1:110m Coastlines (Built-in)",
+            "type": "line",
+            "category": "Built-in Vectors",
+            "identifier": "coastline",
+            "path": coast_shp,
+            "cached": os.path.isfile(coast_shp),
+            "description": "Coastline vectors for LineDisplacer & LineColourer.",
+        },
+    ]
+
+    vector_seen = {os.path.abspath(v["path"]) for v in vectors if v.get("path")}
+    for search_root in (uploads_dir, cache_dir, REPO_ROOT):
+        if not os.path.isdir(search_root):
+            continue
+        for root, dirs, files in os.walk(search_root):
+            dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "dist", "__pycache__", ".ipynb_checkpoints")]
+            for fn in files:
+                ext = os.path.splitext(fn)[1].lower()
+                if ext in (".shp", ".geojson", ".gpkg"):
+                    fpath = os.path.abspath(os.path.join(root, fn))
+                    if fpath not in vector_seen:
+                        vector_seen.add(fpath)
+                        vectors.append({
+                            "id": f"vec_{len(vectors)}",
+                            "name": fn,
+                            "type": "polygon" if ("poly" in fn.lower() or "land" in fn.lower()) else "line",
+                            "category": "Local / Uploaded Vectors",
+                            "identifier": fpath,
+                            "path": fpath,
+                            "cached": True,
+                            "size_bytes": os.path.getsize(fpath),
+                            "description": f"Vector geometry ({ext})",
+                        })
+
+    images: List[Dict[str, Any]] = []
+    img_seen = set()
+    for search_root in (
+        os.path.join(REPO_ROOT, "context", "height_maps"),
+        os.path.join(REPO_ROOT, "outputs"),
+        uploads_dir,
+        datasets.paleo.find_scotese_data_dir() or "",
+    ):
+        if not search_root or not os.path.isdir(search_root):
+            continue
+        for root, dirs, files in os.walk(search_root):
+            dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "dist", "__pycache__", ".ipynb_checkpoints")]
+            for fn in files:
+                ext = os.path.splitext(fn)[1].lower()
+                if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
+                    fpath = os.path.abspath(os.path.join(root, fn))
+                    if fpath not in img_seen:
+                        img_seen.add(fpath)
+                        images.append({
+                            "id": f"img_{len(images)}",
+                            "name": fn,
+                            "category": "Equirectangular & Surface Images",
+                            "identifier": fpath,
+                            "path": fpath,
+                            "size_bytes": os.path.getsize(fpath),
+                            "ext": ext,
+                        })
+
+    return {
+        "cache_dir": cache_dir,
+        "uploads_dir": uploads_dir,
+        "vectors": vectors,
+        "images": images,
     }

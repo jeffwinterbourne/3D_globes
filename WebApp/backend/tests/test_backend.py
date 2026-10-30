@@ -212,3 +212,47 @@ def test_bugfix_regressions():
         assert m["r_center"] + r_enc <= min_outer_eq + 0.25
 
 
+def test_polygon_displacer_and_available_media():
+    """Verifies PolygonDisplacer physical step in Python, shapefile rasterization, and media catalog."""
+    import numpy as np
+    from WebApp.backend.dataset_service import get_media_and_datasets
+    from WebApp.backend.preview_service import rasterize_shapefile_to_mask
+    from globe3d import datasets
+
+    # 1. Test media catalog returns vectors and images
+    media = get_media_and_datasets()
+    assert len(media["vectors"]) >= 2
+    assert any(v["identifier"] == "land" for v in media["vectors"])
+    assert any(v["identifier"] == "coastline" for v in media["vectors"])
+
+    # 2. Test fast PIL rasterization produces valid binary mask
+    land_shp = datasets.shapefiles.land()
+    mask = rasterize_shapefile_to_mask(land_shp, height=90, width=180, is_line=False)
+    assert mask.shape == (90, 180)
+    assert 0.15 < float(mask.mean()) < 0.45  # Land fraction on Earth is ~29-35%
+
+    # 3. Test PolygonDisplacer compilation on Python GlobeModel applies exact physical step
+    proj = _make_sample_project(hollow=False)
+    proj.outer_displacements = [
+        DisplacerConfigModel(
+            type="PolygonDisplacer",
+            shapefile="land",
+            displacement=2.5,
+            displace_inside=True,
+            scale=1.0,
+        )
+    ]
+    model = compile_globe_model(proj)
+    radii = np.linalg.norm(model.outer_vertices, axis=1)
+    diff = float(radii.max() - radii.min())
+    # Should have a 2.5 mm displacement step between land and ocean
+    assert 2.4 <= diff <= 2.6
+
+    # 4. Test code generation includes PolygonDisplacer with proper scale=1.0
+    code = generate_python_and_notebook(proj)
+    assert "PolygonDisplacer(" in code["python_script"]
+    assert "displacement=2.5" in code["python_script"]
+    assert "scale=1.0" in code["python_script"]
+
+
+

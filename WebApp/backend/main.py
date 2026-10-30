@@ -23,6 +23,7 @@ from .codegen import generate_python_and_notebook
 from .dataset_service import (
     browse_local_files,
     get_datasets_catalog,
+    get_media_and_datasets,
     inspect_netcdf_file,
     trigger_dataset_download,
 )
@@ -271,6 +272,12 @@ def filaments_match(req: FilamentMatchRequest) -> Dict[str, Any]:
 def datasets_catalog() -> Dict[str, Any]:
     """Lists all online datasets with local cache status and file sizes."""
     return get_datasets_catalog()
+
+
+@app.get("/api/datasets/available-media")
+def datasets_available_media() -> Dict[str, Any]:
+    """Returns categorized vector shapefiles, raster images, and local uploaded files."""
+    return get_media_and_datasets()
 
 
 @app.post("/api/datasets/download")

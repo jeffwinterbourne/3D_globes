@@ -191,6 +191,8 @@ class DisplacerConfigModel(StudioBaseModel):
     width_deg: float = 2.0
     profile: str = "gaussian"
     height: float = 2.0
+    displacement: Optional[float] = None
+    displace_inside: bool = True
     mode: str = "add"
 
 
@@ -239,6 +241,8 @@ class ColourerConfigModel(StudioBaseModel):
     lines: List[Any] = Field(default_factory=list)
     polygons: List[Any] = Field(default_factory=list)
     shapefile: Optional[str] = None
+    flood_inside: bool = True
+    background_color: Optional[str] = None
     radius_deg: float = 3.0
     width_deg: float = 1.5
     feather_deg: float = 0.5

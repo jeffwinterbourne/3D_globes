@@ -287,6 +287,46 @@ def _compute_displacer_scale(disp_cfg: DisplacerConfigModel, radius: float, grid
     return float(base_scale * disp_cfg.vert_exagg)
 
 
+def resolve_shapefile_path(shp: Optional[str], default_type: str = "land") -> Optional[str]:
+    """Resolves a shapefile identifier, filename, or relative path to an absolute path."""
+    val = str(shp).strip() if shp else ""
+    if not val or val.lower() in ("default", "builtin", "land", "natural_earth_land", "ne_110m_land"):
+        if default_type == "coastline" or "coast" in val.lower():
+            return datasets.shapefiles.coastline()
+        return datasets.shapefiles.land()
+    if val.lower() in ("coastline", "coastlines", "ne_110m_coastline"):
+        return datasets.shapefiles.coastline()
+    if os.path.isfile(val):
+        return os.path.abspath(val)
+    from .dataset_service import REPO_ROOT
+    for root_dir in (REPO_ROOT, datasets._get_cache_dir(), os.path.join(datasets._get_cache_dir(), "uploads")):
+        cand = os.path.join(root_dir, val)
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+    return datasets.shapefiles.coastline() if default_type == "coastline" else datasets.shapefiles.land()
+
+
+def resolve_image_path(img_path: Optional[str]) -> Optional[str]:
+    """Resolves an image path, filename, or cache upload to an absolute path."""
+    if not img_path or not str(img_path).strip():
+        return None
+    val = str(img_path).strip()
+    if os.path.isfile(val):
+        return os.path.abspath(val)
+    from .dataset_service import REPO_ROOT
+    for root_dir in (
+        REPO_ROOT,
+        os.path.join(REPO_ROOT, "context", "height_maps"),
+        os.path.join(REPO_ROOT, "outputs"),
+        datasets._get_cache_dir(),
+        os.path.join(datasets._get_cache_dir(), "uploads"),
+    ):
+        cand = os.path.join(root_dir, val)
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+    return None
+
+
 def _apply_displacers(
     target_proxy,
     displacers: List[DisplacerConfigModel],
@@ -317,44 +357,44 @@ def _apply_displacers(
             )
             target_proxy.displace(disp, scale=scale)
         elif dtype == "ConstantDisplacer":
-            disp = ConstantDisplacer(float(d_cfg.value))
-            target_proxy.displace(disp, scale=float(d_cfg.scale))
+            disp_val = float(d_cfg.displacement if d_cfg.displacement is not None else d_cfg.value)
+            eff_scale = float(d_cfg.scale) if (d_cfg.scale_mode in ("explicit", "direct") and abs(d_cfg.scale) >= 0.001) else 1.0
+            disp = ConstantDisplacer(disp_val)
+            target_proxy.displace(disp, scale=eff_scale)
         elif dtype == "PointDisplacer":
-            pts_src = d_cfg.shapefile if d_cfg.shapefile and os.path.exists(d_cfg.shapefile) else d_cfg.points
+            pts_src = resolve_shapefile_path(d_cfg.shapefile, default_type="land") if d_cfg.shapefile else d_cfg.points
             if pts_src:
+                disp_val = float(d_cfg.displacement if d_cfg.displacement is not None else d_cfg.height)
+                eff_scale = float(d_cfg.scale) if (d_cfg.scale_mode in ("explicit", "direct") and abs(d_cfg.scale) >= 0.001) else 1.0
                 disp = PointDisplacer(
                     pts_src,
-                    displacement=float(d_cfg.height),
+                    displacement=disp_val,
                     radius_degrees=float(d_cfg.radius_deg),
                 )
-                target_proxy.displace(disp, scale=float(d_cfg.scale))
+                target_proxy.displace(disp, scale=eff_scale)
         elif dtype == "LineDisplacer":
-            shp = d_cfg.shapefile
-            if not shp:
-                try:
-                    shp = datasets.shapefiles.coastline()
-                except Exception:
-                    shp = None
+            shp = resolve_shapefile_path(d_cfg.shapefile, default_type="coastline")
             if shp and os.path.exists(shp):
+                disp_val = float(d_cfg.displacement if d_cfg.displacement is not None else d_cfg.height)
+                eff_scale = float(d_cfg.scale) if (d_cfg.scale_mode in ("explicit", "direct") and abs(d_cfg.scale) >= 0.001) else 1.0
                 disp = LineDisplacer(
                     shp,
-                    displacement=float(d_cfg.height),
+                    displacement=disp_val,
                     width_degrees=float(d_cfg.width_deg),
                 )
-                target_proxy.displace(disp, scale=float(d_cfg.scale))
+                target_proxy.displace(disp, scale=eff_scale)
         elif dtype == "PolygonDisplacer":
-            shp = d_cfg.shapefile
-            if not shp:
-                try:
-                    shp = datasets.shapefiles.land()
-                except Exception:
-                    shp = None
+            shp = resolve_shapefile_path(d_cfg.shapefile, default_type="land")
             if shp and os.path.exists(shp):
+                disp_val = float(d_cfg.displacement if d_cfg.displacement is not None else d_cfg.height)
+                eff_inside = bool(d_cfg.displace_inside if hasattr(d_cfg, "displace_inside") and d_cfg.displace_inside is not None else True)
+                eff_scale = float(d_cfg.scale) if (d_cfg.scale_mode in ("explicit", "direct") and abs(d_cfg.scale) >= 0.001) else 1.0
                 disp = PolygonDisplacer(
                     shp,
-                    displacement=float(d_cfg.height),
+                    displacement=disp_val,
+                    displace_inside=eff_inside,
                 )
-                target_proxy.displace(disp, scale=float(d_cfg.scale))
+                target_proxy.displace(disp, scale=eff_scale)
 
 
 def _resolve_band_colors(project: GlobeProject, raw_colors: List[Any]) -> List[Tuple[int, int, int]]:
@@ -409,9 +449,9 @@ def _apply_colourers(
                 colourer_obj = GridColourer(g, colormap=c_cfg.cmap or "terrain", vmin=vmin, vmax=vmax)
 
         elif ctype == "ImageColourer":
-            img_path = c_cfg.image_path
-            if c_cfg.image_source == "paleo_raster" or not img_path:
-                img_path = textures_by_id.get(c_cfg.grid_id or "", first_tex) or img_path
+            img_path = resolve_image_path(c_cfg.image_path)
+            if not img_path:
+                img_path = textures_by_id.get(c_cfg.grid_id or "", first_tex)
             if img_path and os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGBA")
             else:
@@ -454,7 +494,7 @@ def _apply_colourers(
             colourer_obj = ConstantColourer((rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0))
 
         elif ctype == "PointColourer":
-            pts_src = c_cfg.shapefile if c_cfg.shapefile and os.path.exists(c_cfg.shapefile) else c_cfg.points
+            pts_src = resolve_shapefile_path(c_cfg.shapefile, default_type="land") if c_cfg.shapefile else c_cfg.points
             if pts_src:
                 rgb = parse_color(c_cfg.color)
                 colourer_obj = PointColourer(
@@ -464,12 +504,7 @@ def _apply_colourers(
                 )
 
         elif ctype == "LineColourer":
-            shp = c_cfg.shapefile
-            if not shp:
-                try:
-                    shp = datasets.shapefiles.coastline()
-                except Exception:
-                    shp = None
+            shp = resolve_shapefile_path(c_cfg.shapefile, default_type="coastline")
             if shp and os.path.exists(shp):
                 rgb = parse_color(c_cfg.color)
                 colourer_obj = LineColourer(
@@ -479,17 +514,19 @@ def _apply_colourers(
                 )
 
         elif ctype == "PolygonColourer":
-            shp = c_cfg.shapefile
-            if not shp:
-                try:
-                    shp = datasets.shapefiles.land()
-                except Exception:
-                    shp = None
+            shp = resolve_shapefile_path(c_cfg.shapefile, default_type="land")
             if shp and os.path.exists(shp):
                 rgb = parse_color(c_cfg.color)
+                fg_rgb = (rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
+                bg_tuple = None
+                if c_cfg.background_color:
+                    bg_rgb = parse_color(c_cfg.background_color)
+                    bg_tuple = (bg_rgb[0] / 255.0, bg_rgb[1] / 255.0, bg_rgb[2] / 255.0)
                 colourer_obj = PolygonColourer(
                     shp,
-                    color=(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0),
+                    color=fg_rgb,
+                    background_color=bg_tuple,
+                    flood_inside=bool(c_cfg.flood_inside),
                 )
 
         elif ctype == "SymbolColourer":

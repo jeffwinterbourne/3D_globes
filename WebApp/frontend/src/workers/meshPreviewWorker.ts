@@ -16,6 +16,12 @@ export interface CachedTextureBuffer {
   channels: number;
 }
 
+export interface CachedMaskBuffer {
+  width: number;
+  height: number;
+  values: Uint8Array;
+}
+
 export interface EvaluatedMeshResult {
   outerPositions: Float32Array;
   outerIndices: Uint32Array;
@@ -165,6 +171,21 @@ function sampleGridBuffer(
   return Number.isFinite(val) ? val : 0.0;
 }
 
+function sampleMaskBuffer(
+  mask: CachedMaskBuffer | undefined,
+  latDeg: number,
+  lonDeg: number
+): boolean {
+  if (!mask || !mask.values || mask.values.length === 0 || mask.width < 2 || mask.height < 2) {
+    return false;
+  }
+  const v = Math.max(0, Math.min(1, (90.0 - latDeg) / 180.0));
+  const u = Math.max(0, Math.min(1, (lonDeg + 180.0) / 360.0));
+  const row = Math.min(mask.height - 1, Math.floor(v * mask.height));
+  const col = Math.min(mask.width - 1, Math.floor(u * mask.width));
+  return mask.values[row * mask.width + col] > 0;
+}
+
 function angularDistanceDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const p1 = (lat1 * Math.PI) / 180;
   const p2 = (lat2 * Math.PI) / 180;
@@ -181,7 +202,8 @@ export function evaluateProjectMeshClient(
   project: GlobeProject,
   gridBuffers: Record<string, CachedGridBuffer> = {},
   textureBuffer?: CachedTextureBuffer | null,
-  overridePreviewPoints?: number
+  overridePreviewPoints?: number,
+  maskBuffers: Record<string, CachedMaskBuffer> = {}
 ): EvaluatedMeshResult {
   const geom = project.geometry;
   const nPts = overridePreviewPoints || geom.preview_n_points || 60000;
@@ -256,22 +278,25 @@ export function evaluateProjectMeshClient(
           }
         }
       } else if (disp.type === 'LineDisplacer') {
-        const buf = Object.values(gridBuffers)[0];
-        const d = (disp.displacement ?? 0.6) * (disp.scale ?? 1.0);
-        for (let i = 0; i < numVerts; i++) {
-          const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
-          if (Math.abs(z) < 180) {
-            outerRadii[i] += d;
+        const mask = (disp.shapefile && maskBuffers[disp.shapefile]) || maskBuffers['coastline'];
+        const d = (disp.displacement ?? 0.8) * (disp.scale_mode === 'direct' && disp.scale ? disp.scale : 1.0);
+        if (mask) {
+          for (let i = 0; i < numVerts; i++) {
+            if (sampleMaskBuffer(mask, lats[i], lons[i])) {
+              outerRadii[i] += d;
+            }
           }
         }
       } else if (disp.type === 'PolygonDisplacer') {
-        const buf = Object.values(gridBuffers)[0];
-        const d = (disp.displacement ?? 0.5) * (disp.scale ?? 1.0);
-        const inside = disp.displace_inside ?? true;
-        for (let i = 0; i < numVerts; i++) {
-          const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
-          if ((inside && z >= 0) || (!inside && z < 0)) {
-            outerRadii[i] += d;
+        const mask = (disp.shapefile && maskBuffers[disp.shapefile]) || maskBuffers['land'] || maskBuffers['default'];
+        const d = (disp.displacement ?? 1.0) * (disp.scale_mode === 'direct' && disp.scale ? disp.scale : 1.0);
+        const inside = disp.displace_inside !== false;
+        if (mask) {
+          for (let i = 0; i < numVerts; i++) {
+            const isInside = sampleMaskBuffer(mask, lats[i], lons[i]);
+            if ((inside && isInside) || (!inside && !isInside)) {
+              outerRadii[i] += d;
+            }
           }
         }
       }
@@ -545,14 +570,13 @@ export function evaluateProjectMeshClient(
           }
         }
       } else if (col.type === 'PolygonColourer') {
-        const buf = Object.values(gridBuffers)[0];
+        const mask = (col.shapefile && maskBuffers[col.shapefile]) || maskBuffers['land'] || maskBuffers['default'];
         const fg = parseColorToRgb01(col.color || [0.2, 0.7, 0.3]);
         const bg = col.background_color ? parseColorToRgb01(col.background_color) : null;
-        const inside = col.flood_inside ?? true;
+        const inside = col.flood_inside !== false;
         for (let i = 0; i < numVerts; i++) {
-          const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
-          const isLand = z >= 0;
-          if ((inside && isLand) || (!inside && !isLand)) {
+          const isInside = mask ? sampleMaskBuffer(mask, lats[i], lons[i]) : false;
+          if ((inside && isInside) || (!inside && !isInside)) {
             outerColors[i * 3] = fg[0];
             outerColors[i * 3 + 1] = fg[1];
             outerColors[i * 3 + 2] = fg[2];
@@ -563,14 +587,15 @@ export function evaluateProjectMeshClient(
           }
         }
       } else if (col.type === 'LineColourer') {
-        const buf = Object.values(gridBuffers)[0];
+        const mask = (col.shapefile && maskBuffers[col.shapefile]) || maskBuffers['coastline'];
         const fg = parseColorToRgb01(col.color || [0.1, 0.1, 0.1]);
-        for (let i = 0; i < numVerts; i++) {
-          const z = sampleGridBuffer(buf, lats[i], lons[i], paleoAge);
-          if (Math.abs(z) < 160) {
-            outerColors[i * 3] = fg[0];
-            outerColors[i * 3 + 1] = fg[1];
-            outerColors[i * 3 + 2] = fg[2];
+        if (mask) {
+          for (let i = 0; i < numVerts; i++) {
+            if (sampleMaskBuffer(mask, lats[i], lons[i])) {
+              outerColors[i * 3] = fg[0];
+              outerColors[i * 3 + 1] = fg[1];
+              outerColors[i * 3 + 2] = fg[2];
+            }
           }
         }
       } else if (col.type === 'PointColourer' || col.type === 'SymbolColourer') {
@@ -662,8 +687,8 @@ export function evaluateProjectMeshClient(
 // WebWorker listener when loaded as a worker
 if (typeof self !== 'undefined' && typeof (self as any).postMessage === 'function' && typeof window === 'undefined') {
   self.onmessage = (e: MessageEvent) => {
-    const { project, gridBuffers, textureBuffer, overridePreviewPoints } = e.data;
-    const res = evaluateProjectMeshClient(project, gridBuffers, textureBuffer, overridePreviewPoints);
+    const { project, gridBuffers, textureBuffer, overridePreviewPoints, maskBuffers } = e.data;
+    const res = evaluateProjectMeshClient(project, gridBuffers, textureBuffer, overridePreviewPoints, maskBuffers);
     (self as any).postMessage(res);
   };
 }

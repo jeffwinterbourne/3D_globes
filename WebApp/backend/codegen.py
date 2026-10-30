@@ -147,6 +147,25 @@ def generate_python_and_notebook(project: GlobeProject) -> Dict[str, str]:
                 )
             elif d.type == "ConstantDisplacer":
                 lines.append(f"model.outer.displace(ConstantDisplacer({d.value}), scale={d.scale})")
+            elif d.type == "PolygonDisplacer":
+                shp_expr = repr(d.shapefile) if d.shapefile else "datasets.shapefiles.land()"
+                disp_val = float(d.displacement if d.displacement is not None else d.height)
+                inside_val = bool(d.displace_inside if hasattr(d, "displace_inside") and d.displace_inside is not None else True)
+                lines.append(
+                    f"model.outer.displace(PolygonDisplacer({shp_expr}, displacement={disp_val}, displace_inside={inside_val}), scale=1.0)"
+                )
+            elif d.type == "LineDisplacer":
+                shp_expr = repr(d.shapefile) if d.shapefile else "datasets.shapefiles.coastline()"
+                disp_val = float(d.displacement if d.displacement is not None else d.height)
+                lines.append(
+                    f"model.outer.displace(LineDisplacer({shp_expr}, displacement={disp_val}, width_degrees={d.width_deg}), scale=1.0)"
+                )
+            elif d.type == "PointDisplacer":
+                disp_val = float(d.displacement if d.displacement is not None else d.height)
+                pts_expr = repr(d.shapefile or d.points)
+                lines.append(
+                    f"model.outer.displace(PointDisplacer({pts_expr}, displacement={disp_val}, radius_degrees={d.radius_deg}), scale=1.0)"
+                )
 
         if geom.hollow and geom.create_inner_mesh_from_outer_thickness is not None:
             lines.append(f"model.create_inner_mesh(thickness={geom.create_inner_mesh_from_outer_thickness})")
@@ -177,6 +196,22 @@ def generate_python_and_notebook(project: GlobeProject) -> Dict[str, str]:
             elif c.type == "ConstantColourer":
                 lines.append(
                     f"model.colour(ConstantColourer({c.color!r}), target={c.target!r}, selection={sel_arg})"
+                )
+            elif c.type == "PolygonColourer":
+                shp_expr = repr(c.shapefile) if c.shapefile else "datasets.shapefiles.land()"
+                inside_val = bool(c.flood_inside if hasattr(c, "flood_inside") else True)
+                lines.append(
+                    f"model.colour(PolygonColourer({shp_expr}, color={c.color!r}, flood_inside={inside_val}), target={c.target!r}, selection={sel_arg})"
+                )
+            elif c.type == "LineColourer":
+                shp_expr = repr(c.shapefile) if c.shapefile else "datasets.shapefiles.coastline()"
+                lines.append(
+                    f"model.colour(LineColourer({shp_expr}, color={c.color!r}, width_degrees={c.width_deg}), target={c.target!r}, selection={sel_arg})"
+                )
+            elif c.type == "ImageColourer":
+                img_expr = repr(c.image_path) if c.image_path else "None"
+                lines.append(
+                    f"model.colour(ImageColourer({img_expr}), target={c.target!r}, selection={sel_arg})"
                 )
             elif c.type == "SymbolColourer":
                 lines.append(

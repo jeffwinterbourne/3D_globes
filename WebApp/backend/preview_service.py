@@ -3,7 +3,7 @@
 import base64
 import io
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -12,9 +12,75 @@ from PIL import Image
 from scipy.interpolate import RegularGridInterpolator
 
 from globe3d import apply_banded_colormap, create_banded_colormap, datasets, parse_color
-from .engine import _generate_synthetic_grid, compile_globe_model, resolve_project_grids
+from .engine import (
+    _generate_synthetic_grid,
+    compile_globe_model,
+    resolve_project_grids,
+    resolve_shapefile_path,
+)
 from .filament_service import generate_palette_response
 from .models import GlobeProject
+
+_MASK_CACHE: Dict[Tuple[str, int, int, bool, float], np.ndarray] = {}
+
+
+def rasterize_shapefile_to_mask(
+    shp_path: str,
+    height: int = 180,
+    width: int = 360,
+    is_line: bool = False,
+    width_deg: float = 1.0,
+) -> np.ndarray:
+    """Rasterizes a vector shapefile/GeoJSON into an equirectangular uint8 mask array (height x width).
+    Values: 1 for inside/line, 0 for outside.
+    Row 0 corresponds to +90 deg North, Row (height-1) to -90 deg South.
+    Col 0 corresponds to -180 deg Lon, Col (width-1) to +180 deg Lon.
+    """
+    cache_key = (os.path.abspath(shp_path), height, width, bool(is_line), float(width_deg))
+    if cache_key in _MASK_CACHE:
+        return _MASK_CACHE[cache_key]
+
+    import geopandas as gpd
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+
+    def lonlat_to_xy(lon: float, lat: float) -> Tuple[float, float]:
+        x = (lon + 180.0) / 360.0 * (width - 1)
+        y = (90.0 - lat) / 180.0 * (height - 1)
+        return (x, y)
+
+    try:
+        gdf = gpd.read_file(shp_path)
+        for geom in gdf.geometry:
+            if geom is None or geom.is_empty:
+                continue
+            if is_line:
+                geoms = geom.geoms if hasattr(geom, "geoms") else [geom]
+                line_w = max(1, int(round((width_deg / 360.0) * width)))
+                for line in geoms:
+                    if hasattr(line, "coords"):
+                        pts = [lonlat_to_xy(x, y) for x, y in line.coords]
+                        if len(pts) >= 2:
+                            draw.line(pts, fill=1, width=line_w)
+            else:
+                geoms = geom.geoms if hasattr(geom, "geoms") else [geom]
+                for poly in geoms:
+                    if hasattr(poly, "exterior") and poly.exterior:
+                        exterior = [lonlat_to_xy(x, y) for x, y in poly.exterior.coords]
+                        if len(exterior) >= 3:
+                            draw.polygon(exterior, outline=1, fill=1)
+                        for interior in getattr(poly, "interiors", []):
+                            hole = [lonlat_to_xy(x, y) for x, y in interior.coords]
+                            if len(hole) >= 3:
+                                draw.polygon(hole, outline=0, fill=0)
+    except Exception as e:
+        print(f"Error rasterizing shapefile {shp_path}: {e}")
+
+    mask = np.asarray(img, dtype=np.uint8)
+    _MASK_CACHE[cache_key] = mask
+    return mask
 
 
 def _array_to_b64(arr: np.ndarray, dtype) -> str:
@@ -170,6 +236,53 @@ def get_grid_buffer_for_worker(project: GlobeProject, height: int = 180, width: 
         cmap = plt.get_cmap(cmap_name or "terrain")
         rgb_arr = (cmap(norm_v)[:, :, :3] * 255.0).astype(np.uint8)
 
+    # Collect and rasterize vector shapefiles for preview displacers & colourers
+    masks_out: Dict[str, Any] = {}
+    try:
+        land_shp = datasets.shapefiles.land()
+        land_m = rasterize_shapefile_to_mask(land_shp, height=height, width=width, is_line=False)
+        masks_out["land"] = {
+            "width": width,
+            "height": height,
+            "mask_u8_b64": _array_to_b64(land_m, np.uint8),
+        }
+        masks_out["default"] = masks_out["land"]
+    except Exception:
+        pass
+
+    try:
+        coast_shp = datasets.shapefiles.coastline()
+        coast_m = rasterize_shapefile_to_mask(coast_shp, height=height, width=width, is_line=True, width_deg=1.5)
+        masks_out["coastline"] = {
+            "width": width,
+            "height": height,
+            "mask_u8_b64": _array_to_b64(coast_m, np.uint8),
+        }
+    except Exception:
+        pass
+
+    for d in (project.outer_displacements or []) + (project.inner_displacements or []):
+        if d.enabled and d.type in ("PolygonDisplacer", "LineDisplacer") and d.shapefile:
+            shp_p = resolve_shapefile_path(d.shapefile, default_type="land" if d.type == "PolygonDisplacer" else "coastline")
+            if shp_p and os.path.isfile(shp_p) and d.shapefile not in masks_out:
+                m = rasterize_shapefile_to_mask(shp_p, height=height, width=width, is_line=(d.type == "LineDisplacer"), width_deg=float(getattr(d, "width_deg", 1.5)))
+                masks_out[d.shapefile] = {
+                    "width": width,
+                    "height": height,
+                    "mask_u8_b64": _array_to_b64(m, np.uint8),
+                }
+
+    for c in project.colourers or []:
+        if c.enabled and c.type in ("PolygonColourer", "LineColourer") and c.shapefile:
+            shp_p = resolve_shapefile_path(c.shapefile, default_type="land" if c.type == "PolygonColourer" else "coastline")
+            if shp_p and os.path.isfile(shp_p) and c.shapefile not in masks_out:
+                m = rasterize_shapefile_to_mask(shp_p, height=height, width=width, is_line=(c.type == "LineColourer"), width_deg=float(getattr(c, "width_deg", 1.5)))
+                masks_out[c.shapefile] = {
+                    "width": width,
+                    "height": height,
+                    "mask_u8_b64": _array_to_b64(m, np.uint8),
+                }
+
     return {
         "width": width,
         "height": height,
@@ -178,6 +291,7 @@ def get_grid_buffer_for_worker(project: GlobeProject, height: int = 180, width: 
         "elevation_f32_b64": _array_to_b64(sampled_elev, np.float32),
         "rgb_u8_b64": _array_to_b64(rgb_arr, np.uint8),
         "grids": grids_out,
+        "masks": masks_out,
     }
 
 
@@ -324,10 +438,15 @@ def render_2d_map_and_colorbar(project: GlobeProject) -> Dict[str, Any]:
                     rgb_map = np.full((180, 360, 3), c_rgb, dtype=np.uint8)
                 elif primary_col.type == "PolygonColourer":
                     fg_rgb = parse_color(primary_col.color or "#22c55e")
-                    north_up = np.flipud(grid.grid)
-                    rgb_map = np.zeros((north_up.shape[0], north_up.shape[1], 3), dtype=np.uint8)
-                    rgb_map[:, :] = (30, 64, 175)
-                    rgb_map[north_up >= 0] = fg_rgb
+                    bg_rgb = parse_color(primary_col.background_color) if primary_col.background_color else (30, 64, 175)
+                    shp_p = resolve_shapefile_path(primary_col.shapefile, default_type="land")
+                    poly_m = rasterize_shapefile_to_mask(shp_p, height=180, width=360, is_line=False)
+                    rgb_map = np.full((180, 360, 3), bg_rgb, dtype=np.uint8)
+                    inside = bool(primary_col.flood_inside)
+                    if inside:
+                        rgb_map[poly_m > 0] = fg_rgb
+                    else:
+                        rgb_map[poly_m == 0] = fg_rgb
 
     if rgb_map is None:
         vmin_val = float(np.nanmin(grid.grid))

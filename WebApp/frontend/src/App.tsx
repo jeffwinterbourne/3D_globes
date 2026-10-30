@@ -41,7 +41,7 @@ import { JsonCodeEditorPanel } from './components/panels/JsonCodeEditorPanel';
 const NAV_TABS: { id: ActiveTab; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'paleo', label: 'Paleo', icon: Globe2 },
   { id: 'geometry', label: 'Geometry', icon: Box },
-  { id: 'grids', label: 'Grids', icon: Database },
+  { id: 'grids', label: 'Datasets', icon: Database },
   { id: 'displacers', label: 'Displace', icon: Layers },
   { id: 'colourers', label: 'Colour', icon: Palette },
   { id: 'filaments', label: 'Filaments', icon: Sparkles },

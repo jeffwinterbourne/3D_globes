@@ -290,29 +290,165 @@ export const DisplacerStackPanel: React.FC = () => {
               </div>
             )}
 
-            {item.type !== 'GridDisplacer' && (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-slate-400 mb-1">Displacement (mm)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={item.displacement ?? 0.8}
-                    onChange={(e) => updateItem(idx, { displacement: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
-                  />
-                </div>
-                {(item.type === 'LineDisplacer' || item.type === 'PolygonDisplacer') && (
+            {item.type === 'ConstantDisplacer' && (
+              <div className="pt-1 border-t border-slate-800/80">
+                <label className="block text-slate-400 mb-1">Radial Offset / Displacement (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={item.displacement ?? item.value ?? 0.8}
+                  onChange={(e) => updateItem(idx, { displacement: Number(e.target.value), value: Number(e.target.value) })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                />
+              </div>
+            )}
+
+            {item.type === 'PointDisplacer' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-slate-400 mb-1">Shapefile / Builtin</label>
+                    <label className="block text-slate-400 mb-1">Displacement (mm)</label>
                     <input
-                      type="text"
-                      value={item.shapefile || item.local_path || ''}
-                      onChange={(e) => updateItem(idx, { shapefile: e.target.value })}
+                      type="number"
+                      step="0.1"
+                      value={item.displacement ?? 0.8}
+                      onChange={(e) => updateItem(idx, { displacement: Number(e.target.value) })}
                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
                     />
                   </div>
-                )}
+                  <div>
+                    <label className="block text-slate-400 mb-1">Radius (°)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.1"
+                      max="30"
+                      value={item.radius_degrees ?? item.radius_deg ?? 2.5}
+                      onChange={(e) => updateItem(idx, { radius_degrees: Number(e.target.value), radius_deg: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {item.type === 'LineDisplacer' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-slate-400 mb-1">Displacement (mm)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={item.displacement ?? 0.8}
+                      onChange={(e) => updateItem(idx, { displacement: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Buffer Width (°)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      max="15"
+                      value={item.width_degrees ?? item.width_deg ?? 0.8}
+                      onChange={(e) => updateItem(idx, { width_degrees: Number(e.target.value), width_deg: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Line Shapefile / Dataset</label>
+                  <select
+                    value={
+                      !item.shapefile || item.shapefile === 'coastline' || item.shapefile === 'dataset:shapefiles.coastline'
+                        ? 'coastline'
+                        : item.shapefile === 'land' || item.shapefile === 'dataset:shapefiles.land'
+                        ? 'land'
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'coastline') updateItem(idx, { shapefile: 'coastline' });
+                      else if (e.target.value === 'land') updateItem(idx, { shapefile: 'land' });
+                      else updateItem(idx, { shapefile: item.shapefile || '' });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 mb-1.5"
+                  >
+                    <option value="coastline">Natural Earth Coastlines (1:110m Built-in)</option>
+                    <option value="land">Natural Earth Land Polygons (1:110m Built-in)</option>
+                    <option value="custom">Custom Shapefile / File Path...</option>
+                  </select>
+                  {item.shapefile && item.shapefile !== 'coastline' && item.shapefile !== 'land' && item.shapefile !== 'dataset:shapefiles.coastline' && item.shapefile !== 'dataset:shapefiles.land' && (
+                    <input
+                      type="text"
+                      placeholder="Absolute or relative path to .shp / .geojson..."
+                      value={item.shapefile}
+                      onChange={(e) => updateItem(idx, { shapefile: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-[11px]"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {item.type === 'PolygonDisplacer' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-slate-400 mb-1">Displacement (mm)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={item.displacement ?? 1.0}
+                      onChange={(e) => updateItem(idx, { displacement: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Displace Region</label>
+                    <select
+                      value={item.displace_inside !== false ? 'inside' : 'outside'}
+                      onChange={(e) => updateItem(idx, { displace_inside: e.target.value === 'inside' })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200"
+                    >
+                      <option value="inside">Inside Polygons (Land / Continents)</option>
+                      <option value="outside">Outside Polygons (Oceans / Basins)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 mb-1">Polygon Shapefile / Dataset</label>
+                  <select
+                    value={
+                      !item.shapefile || item.shapefile === 'land' || item.shapefile === 'dataset:shapefiles.land'
+                        ? 'land'
+                        : item.shapefile === 'coastline' || item.shapefile === 'dataset:shapefiles.coastline'
+                        ? 'coastline'
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'land') updateItem(idx, { shapefile: 'land' });
+                      else if (e.target.value === 'coastline') updateItem(idx, { shapefile: 'coastline' });
+                      else updateItem(idx, { shapefile: item.shapefile || '' });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 mb-1.5"
+                  >
+                    <option value="land">Natural Earth Land Polygons (1:110m Built-in)</option>
+                    <option value="coastline">Natural Earth Coastlines (1:110m Built-in)</option>
+                    <option value="custom">Custom Shapefile / File Path...</option>
+                  </select>
+                  {item.shapefile && item.shapefile !== 'land' && item.shapefile !== 'coastline' && item.shapefile !== 'dataset:shapefiles.land' && item.shapefile !== 'dataset:shapefiles.coastline' && (
+                    <input
+                      type="text"
+                      placeholder="Absolute or relative path to .shp / .geojson..."
+                      value={item.shapefile}
+                      onChange={(e) => updateItem(idx, { shapefile: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-[11px]"
+                    />
+                  )}
+                </div>
               </div>
             )}
           </div>

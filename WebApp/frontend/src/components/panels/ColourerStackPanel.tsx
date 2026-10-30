@@ -263,14 +263,44 @@ export const ColourerStackPanel: React.FC = () => {
             {col.type === 'ImageColourer' && (
               <div className="space-y-2 pt-1">
                 <div>
-                  <label className="block text-slate-400 mb-1">Image Path / Source</label>
-                  <input
-                    type="text"
-                    placeholder="Path to equirectangular image (.jpg / .png)..."
-                    value={col.image_path || ''}
-                    onChange={(e) => updateItem(idx, { image_path: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
-                  />
+                  <label className="block text-slate-400 mb-1">Image Source / Preset</label>
+                  <select
+                    value={
+                      !col.image_path
+                        ? 'paleo_raster'
+                        : col.image_path.includes('world_topo')
+                        ? 'world_topo'
+                        : col.image_path.includes('coastline')
+                        ? 'coastline_img'
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'paleo_raster') {
+                        updateItem(idx, { image_source: 'paleo_atlas', image_path: '' });
+                      } else if (e.target.value === 'world_topo') {
+                        updateItem(idx, { image_source: 'local', image_path: 'context/height_maps/world_topo.png' });
+                      } else if (e.target.value === 'coastline_img') {
+                        updateItem(idx, { image_source: 'local', image_path: 'context/height_maps/coastline.png' });
+                      } else {
+                        updateItem(idx, { image_source: 'local', image_path: col.image_path || '' });
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 mb-1.5"
+                  >
+                    <option value="paleo_raster">Scotese PaleoAtlas Active Epoch Texture</option>
+                    <option value="world_topo">Earth Relief Texture (world_topo.png)</option>
+                    <option value="coastline_img">Coastline Mask Texture (coastline.png)</option>
+                    <option value="custom">Custom Image Path / Upload...</option>
+                  </select>
+                  {col.image_path && (
+                    <input
+                      type="text"
+                      placeholder="Path to equirectangular image (.jpg / .png)..."
+                      value={col.image_path || ''}
+                      onChange={(e) => updateItem(idx, { image_path: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-[11px]"
+                    />
+                  )}
                 </div>
                 <div className="p-2 rounded bg-slate-950 border border-slate-800 space-y-1">
                   <div className="text-[11px] font-semibold text-slate-300">
@@ -308,9 +338,136 @@ export const ColourerStackPanel: React.FC = () => {
               </div>
             )}
 
+            {col.type === 'PolygonColourer' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div>
+                  <label className="block text-slate-400 mb-1">Polygon Shapefile / Dataset</label>
+                  <select
+                    value={
+                      !col.shapefile || col.shapefile === 'land' || col.shapefile === 'dataset:shapefiles.land'
+                        ? 'land'
+                        : col.shapefile === 'coastline' || col.shapefile === 'dataset:shapefiles.coastline'
+                        ? 'coastline'
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'land') updateItem(idx, { shapefile: 'land' });
+                      else if (e.target.value === 'coastline') updateItem(idx, { shapefile: 'coastline' });
+                      else updateItem(idx, { shapefile: col.shapefile || '' });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 mb-1.5"
+                  >
+                    <option value="land">Natural Earth Land Polygons (1:110m Built-in)</option>
+                    <option value="coastline">Natural Earth Coastlines (1:110m Built-in)</option>
+                    <option value="custom">Custom Shapefile / GeoJSON Path...</option>
+                  </select>
+                  {col.shapefile && col.shapefile !== 'land' && col.shapefile !== 'coastline' && col.shapefile !== 'dataset:shapefiles.land' && col.shapefile !== 'dataset:shapefiles.coastline' && (
+                    <input
+                      type="text"
+                      placeholder="Absolute or relative path to .shp / .geojson..."
+                      value={col.shapefile}
+                      onChange={(e) => updateItem(idx, { shapefile: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-[11px]"
+                    />
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-slate-400 mb-1">Flood Region</label>
+                    <select
+                      value={col.flood_inside !== false ? 'inside' : 'outside'}
+                      onChange={(e) => updateItem(idx, { flood_inside: e.target.value === 'inside' })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200"
+                    >
+                      <option value="inside">Inside Polygons (Land)</option>
+                      <option value="outside">Outside Polygons (Oceans)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="block text-slate-400 mb-1">Fill Color</span>
+                      <input
+                        type="color"
+                        value={hexVal}
+                        onChange={(e) => updateItem(idx, { color: e.target.value })}
+                        className="w-10 h-7 rounded bg-slate-950 border border-slate-700 cursor-pointer"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-slate-400 mb-1">Background</span>
+                      <input
+                        type="color"
+                        value={typeof col.background_color === 'string' ? col.background_color : '#1e3a8a'}
+                        onChange={(e) => updateItem(idx, { background_color: e.target.value })}
+                        className="w-10 h-7 rounded bg-slate-950 border border-slate-700 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {col.type === 'LineColourer' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div>
+                  <label className="block text-slate-400 mb-1">Line Shapefile / Dataset</label>
+                  <select
+                    value={
+                      !col.shapefile || col.shapefile === 'coastline' || col.shapefile === 'dataset:shapefiles.coastline'
+                        ? 'coastline'
+                        : col.shapefile === 'land' || col.shapefile === 'dataset:shapefiles.land'
+                        ? 'land'
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === 'coastline') updateItem(idx, { shapefile: 'coastline' });
+                      else if (e.target.value === 'land') updateItem(idx, { shapefile: 'land' });
+                      else updateItem(idx, { shapefile: col.shapefile || '' });
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 mb-1.5"
+                  >
+                    <option value="coastline">Natural Earth Coastlines (1:110m Built-in)</option>
+                    <option value="land">Natural Earth Land Polygons (1:110m Built-in)</option>
+                    <option value="custom">Custom Line Shapefile...</option>
+                  </select>
+                  {col.shapefile && col.shapefile !== 'coastline' && col.shapefile !== 'land' && col.shapefile !== 'dataset:shapefiles.coastline' && col.shapefile !== 'dataset:shapefiles.land' && (
+                    <input
+                      type="text"
+                      placeholder="Absolute or relative path to .shp / .geojson..."
+                      value={col.shapefile}
+                      onChange={(e) => updateItem(idx, { shapefile: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-[11px]"
+                    />
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 items-center">
+                  <div>
+                    <label className="block text-slate-400 mb-1">Line Width (°)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      max="15"
+                      value={col.width_degrees ?? 0.8}
+                      onChange={(e) => updateItem(idx, { width_degrees: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Line Color</span>
+                    <input
+                      type="color"
+                      value={hexVal}
+                      onChange={(e) => updateItem(idx, { color: e.target.value })}
+                      className="w-10 h-7 rounded bg-slate-950 border border-slate-700 cursor-pointer"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {(col.type === 'ConstantColourer' ||
-              col.type === 'PolygonColourer' ||
-              col.type === 'LineColourer' ||
               col.type === 'PointColourer' ||
               col.type === 'SymbolColourer') && (
               <div className="flex items-center justify-between pt-1">

@@ -25,6 +25,7 @@ import {
 } from '../utils/projectNormalizer';
 import {
   CachedGridBuffer,
+  CachedMaskBuffer,
   CachedTextureBuffer,
   EvaluatedMeshResult,
   evaluateProjectMeshClient,
@@ -287,6 +288,7 @@ interface ProjectStoreState {
   jsonError: string | null;
 
   gridBuffers: Record<string, CachedGridBuffer>;
+  maskBuffers: Record<string, CachedMaskBuffer>;
   textureBuffer: CachedTextureBuffer | null;
   meshData: EvaluatedMeshResult;
   magnetAnalysis: MagnetOptimizationResult;
@@ -359,6 +361,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   jsonError: null,
 
   gridBuffers: {},
+  maskBuffers: {},
   textureBuffer: null,
   meshData: initialMesh,
   magnetAnalysis: initialMagnets,
@@ -383,7 +386,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const state = get();
     const next = normalizeIncomingProject(rawNext);
     const past = recordHistory ? [...state.past.slice(-25), state.project] : state.past;
-    const meshData = evaluateProjectMeshClient(next, state.gridBuffers, state.textureBuffer);
+    const meshData = evaluateProjectMeshClient(next, state.gridBuffers, state.textureBuffer, undefined, state.maskBuffers);
     const magnetAnalysis = computeClientMagnetProfile(next, meshData);
     set({
       project: next,
@@ -610,7 +613,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     if (state.past.length === 0) return;
     const prev = state.past[state.past.length - 1];
     const nextPast = state.past.slice(0, -1);
-    const meshData = evaluateProjectMeshClient(prev, state.gridBuffers, state.textureBuffer);
+    const meshData = evaluateProjectMeshClient(prev, state.gridBuffers, state.textureBuffer, undefined, state.maskBuffers);
     set({
       project: prev,
       past: nextPast,
@@ -625,7 +628,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     if (state.future.length === 0) return;
     const next = state.future[0];
     const nextFuture = state.future.slice(1);
-    const meshData = evaluateProjectMeshClient(next, state.gridBuffers, state.textureBuffer);
+    const meshData = evaluateProjectMeshClient(next, state.gridBuffers, state.textureBuffer, undefined, state.maskBuffers);
     set({
       project: next,
       past: [...state.past, state.project],
@@ -641,7 +644,8 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       state.project,
       state.gridBuffers,
       state.textureBuffer,
-      overridePoints
+      overridePoints,
+      state.maskBuffers
     );
     set({
       meshData,
@@ -713,11 +717,32 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         };
       }
 
+      const nextMaskBuffers: Record<string, CachedMaskBuffer> = { ...state.maskBuffers };
+      if (data.masks && typeof data.masks === 'object') {
+        for (const [mid, mInfo] of Object.entries<any>(data.masks)) {
+          const b64 = mInfo?.mask_u8_b64 || mInfo?.values_b64;
+          if (b64) {
+            nextMaskBuffers[mid] = {
+              width: mInfo.width || data.width || 360,
+              height: mInfo.height || data.height || 180,
+              values: decodeBase64ToUint8(b64),
+            };
+          }
+        }
+      }
+
       const currentProj = get().project;
-      const meshData = evaluateProjectMeshClient(currentProj, nextGridBuffers, nextTexture);
+      const meshData = evaluateProjectMeshClient(
+        currentProj,
+        nextGridBuffers,
+        nextTexture,
+        undefined,
+        nextMaskBuffers
+      );
       const magnetAnalysis = computeClientMagnetProfile(currentProj, meshData);
       set({
         gridBuffers: nextGridBuffers,
+        maskBuffers: nextMaskBuffers,
         textureBuffer: nextTexture,
         meshData,
         magnetAnalysis,

@@ -1,16 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Calculator,
+  CheckCircle2,
+  ChevronRight,
   Database,
   FileSearch,
   FolderOpen,
+  Image as ImageIcon,
+  Layers,
   Plus,
   RefreshCw,
   Trash2,
   Upload,
 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
-import { GridSourceConfig, GridTransform } from '../../types/globeProject';
+import { DisplacerConfig, ColourerConfig, GridSourceConfig, GridTransform } from '../../types/globeProject';
+
+interface MediaItem {
+  id: string;
+  name: string;
+  type?: string;
+  category?: string;
+  identifier: string;
+  path: string;
+  cached?: boolean;
+  size_bytes?: number;
+  description?: string;
+  ext?: string;
+}
 
 const ONLINE_DATASET_CATEGORIES: Record<
   string,
@@ -33,6 +50,7 @@ const ONLINE_DATASET_CATEGORIES: Record<
 export const GridSourcesPanel: React.FC = () => {
   const {
     project,
+    setProject,
     upsertGrid,
     removeGrid,
     fetchGridDataFromBackend,
@@ -40,10 +58,90 @@ export const GridSourcesPanel: React.FC = () => {
     setStatusMessage,
   } = useProjectStore();
 
+  const [activeSection, setActiveSection] = useState<'grids' | 'vectors' | 'images' | 'browse'>('grids');
   const [newGridId, setNewGridId] = useState('');
   const [inspectInfo, setInspectInfo] = useState<Record<string, any>>({});
   const [browseFiles, setBrowseFiles] = useState<string[]>([]);
   const [browsingGridId, setBrowsingGridId] = useState<string | null>(null);
+
+  // Available media from backend
+  const [vectors, setVectors] = useState<MediaItem[]>([
+    {
+      id: 'builtin_land',
+      name: 'Natural Earth 1:110m Land Polygons (Built-in)',
+      type: 'polygon',
+      category: 'Built-in Vectors',
+      identifier: 'land',
+      path: '.download_cache/ne_110m_land/ne_110m_land.shp',
+      cached: true,
+      description: 'Standard continental landmass polygons for PolygonDisplacer & PolygonColourer.',
+    },
+    {
+      id: 'builtin_coastline',
+      name: 'Natural Earth 1:110m Coastlines (Built-in)',
+      type: 'line',
+      category: 'Built-in Vectors',
+      identifier: 'coastline',
+      path: '.download_cache/ne_110m_coastline/ne_110m_coastline.shp',
+      cached: true,
+      description: 'Coastline vectors for LineDisplacer & LineColourer.',
+    },
+  ]);
+  const [images, setImages] = useState<MediaItem[]>([
+    {
+      id: 'img_world_topo',
+      name: 'world_topo.png',
+      identifier: 'context/height_maps/world_topo.png',
+      path: 'context/height_maps/world_topo.png',
+      ext: '.png',
+      category: 'Built-in Textures',
+    },
+    {
+      id: 'img_coastline',
+      name: 'coastline.png',
+      identifier: 'context/height_maps/coastline.png',
+      path: 'context/height_maps/coastline.png',
+      ext: '.png',
+      category: 'Built-in Textures',
+    },
+  ]);
+  const [currentBrowseDir, setCurrentBrowseDir] = useState<string>('');
+  const [browseDirs, setBrowseDirs] = useState<Array<{ name: string; path: string }>>([]);
+  const [dirFiles, setDirFiles] = useState<Array<{ name: string; path: string; ext: string; size_bytes?: number }>>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const loadMedia = async () => {
+    try {
+      const res = await fetch('/api/datasets/available-media');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.vectors) && data.vectors.length > 0) setVectors(data.vectors);
+        if (Array.isArray(data.images) && data.images.length > 0) setImages(data.images);
+      }
+    } catch {
+      // offline fallback
+    }
+  };
+
+  const loadDirectory = async (path?: string) => {
+    try {
+      const q = path ? `?path=${encodeURIComponent(path)}` : '';
+      const res = await fetch(`/api/files/browse${q}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentBrowseDir(data.current_path || '');
+        setBrowseDirs(data.directories || []);
+        setDirFiles(data.files || []);
+      }
+    } catch {
+      // offline fallback
+    }
+  };
+
+  useEffect(() => {
+    loadMedia();
+    loadDirectory();
+  }, []);
 
   const gridEntries = Object.entries(project.grids || {});
 
@@ -88,6 +186,132 @@ export const GridSourcesPanel: React.FC = () => {
     } catch {
       setStatusMessage('Could not inspect NetCDF variables (backend offline)');
     }
+  };
+
+  const handleUploadFileToCache = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    setStatusMessage(`Uploading ${file.name}...`);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/files/upload', { method: 'POST', body: form });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(`Uploaded ${data.filename} (${Math.round((data.size_bytes || 0) / 1024)} KB)`);
+        loadMedia();
+        loadDirectory(currentBrowseDir);
+      }
+    } catch (err: any) {
+      setStatusMessage(`Upload failed: ${err.message || 'error'}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // One-click actions from Datasets into Displacers & Colourers
+  const addAsPolygonDisplacer = (shapefile: string) => {
+    const currentDisps = project.outer_displacements || [];
+    const newDisp: DisplacerConfig = {
+      id: `disp_poly_${Date.now().toString().slice(-4)}`,
+      enabled: true,
+      type: 'PolygonDisplacer',
+      shapefile,
+      displacement: 1.0,
+      displace_inside: true,
+      scale: 1.0,
+      scale_mode: 'direct',
+    };
+    setProject({
+      ...project,
+      outer_displacements: [...currentDisps, newDisp],
+    });
+    setStatusMessage(`Added PolygonDisplacer (${shapefile}) to Outer Shell!`);
+  };
+
+  const addAsPolygonColourer = (shapefile: string) => {
+    const currentCols = project.colourers || [];
+    const newCol: ColourerConfig = {
+      id: `col_poly_${Date.now().toString().slice(-4)}`,
+      enabled: true,
+      type: 'PolygonColourer',
+      target: 'outer',
+      selection: 'all',
+      shapefile,
+      color: '#22c55e',
+      background_color: '#1e3a8a',
+      flood_inside: true,
+    };
+    setProject({
+      ...project,
+      colourers: [...currentCols, newCol],
+    });
+    setStatusMessage(`Added PolygonColourer (${shapefile}) to Colourer Stack!`);
+  };
+
+  const addAsLineDisplacer = (shapefile: string) => {
+    const currentDisps = project.outer_displacements || [];
+    const newDisp: DisplacerConfig = {
+      id: `disp_line_${Date.now().toString().slice(-4)}`,
+      enabled: true,
+      type: 'LineDisplacer',
+      shapefile,
+      displacement: 0.8,
+      width_degrees: 0.8,
+      scale: 1.0,
+      scale_mode: 'direct',
+    };
+    setProject({
+      ...project,
+      outer_displacements: [...currentDisps, newDisp],
+    });
+    setStatusMessage(`Added LineDisplacer (${shapefile}) to Outer Shell!`);
+  };
+
+  const addAsImageColourer = (imagePath: string) => {
+    const currentCols = project.colourers || [];
+    const newCol: ColourerConfig = {
+      id: `col_img_${Date.now().toString().slice(-4)}`,
+      enabled: true,
+      type: 'ImageColourer',
+      target: 'outer',
+      selection: 'all',
+      image_source: 'local',
+      image_path: imagePath,
+      preprocessors: [],
+    };
+    setProject({
+      ...project,
+      colourers: [...currentCols, newCol],
+    });
+    setStatusMessage(`Added ImageColourer (${imagePath}) to Colourer Stack!`);
+  };
+
+  const addTransform = (gridId: string, type: GridTransform['type']) => {
+    const current = project.grids[gridId];
+    if (!current) return;
+    const transforms = current.transforms || [];
+    const next: GridTransform = { type };
+    if (type === 'downsample') {
+      next.step_lat = 10;
+      next.step_lon = 10;
+    } else if (type === 'airy_moho') {
+      next.ref_thickness = 30000;
+      next.ocean_scale = 5.5;
+      next.land_scale = 6.5;
+    } else if (type === 'weighted_composite') {
+      next.weight_a = 1.0;
+      next.weight_b = 300.0;
+      next.grid_b_id = Object.keys(project.grids).find((k) => k !== gridId);
+    } else if (type === 'reconstruct') {
+      next.age = 100.0;
+      next.plate_model = 'Scotese_PALEOMAP';
+    } else if (type === 'scale_offset') {
+      next.scale = 1.0;
+      next.offset = 0.0;
+    }
+    upsertGrid(gridId, { ...current, transforms: [...transforms, next] });
   };
 
   const handleBrowseLocal = async (gridId: string) => {
@@ -136,82 +360,396 @@ export const GridSourcesPanel: React.FC = () => {
     }
   };
 
-  const addTransform = (gridId: string, type: GridTransform['type']) => {
-    const current = project.grids[gridId];
-    const nextTransforms = [...(current.transforms || [])];
-    if (type === 'downsample') {
-      nextTransforms.push({ type: 'downsample', step_lat: 10, step_lon: 10 });
-    } else if (type === 'airy_moho') {
-      nextTransforms.push({
-        type: 'airy_moho',
-        ref_thickness: 30000,
-        rho_c: 2800,
-        rho_m: 3300,
-      });
-    } else if (type === 'weighted_composite') {
-      const otherId = Object.keys(project.grids).find((k) => k !== gridId) || gridId;
-      nextTransforms.push({
-        type: 'weighted_composite',
-        grid_b_id: otherId,
-        weight_a: 1.0,
-        weight_b: 300.0,
-        offset: 0.0,
-      });
-    } else if (type === 'reconstruct') {
-      nextTransforms.push({
-        type: 'reconstruct',
-        age: 250.0,
-        plate_model: 'Scotese_PALEOMAP',
-      });
-    } else if (type === 'scale_offset') {
-      nextTransforms.push({ type: 'scale_offset', scale: 1.0, offset: 0.0 });
-    }
-    upsertGrid(gridId, { ...current, transforms: nextTransforms });
-  };
-
   return (
     <div className="space-y-4 text-xs">
-      {/* Header & Add Grid Bar */}
-      <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-semibold text-slate-200">
-            <Database className="w-4 h-4 text-sky-400" />
-            <span>Named GeographicGrids ({gridEntries.length})</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setDatasetModalOpen(true)}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-[11px]"
-            >
-              Dataset Cache
-            </button>
-            <button
-              onClick={() => fetchGridDataFromBackend()}
-              title="Sync grid buffers from Python"
-              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-1.5">
-          <input
-            type="text"
-            placeholder="New grid ID (e.g. moho_grid, tomo_2850)..."
-            value={newGridId}
-            onChange={(e) => setNewGridId(e.target.value)}
-            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
-          />
-          <button
-            onClick={handleAddGrid}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Grid</span>
-          </button>
-        </div>
+      {/* Unified Dataset & Media Navigation Tabs */}
+      <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/80 rounded-xl border border-slate-800">
+        <button
+          onClick={() => setActiveSection('grids')}
+          className={`py-1.5 px-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
+            activeSection === 'grids'
+              ? 'bg-sky-500/20 text-sky-300 border border-sky-400/40 shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Database className="w-3.5 h-3.5" />
+          <span>Grids</span>
+        </button>
+        <button
+          onClick={() => setActiveSection('vectors')}
+          className={`py-1.5 px-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
+            activeSection === 'vectors'
+              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Vectors</span>
+        </button>
+        <button
+          onClick={() => setActiveSection('images')}
+          className={`py-1.5 px-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
+            activeSection === 'images'
+              ? 'bg-purple-500/20 text-purple-300 border border-purple-400/40 shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <ImageIcon className="w-3.5 h-3.5" />
+          <span>Images</span>
+        </button>
+        <button
+          onClick={() => setActiveSection('browse')}
+          className={`py-1.5 px-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
+            activeSection === 'browse'
+              ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40 shadow'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <FolderOpen className="w-3.5 h-3.5" />
+          <span>Browse</span>
+        </button>
       </div>
+
+      {/* SECTION 1: VECTORS & SHAPEFILES */}
+      {activeSection === 'vectors' && (
+        <div className="space-y-3">
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-emerald-400" />
+                <span>Vector Shapefiles & Boundaries ({vectors.length})</span>
+              </span>
+              <button
+                onClick={loadMedia}
+                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400"
+                title="Refresh vector list"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Apply continental land polygons, coastlines, or custom GeoJSON/Shapefiles directly to the
+              Displacer stack (PolygonDisplacer / LineDisplacer) or Colourer stack.
+            </p>
+          </div>
+
+          <div className="space-y-2.5">
+            {vectors.map((vec) => (
+              <div
+                key={vec.id}
+                className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                      <span>{vec.name}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] uppercase font-mono">
+                        {vec.type}
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-400 truncate max-w-[280px]">
+                      {vec.identifier}
+                    </div>
+                  </div>
+                  {vec.cached && (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Ready</span>
+                    </span>
+                  )}
+                </div>
+
+                {vec.description && (
+                  <p className="text-[11px] text-slate-400">{vec.description}</p>
+                )}
+
+                <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-800">
+                  {vec.type === 'line' ? (
+                    <>
+                      <button
+                        onClick={() => addAsLineDisplacer(vec.identifier)}
+                        className="py-1 px-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-400/30 font-semibold text-[11px]"
+                      >
+                        + LineDisplacer
+                      </button>
+                      <button
+                        onClick={() => {
+                          const currentCols = project.colourers || [];
+                          setProject({
+                            ...project,
+                            colourers: [
+                              ...currentCols,
+                              {
+                                id: `col_line_${Date.now().toString().slice(-4)}`,
+                                enabled: true,
+                                type: 'LineColourer',
+                                target: 'outer',
+                                selection: 'all',
+                                shapefile: vec.identifier,
+                                color: '#0f172a',
+                                width_degrees: 0.8,
+                              },
+                            ],
+                          });
+                          setStatusMessage(`Added LineColourer (${vec.name})!`);
+                        }}
+                        className="py-1 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 font-semibold text-[11px]"
+                      >
+                        + LineColourer
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => addAsPolygonDisplacer(vec.identifier)}
+                        className="py-1 px-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-400/30 font-semibold text-[11px]"
+                      >
+                        + PolygonDisplacer
+                      </button>
+                      <button
+                        onClick={() => addAsPolygonColourer(vec.identifier)}
+                        className="py-1 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 font-semibold text-[11px]"
+                      >
+                        + PolygonColourer
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 2: IMAGES & TEXTURES */}
+      {activeSection === 'images' && (
+        <div className="space-y-3">
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-purple-300 flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4 text-purple-400" />
+                <span>Surface Images & Planetary Maps ({images.length})</span>
+              </span>
+              <button
+                onClick={loadMedia}
+                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-400"
+                title="Refresh images"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Apply equirectangular textures, satellite relief, and Scotese PaleoAtlas maps directly to
+              the vertex Colourer stack (ImageColourer) with optional hillshade removal.
+            </p>
+          </div>
+
+          <div className="space-y-2.5">
+            {images.map((img) => (
+              <div
+                key={img.id}
+                className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-bold text-slate-200">{img.name}</div>
+                    <div className="text-[11px] font-mono text-slate-400 truncate max-w-[280px]">
+                      {img.identifier}
+                    </div>
+                  </div>
+                  {img.size_bytes ? (
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {Math.round(img.size_bytes / 1024)} KB
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="pt-1 border-t border-slate-800">
+                  <button
+                    onClick={() => addAsImageColourer(img.identifier)}
+                    className="w-full py-1.5 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-400/30 font-semibold text-[11px] flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Apply as ImageColourer Layer</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 3: BROWSE & UPLOAD LOCAL FILES */}
+      {activeSection === 'browse' && (
+        <div className="space-y-3">
+          {/* File Upload Box */}
+          <div className="p-3.5 rounded-xl bg-slate-900/90 border border-dashed border-slate-700 space-y-2 text-center">
+            <Upload className="w-6 h-6 text-sky-400 mx-auto" />
+            <div>
+              <span className="font-semibold text-slate-200">Upload Dataset to Project Cache</span>
+              <p className="text-[11px] text-slate-400">
+                Supports .shp, .geojson, .tif, .tiff, .nc, .grd, .png, .jpg
+              </p>
+            </div>
+            <label className="inline-block px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold cursor-pointer">
+              <span>{isUploading ? 'Uploading...' : 'Choose File to Upload'}</span>
+              <input
+                type="file"
+                className="hidden"
+                accept=".shp,.geojson,.gpkg,.nc,.grd,.tif,.tiff,.png,.jpg,.jpeg,.json"
+                onChange={handleUploadFileToCache}
+              />
+            </label>
+          </div>
+
+          {/* Directory Navigation */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                <FolderOpen className="w-4 h-4 text-amber-400" />
+                <span>Filesystem Browser</span>
+              </span>
+              <button
+                onClick={() => loadDirectory(currentBrowseDir)}
+                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-400"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="text-[11px] font-mono text-slate-400 truncate bg-slate-950 p-1.5 rounded border border-slate-800">
+              {currentBrowseDir}
+            </div>
+
+            {/* Sub-directories */}
+            {browseDirs.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <button
+                  onClick={() => loadDirectory(`${currentBrowseDir}/..`)}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[10px]"
+                >
+                  .. (Up)
+                </button>
+                {browseDirs.map((d) => (
+                  <button
+                    key={d.path}
+                    onClick={() => loadDirectory(d.path)}
+                    className="px-2 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px] flex items-center gap-1"
+                  >
+                    <span>📁 {d.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Discovered files in folder */}
+          <div className="space-y-1.5">
+            {dirFiles.length === 0 && (
+              <div className="p-4 text-center text-slate-500 rounded-xl bg-slate-900/50 border border-slate-800">
+                No supported dataset or image files in this folder.
+              </div>
+            )}
+            {dirFiles.map((f) => (
+              <div
+                key={f.path}
+                className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between"
+              >
+                <div className="truncate mr-2">
+                  <div className="font-bold text-slate-200 text-[11px] truncate">{f.name}</div>
+                  <div className="text-[10px] font-mono text-slate-500 truncate">{f.path}</div>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  {['.nc', '.grd', '.tif', '.tiff'].includes(f.ext) && (
+                    <button
+                      onClick={() => {
+                        const newId = f.name.replace(/[^a-zA-Z0-9_]/g, '_');
+                        upsertGrid(newId, {
+                          source_type: 'local',
+                          local_path: f.path,
+                          transforms: [],
+                        });
+                        setActiveSection('grids');
+                        setStatusMessage(`Loaded ${f.name} as grid '${newId}'!`);
+                      }}
+                      className="px-2 py-1 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-400/30 text-[10px] font-semibold"
+                    >
+                      Use as Grid
+                    </button>
+                  )}
+                  {['.shp', '.geojson'].includes(f.ext) && (
+                    <button
+                      onClick={() => {
+                        addAsPolygonDisplacer(f.path);
+                        setStatusMessage(`Applied ${f.name} to PolygonDisplacer!`);
+                      }}
+                      className="px-2 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/30 text-[10px] font-semibold"
+                    >
+                      Use as Shapefile
+                    </button>
+                  )}
+                  {['.png', '.jpg', '.jpeg'].includes(f.ext) && (
+                    <button
+                      onClick={() => {
+                        addAsImageColourer(f.path);
+                        setStatusMessage(`Applied ${f.name} to ImageColourer!`);
+                      }}
+                      className="px-2 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-400/30 text-[10px] font-semibold"
+                    >
+                      Use as Image
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 4: GRIDS & DEM PIPELINES */}
+      {activeSection === 'grids' && (
+        <div className="space-y-4">
+          {/* Header & Add Grid Bar */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+                <Database className="w-4 h-4 text-sky-400" />
+                <span>Named GeographicGrids ({gridEntries.length})</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setDatasetModalOpen(true)}
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-[11px]"
+                >
+                  Cache Manager
+                </button>
+                <button
+                  onClick={() => fetchGridDataFromBackend()}
+                  title="Sync grid buffers from Python"
+                  className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                placeholder="New grid ID (e.g. moho_grid, tomo_2850)..."
+                value={newGridId}
+                onChange={(e) => setNewGridId(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+              />
+              <button
+                onClick={handleAddGrid}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Grid</span>
+              </button>
+            </div>
+          </div>
 
       {/* Grid List */}
       {gridEntries.map(([gridId, cfg]) => {
@@ -664,6 +1202,8 @@ export const GridSourcesPanel: React.FC = () => {
           </div>
         );
       })}
+        </div>
+      )}
     </div>
   );
 };
