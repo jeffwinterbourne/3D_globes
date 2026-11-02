@@ -285,12 +285,19 @@ export function toBackendGlobeProjectPayload(project: GlobeProject): any {
       paleo: 'paleo',
       synthetic: 'synthetic',
     };
-    const cat = g.category || g.fallback_dataset?.category || 'topography';
-    const nm = g.name || g.fallback_dataset?.name || 'earth';
+    const cat =
+      g.category ||
+      g.fallback_dataset?.category ||
+      (g.dataset && g.dataset.includes('.') ? g.dataset.split('.')[0] : 'topography');
+    const nm =
+      g.name ||
+      g.fallback_dataset?.name ||
+      (g.dataset && g.dataset.includes('.') ? g.dataset.split('.')[1] : 'earth');
+    const datasetId = g.category && g.name ? `${g.category}.${g.name}` : g.dataset || `${cat}.${nm}`;
     return {
       id: gid,
       source: sourceMap[g.source_type] || 'online',
-      dataset: g.dataset || `${cat}.${nm}`,
+      dataset: datasetId,
       params: {
         ...(g.resolution ? { resolution: g.resolution } : {}),
         ...(g.depth !== undefined ? { depth: g.depth } : {}),

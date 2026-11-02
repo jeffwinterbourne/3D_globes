@@ -62,15 +62,24 @@ def _wrap_longitude(lats, lons, grid):
     new_lons = list(lons)
     grid_parts = [grid]
     padded = False
+    has_duplicate_seam = np.isclose(lons[-1] - lons[0], 360.0)
 
     if lons[-1] <= 180.0:
-        new_lons.append(lons[-1] + step)
-        grid_parts.append(grid[:, 1:2])
+        if has_duplicate_seam and grid.shape[1] > 1:
+            new_lons.append(lons[-1] + step)
+            grid_parts.append(grid[:, 1:2])
+        else:
+            new_lons.append(lons[0] + 360.0)
+            grid_parts.append(grid[:, 0:1])
         padded = True
 
     if lons[0] >= -180.0:
-        new_lons.insert(0, lons[0] - step)
-        grid_parts.insert(0, grid[:, -2:-1])
+        if has_duplicate_seam and grid.shape[1] > 1:
+            new_lons.insert(0, lons[0] - step)
+            grid_parts.insert(0, grid[:, -2:-1])
+        else:
+            new_lons.insert(0, lons[-1] - 360.0)
+            grid_parts.insert(0, grid[:, -1:])
         padded = True
 
     if padded:

@@ -131,12 +131,39 @@ function buildBaseSphere(targetPoints: number, method: 'fibonacci' | 'icosahedro
 function sampleProceduralElevation(latDeg: number, lonDeg: number, ageMa: number = 0): number {
   const lat = (latDeg * Math.PI) / 180.0;
   const lon = ((lonDeg + ageMa * 0.45) * Math.PI) / 180.0;
-  const h1 = Math.sin(lat * 2.0) * Math.cos(lon * 2.0);
-  const h2 = 0.6 * Math.cos(lat * 3.0 - 0.4) * Math.sin(lon * 3.0 + 0.8);
-  const h3 = 0.35 * Math.sin(lat * 5.0 + lon * 4.0);
-  const h4 = 0.2 * Math.cos(lat * 9.0) * Math.cos(lon * 8.0);
+  const cosLat = Math.cos(lat);
+  const c2 = cosLat * cosLat;
+  const h1 = c2 * Math.sin(lat * 2.0) * Math.cos(lon * 2.0);
+  const h2 = 0.6 * c2 * Math.cos(lat * 3.0) * Math.sin(lon * 3.0 + 0.8);
+  const h3 = 0.35 * c2 * Math.sin(lat * 4.0) * Math.cos(lon * 4.0);
+  const h4 = 0.2 * c2 * Math.cos(lat * 6.0) * Math.cos(lon * 6.0);
   const combined = h1 + h2 + h3 + h4;
   return combined * 2800.0 - 600.0;
+}
+
+function computePreviewGridScale(
+  disp: GlobeProject['outer_displacements'][number],
+  radius: number,
+  buf?: CachedGridBuffer,
+  defaultExagg: number = 40.0
+): number {
+  const targetDisp = 0.15 * radius;
+  const span =
+    buf && buf.max !== undefined && buf.min !== undefined ? buf.max - buf.min : 0.0;
+
+  if (disp.scale_mode === 'direct' && disp.scale !== undefined) {
+    let scale = disp.scale;
+    if (span > 0.001 && Math.abs(span * scale) > 0.35 * radius) {
+      scale = (targetDisp / span) * (scale < 0 ? -1 : 1);
+    }
+    return scale;
+  }
+
+  const exagg = disp.vertical_exagg ?? disp.vert_exagg ?? defaultExagg;
+  if (span > 0.001 && span < 250.0) {
+    return (targetDisp / span) * (exagg / 40.0);
+  }
+  return calculatePhysicalScale(radius, exagg, disp.grid_units || 'm');
 }
 
 function sampleGridBuffer(
@@ -239,11 +266,7 @@ export function evaluateProjectMeshClient(
       if (!disp.enabled) continue;
       if (disp.type === 'GridDisplacer') {
         const buf = (disp.grid_id && gridBuffers[disp.grid_id]) || Object.values(gridBuffers)[0];
-        const exagg = disp.vertical_exagg ?? disp.vert_exagg ?? 40.0;
-        const scale =
-          disp.scale_mode === 'direct' && disp.scale !== undefined
-            ? disp.scale
-            : calculatePhysicalScale(baseRadius, exagg, disp.grid_units || 'm');
+        const scale = computePreviewGridScale(disp, baseRadius, buf, 40.0);
         const refLevel = disp.reference_level ?? 0.0;
         const coastStep = disp.coastline_step ?? 0.0;
         const stepMm =
@@ -324,11 +347,7 @@ export function evaluateProjectMeshClient(
       if (!disp.enabled) continue;
       if (disp.type === 'GridDisplacer') {
         const buf = (disp.grid_id && gridBuffers[disp.grid_id]) || Object.values(gridBuffers)[0];
-        const exagg = disp.vertical_exagg ?? disp.vert_exagg ?? 20.0;
-        const scale =
-          disp.scale_mode === 'direct' && disp.scale !== undefined
-            ? disp.scale
-            : calculatePhysicalScale(innerBaseRadius, exagg, disp.grid_units || 'm');
+        const scale = computePreviewGridScale(disp, innerBaseRadius, buf, 20.0);
         const refLevel = disp.reference_level ?? 0.0;
         const maxInnerAllowed = innerBaseRadius * 0.25;
         for (let i = 0; i < numVerts; i++) {
@@ -515,8 +534,18 @@ export function evaluateProjectMeshClient(
         }
       } else if (col.type === 'GridColourer') {
         const buf = (col.grid_id && gridBuffers[col.grid_id]) || Object.values(gridBuffers)[0];
-        const vmin = col.vmin ?? -6000;
-        const vmax = col.vmax ?? 5000;
+        const gMin = buf?.min ?? -6000;
+        const gMax = buf?.max ?? 5000;
+        const gSpan = Math.max(1e-6, gMax - gMin);
+        let vmin = col.vmin ?? gMin;
+        let vmax = col.vmax ?? gMax;
+        const cSpan = vmax - vmin;
+        if (buf && buf.min !== undefined && buf.max !== undefined) {
+          if (cSpan <= 0 || cSpan > 5.0 * gSpan || cSpan < 0.35 * gSpan || vmax < gMin || vmin > gMax) {
+            vmin = gMin;
+            vmax = gMax;
+          }
+        }
         const span = Math.max(1e-6, vmax - vmin);
         const cmap = col.colormap || 'terrain';
         const useBanded =

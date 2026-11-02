@@ -91,7 +91,7 @@ def _download_file(url, filename, cache_dir):
     return filepath
 
 
-def _load_netcdf_grid(filepath, lat_var=None, lon_var=None, data_var=None):
+def _load_netcdf_grid(filepath, lat_var=None, lon_var=None, data_var=None, depth=None):
     """Loads a 2D geographic grid from a NetCDF file, automatically detecting variables.
 
     Args:
@@ -99,49 +99,56 @@ def _load_netcdf_grid(filepath, lat_var=None, lon_var=None, data_var=None):
         lat_var (str, optional): Variable name for latitude. Defaults to None.
         lon_var (str, optional): Variable name for longitude. Defaults to None.
         data_var (str, optional): Variable name for grid data. Defaults to None.
+        depth (float, optional): Depth slice if the NetCDF data variable is 3D. Defaults to None.
 
     Returns:
         GeographicGrid: Loaded geographic grid.
     """
     with Dataset(filepath, "r") as ds:
         # Detect latitude variable
-        if lat_var is None:
-            for candidate in ["lat", "latitude", "y"]:
+        if lat_var is None or lat_var not in ds.variables:
+            for candidate in ["lat", "latitude", "y", "LAT", "LATITUDE"]:
                 if candidate in ds.variables:
                     lat_var = candidate
                     break
-        if lat_var is None:
+        if lat_var is None or lat_var not in ds.variables:
             raise ValueError(f"Could not automatically detect latitude variable. Available: {list(ds.variables.keys())}")
 
         # Detect longitude variable
-        if lon_var is None:
-            for candidate in ["lon", "longitude", "x"]:
+        if lon_var is None or lon_var not in ds.variables:
+            for candidate in ["lon", "longitude", "x", "LON", "LONGITUDE"]:
                 if candidate in ds.variables:
                     lon_var = candidate
                     break
-        if lon_var is None:
+        if lon_var is None or lon_var not in ds.variables:
             raise ValueError(f"Could not automatically detect longitude variable. Available: {list(ds.variables.keys())}")
 
         # Detect data variable
-        if data_var is None:
-            for candidate in ["z", "v", "bouguer", "dvs", "dvs_percent"]:
+        if data_var is None or data_var not in ds.variables:
+            for candidate in ["z", "v", "bouguer", "dvs", "dvs_percent", "elevation", "band1", "data"]:
                 if candidate in ds.variables:
                     data_var = candidate
                     break
-        if data_var is None:
+        if data_var is None or data_var not in ds.variables:
             for name, var in ds.variables.items():
-                if name not in [lat_var, lon_var] and len(var.shape) >= 2:
+                if name not in [lat_var, lon_var, "depth", "level", "time"] and len(var.shape) >= 2:
                     data_var = name
                     break
-        if data_var is None:
+        if data_var is None or data_var not in ds.variables:
             raise ValueError(f"Could not automatically detect data variable. Available: {list(ds.variables.keys())}")
 
-        lats = np.array(ds.variables[lat_var][:])
-        lons = np.array(ds.variables[lon_var][:])
-        grid = np.array(ds.variables[data_var][:])
+        lats = np.asarray( np.ma.filled(ds.variables[lat_var][:], np.nan), dtype=np.float64 )
+        lons = np.asarray( np.ma.filled(ds.variables[lon_var][:], np.nan), dtype=np.float64 )
+        raw_grid = ds.variables[data_var][:]
+        grid = np.asarray( np.ma.filled(raw_grid, np.nan), dtype=np.float64 )
 
         if grid.ndim == 3:
-            raise ValueError(f"NetCDF grid is 3D with shape {grid.shape}. Please slice it first.")
+            if depth is not None and "depth" in ds.variables:
+                depths = np.asarray(ds.variables["depth"][:], dtype=np.float64)
+                depth_idx = int(np.argmin(np.abs(depths - float(depth))))
+                grid = grid[depth_idx, :, :]
+            else:
+                grid = grid[0, :, :]
 
         return GeographicGrid(lats, lons, grid)
 
@@ -207,7 +214,7 @@ def _normalize_gmt_resolution(resolution: str) -> str:
 class TopographyNamespace:
     """Namespace for topographic datasets (Earth, Mars, Moon, Venus, Mercury, Vesta)."""
 
-    def earth(self, resolution="30m", cache_dir=None, url=None):
+    def earth(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads Earth global relief data (topography + bathymetry).
 
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the GMT remote server.
@@ -245,7 +252,7 @@ class TopographyNamespace:
             filepath = _download_file(download_url, filename, cache_dir)
             return _load_netcdf_grid(filepath)
 
-    def etopo(self, resolution="30m", cache_dir=None, url=None):
+    def etopo(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads NOAA ETOPO Earth global relief data.
 
         Args:
@@ -259,7 +266,7 @@ class TopographyNamespace:
         """
         return self.earth(resolution=resolution, cache_dir=cache_dir, url=url)
 
-    def gebco(self, downsample_factor=5, cache_dir=None, url=None):
+    def gebco(self, downsample_factor=5, cache_dir=None, url=None, **kwargs):
         """Loads a GEBCO global bathymetry grid.
 
         Note:
@@ -287,7 +294,7 @@ class TopographyNamespace:
             filepath = _download_file(url, filename, cache_dir)
             return _load_netcdf_grid(filepath)
 
-    def mars(self, resolution="30m", cache_dir=None, url=None):
+    def mars(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads Mars topography data.
 
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the GMT remote server.
@@ -316,7 +323,7 @@ class TopographyNamespace:
             filepath = _download_file(download_url, filename, cache_dir)
             return _load_netcdf_grid(filepath)
 
-    def moon(self, resolution="30m", cache_dir=None, url=None):
+    def moon(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads Moon topography data.
 
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the GMT remote server.
@@ -345,7 +352,7 @@ class TopographyNamespace:
             filepath = _download_file(download_url, filename, cache_dir)
             return _load_netcdf_grid(filepath)
 
-    def venus(self, resolution="30m", cache_dir=None, url=None):
+    def venus(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads Venus topography data.
 
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the GMT remote server.
@@ -374,7 +381,7 @@ class TopographyNamespace:
             filepath = _download_file(download_url, filename, cache_dir)
             return _load_netcdf_grid(filepath)
 
-    def mercury(self, resolution="30m", cache_dir=None, url=None):
+    def mercury(self, resolution="30m", cache_dir=None, url=None, **kwargs):
         """Fetches and loads Mercury global topography data.
 
         Defaults to a fast-loading, low-resolution 30 arc-minute grid from the MESSENGER mission.
@@ -412,7 +419,7 @@ class TopographyNamespace:
 class TomographyNamespace:
     """Namespace for tomography datasets."""
 
-    def s40rts(self, depth=2850.0, cache_dir=None, url=None):
+    def s40rts(self, depth=2850.0, cache_dir=None, url=None, **kwargs):
         """Fetches and loads a 2D depth slice of the S40RTS seismic tomography model.
 
         Args:
@@ -425,6 +432,7 @@ class TomographyNamespace:
         """
         cache_dir = _get_cache_dir(cache_dir)
         filename = "S40RTS_dvs.nc"
+        depth_val = float(depth if depth is not None else 2850.0)
 
         primary_url = url or "https://raw.githubusercontent.com/shuleyu/seismic-tomography-models/master/S40RTS_dvs.nc"
         fallback_url = "http://ds.iris.edu/files/emc/models/S40RTS.nc"
@@ -435,12 +443,12 @@ class TomographyNamespace:
             filepath = _download_file(fallback_url, filename, cache_dir)
 
         with Dataset(filepath, "r") as ds:
-            depths = np.array(ds.variables["depth"][:])
-            lats = np.array(ds.variables["latitude"][:])
-            lons = np.array(ds.variables["longitude"][:])
+            depths = np.asarray(ds.variables["depth"][:], dtype=np.float64)
+            lats = np.asarray(ds.variables["latitude"][:], dtype=np.float64)
+            lons = np.asarray(ds.variables["longitude"][:], dtype=np.float64)
             
-            depth_idx = np.argmin(np.abs(depths - depth))
-            grid = np.array(ds.variables["v"][depth_idx, :, :])
+            depth_idx = int(np.argmin(np.abs(depths - depth_val)))
+            grid = np.asarray(np.ma.filled(ds.variables["v"][depth_idx, :, :], np.nan), dtype=np.float64)
 
         return GeographicGrid(lats, lons, grid)
 
@@ -448,7 +456,7 @@ class TomographyNamespace:
 class GeoidNamespace:
     """Namespace for geoid undulation datasets."""
 
-    def egm2008(self, downsample_factor=5, cache_dir=None, url=None):
+    def egm2008(self, downsample_factor=5, cache_dir=None, url=None, **kwargs):
         """Fetches and loads the EGM2008 Geoid Undulation dataset.
 
         Args:
@@ -470,7 +478,7 @@ class GeoidNamespace:
 class CrustNamespace:
     """Namespace for crustal thickness and Moho datasets."""
 
-    def crust1(self, layer="moho", as_meters=True, cache_dir=None, url=None):
+    def crust1(self, layer="moho", as_meters=True, cache_dir=None, url=None, **kwargs):
         """Fetches and parses the CRUST1.0 global 1x1 degree crustal boundaries database.
 
         Args:
@@ -533,10 +541,10 @@ class CrustNamespace:
 class LithosphereNamespace:
     """Namespace for lithosphere datasets. Can be called directly for backward compatibility."""
 
-    def __call__(self, parameter="total", as_meters=True, cache_dir=None, url=None):
-        return self.thickness(parameter=parameter, as_meters=as_meters, cache_dir=cache_dir, url=url)
+    def __call__(self, parameter="total", as_meters=True, cache_dir=None, url=None, **kwargs):
+        return self.thickness(parameter=parameter, as_meters=as_meters, cache_dir=cache_dir, url=url, **kwargs)
 
-    def thickness(self, parameter="total", as_meters=True, cache_dir=None, url=None):
+    def thickness(self, parameter="total", as_meters=True, cache_dir=None, url=None, **kwargs):
         """Fetches and loads the LITHO1.0 global lithospheric thickness model.
 
         Args:
@@ -551,6 +559,8 @@ class LithosphereNamespace:
         Returns:
             GeographicGrid: Grid representing the requested lithospheric property.
         """
+        if parameter == "total" and "layer" in kwargs and str(kwargs["layer"]).lower() in ("total", "lid", "lab"):
+            parameter = str(kwargs["layer"]).lower()
         if parameter not in ["total", "lid", "lab"]:
             raise ValueError("parameter must be one of: 'total', 'lid', 'lab'")
 
@@ -603,10 +613,10 @@ class LithosphereNamespace:
 class DynamicTopographyNamespace:
     """Namespace for dynamic topography datasets. Can be called directly for backward compatibility."""
 
-    def __call__(self, grid_step=1.0, cache_dir=None, url=None):
-        return self.hoggard2016(grid_step=grid_step, cache_dir=cache_dir, url=url)
+    def __call__(self, grid_step=1.0, cache_dir=None, url=None, **kwargs):
+        return self.hoggard2016(grid_step=grid_step, cache_dir=cache_dir, url=url, **kwargs)
 
-    def hoggard2016(self, grid_step=1.0, cache_dir=None, url=None):
+    def hoggard2016(self, grid_step=1.0, cache_dir=None, url=None, **kwargs):
         """Fetches, parses, and grids the Hoggard et al. (2016) Dynamic Topography spot data.
 
         Args:
@@ -692,35 +702,39 @@ class DynamicTopographyNamespace:
 class GravityNamespace:
     """Namespace for gravity anomaly datasets. Can be called directly for backward compatibility."""
 
-    def __call__(self, cache_dir=None, url=None):
-        return self.bouguer(cache_dir=cache_dir, url=url)
+    def __call__(self, cache_dir=None, url=None, **kwargs):
+        return self.bouguer(cache_dir=cache_dir, url=url, **kwargs)
 
-    def bouguer(self, cache_dir=None, url=None):
-        """Fetches and loads the global Gravity Bouguer Anomaly grid from NOAA.
+    def bouguer(self, cache_dir=None, url=None, **kwargs):
+        """Fetches and loads the global Gravity Anomaly grid.
 
         Args:
             cache_dir (str, optional): Custom cache directory. Defaults to None.
             url (str, optional): Custom download URL. Defaults to None.
 
         Returns:
-            GeographicGrid: Loaded Bouguer anomaly gravity grid.
+            GeographicGrid: Loaded gravity anomaly grid.
         """
         cache_dir = _get_cache_dir(cache_dir)
         filename = "bouguer_anomaly.nc"
-        url = url or "https://coastwatch.pfeg.noaa.gov/erddap/griddap/hawaii_soest_7386_62c6_9d63.nc?bouguer[(-89.9):1:(89.9)][(-179.9):1:(179.9)]"
+        primary_url = url or "https://oceania.generic-mapping-tools.org/server/earth/earth_faa/earth_faa_30m_g.grd"
+        fallback_url = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/hawaii_soest_7386_62c6_9d63.nc?bouguer[(-89.9):1:(89.9)][(-179.9):1:(179.9)]"
 
-        filepath = _download_file(url, filename, cache_dir)
+        try:
+            filepath = _download_file(primary_url, filename, cache_dir)
+        except Exception:
+            filepath = _download_file(fallback_url, filename, cache_dir)
         return _load_netcdf_grid(filepath)
 
 
 class MagneticsNamespace:
     """Namespace for magnetic anomaly datasets. Can be called directly for backward compatibility."""
 
-    def __call__(self, downsample_factor=5, cache_dir=None, url=None):
-        return self.emag2(downsample_factor=downsample_factor, cache_dir=cache_dir, url=url)
+    def __call__(self, downsample_factor=5, cache_dir=None, url=None, **kwargs):
+        return self.emag2(downsample_factor=downsample_factor, cache_dir=cache_dir, url=url, **kwargs)
 
-    def emag2(self, downsample_factor=5, cache_dir=None, url=None):
-        """Fetches and loads the EMAG2v3 global magnetic anomalies grid.
+    def emag2(self, downsample_factor=5, cache_dir=None, url=None, **kwargs):
+        """Fetches and loads the EMAG2 global magnetic anomalies grid.
 
         Args:
             downsample_factor (int, optional): Resolution decimation factor. Defaults to 5.
@@ -732,9 +746,17 @@ class MagneticsNamespace:
         """
         cache_dir = _get_cache_dir(cache_dir)
         filename = "EMAG2_V3_Upward_Continued_GeoTIFF.zip"
-        url = url or "https://www.ngdc.noaa.gov/mgg/geology/data/magnetic_anomalies/EMAG2/EMAG2_v3/EMAG2_V3_Upward_Continued_GeoTIFF.zip"
+        primary_url = url or "https://www.ngdc.noaa.gov/mgg/geology/data/magnetic_anomalies/EMAG2/EMAG2_v3/EMAG2_V3_Upward_Continued_GeoTIFF.zip"
+        fallback_url = "https://oceania.generic-mapping-tools.org/server/earth/earth_mag/earth_mag_30m_g.grd"
 
-        filepath = _download_file(url, filename, cache_dir)
+        try:
+            filepath = _download_file(primary_url, filename, cache_dir)
+        except Exception:
+            filepath = _download_file(fallback_url, "earth_mag_30m_g.grd", cache_dir)
+            return _load_netcdf_grid(filepath)
+
+        if not zipfile.is_zipfile(filepath):
+            return _load_netcdf_grid(filepath)
 
         with zipfile.ZipFile(filepath, "r") as zip_ref:
             tif_files = [f for f in zip_ref.namelist() if f.lower().endswith(".tif")]
@@ -946,7 +968,7 @@ class PaleoNamespace:
 
         return scotese_dir
 
-    def scotese(self, age=None, name=None, resolution="6m", data_dir=None, auto_download=True):
+    def scotese(self, age=None, name=None, resolution="6m", data_dir=None, auto_download=True, **kwargs):
         """Loads a Scotese & Wright (2018) PaleoDEM grid and matching PaleoAtlas texture.
 
         Args:

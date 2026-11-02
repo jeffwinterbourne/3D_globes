@@ -596,6 +596,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   setProject: (rawNext, recordHistory = true) => {
     const state = get();
     const next = normalizeIncomingProject(rawNext);
+    const gridsChanged =
+      JSON.stringify(state.project.grids) !== JSON.stringify(next.grids) ||
+      state.project.mode !== next.mode ||
+      JSON.stringify(state.project.paleo) !== JSON.stringify(next.paleo);
     const past = recordHistory ? [...state.past.slice(-25), state.project] : state.past;
     const meshData = evaluateProjectMeshClient(next, state.gridBuffers, state.textureBuffer, undefined, state.maskBuffers);
     const magnetAnalysis = computeClientMagnetProfile(next, meshData);
@@ -608,6 +612,9 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
       magnetAnalysis,
       jsonError: null,
     });
+    if (gridsChanged) {
+      scheduleGridFetch(() => get().fetchGridDataFromBackend());
+    }
     if (state.autoPythonPreview) {
       scheduleAutoPython(() => get().renderExactPythonMesh('preview'), 500);
     }
@@ -906,7 +913,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
           data.elevation_f32_b64 || data.values_b64 || data.grid_b64
         );
         const firstId = Object.keys(state.project.grids)[0] || 'default';
-        if (!nextGridBuffers[firstId]) {
+        if (!data.grids || !data.grids[firstId]) {
           nextGridBuffers[firstId] = {
             nLat: data.height || data.n_lat || 180,
             nLon: data.width || data.n_lon || 360,

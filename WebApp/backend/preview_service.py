@@ -12,6 +12,7 @@ from PIL import Image
 from scipy.interpolate import RegularGridInterpolator
 
 from globe3d import apply_banded_colormap, create_banded_colormap, datasets, parse_color
+from globe3d.displacement import _wrap_longitude
 from .engine import (
     _generate_synthetic_grid,
     compile_globe_model,
@@ -169,9 +170,12 @@ def get_grid_buffer_for_worker(project: GlobeProject, height: int = 180, width: 
     sample_pts = np.stack((lat_m, lon_m), axis=-1)
 
     def _sample_north_up(g_obj):
+        w_lats, w_lons, w_grid = _wrap_longitude(
+            g_obj.lats, g_obj.lons, np.nan_to_num(g_obj.grid)
+        )
         interp_fn = RegularGridInterpolator(
-            (g_obj.lats, g_obj.lons),
-            np.nan_to_num(g_obj.grid),
+            (w_lats, w_lons),
+            w_grid,
             bounds_error=False,
             fill_value=None,
         )
@@ -414,9 +418,13 @@ def render_2d_map_and_colorbar(project: GlobeProject) -> Dict[str, Any]:
                                     "rgb": list(col_rgb),
                                 })
                     if rgb_map is None:
+                        g_span = max(g_max - g_min, 1e-6)
                         vmin_val = float(primary_col.vmin) if primary_col.vmin is not None else g_min
                         vmax_val = float(primary_col.vmax) if primary_col.vmax is not None else g_max
-                        if primary_col.symmetric and primary_col.vmin is None and primary_col.vmax is None:
+                        c_span = vmax_val - vmin_val
+                        if c_span <= 0 or c_span > 5.0 * g_span or c_span < 0.35 * g_span or vmax_val < g_min or vmin_val > g_max:
+                            vmin_val, vmax_val = g_min, g_max
+                        if primary_col.symmetric and (primary_col.vmin is None or vmin_val == g_min):
                             abs_m = max(abs(g_min), abs(g_max), 1e-6)
                             vmin_val, vmax_val = -abs_m, abs_m
                         span = (vmax_val - vmin_val) if vmax_val > vmin_val else 1.0

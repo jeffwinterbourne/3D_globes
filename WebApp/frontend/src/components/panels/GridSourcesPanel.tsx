@@ -835,6 +835,7 @@ export const GridSourcesPanel: React.FC = () => {
                         ...cfg,
                         category: nextCat,
                         name: firstDs,
+                        dataset: `${nextCat}.${firstDs}`,
                       });
                     }}
                     className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
@@ -851,7 +852,14 @@ export const GridSourcesPanel: React.FC = () => {
                   <label className="block text-slate-400 mb-1">Dataset Name</label>
                   <select
                     value={cfg.name || cfg.fallback_dataset?.name || catSpec.names[0]}
-                    onChange={(e) => upsertGrid(gridId, { ...cfg, name: e.target.value })}
+                    onChange={(e) => {
+                      const nextName = e.target.value;
+                      upsertGrid(gridId, {
+                        ...cfg,
+                        name: nextName,
+                        dataset: `${activeCat}.${nextName}`,
+                      });
+                    }}
                     className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-100"
                   >
                     {catSpec.names.map((n) => (

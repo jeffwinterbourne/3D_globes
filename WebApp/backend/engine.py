@@ -70,27 +70,124 @@ def _generate_synthetic_grid(synthetic_type: str = "procedural_waves", params: O
     lon_r = np.radians(lon_m)
 
     amp = float(p.get("amplitude", 3000.0))
+    cos_lat = np.cos(lat_r)
     st = (synthetic_type or "procedural_waves").lower()
     if st in ("harmonic", "spherical_harmonics", "waves", "procedural_waves"):
         n_lat = int(p.get("n_lat", 4))
         n_lon = int(p.get("n_lon", 5))
         data = amp * (
-            0.6 * np.sin(n_lat * lat_r) * np.cos(n_lon * lon_r)
-            + 0.4 * np.cos((n_lat + 2) * lat_r) * np.sin((n_lon + 2) * lon_r)
+            0.6 * (cos_lat ** 2) * np.sin(n_lat * lat_r) * np.cos(n_lon * lon_r)
+            + 0.4 * (cos_lat ** 2) * np.cos((n_lat + 1) * lat_r) * np.sin((n_lon + 2) * lon_r)
         )
     elif st in ("continents", "synthetic_earth"):
         data = amp * (
-            0.5 * np.sin(2.0 * lat_r) * np.cos(2.0 * lon_r)
-            + 0.35 * np.cos(3.0 * lat_r) * np.sin(3.0 * lon_r)
-            + 0.15 * np.sin(5.0 * lat_r) * np.cos(4.0 * lon_r)
+            0.5 * (cos_lat ** 2) * np.sin(2.0 * lat_r) * np.cos(2.0 * lon_r)
+            + 0.35 * (cos_lat ** 2) * np.cos(3.0 * lat_r) * np.sin(3.0 * lon_r)
+            + 0.15 * (cos_lat ** 2) * np.sin(4.0 * lat_r) * np.cos(4.0 * lon_r)
         )
     elif st in ("prem_shell", "constant", "flat"):
         val = float(p.get("value", 0.0))
         data = np.full_like(lat_m, val)
     else:
-        data = amp * np.sin(3.0 * lat_r) * np.cos(4.0 * lon_r)
+        data = amp * (cos_lat ** 2) * np.sin(2.0 * lat_r) * np.cos(4.0 * lon_r)
 
     return GeographicGrid(lats, lons, data)
+
+
+def _load_online_dataset_by_name(
+    ds_name: str, params: Dict[str, Any]
+) -> Tuple[GeographicGrid, Optional[str], Optional[Dict[str, Any]]]:
+    """Loads an online dataset by its catalog identifier and returns (grid, tex_path, meta)."""
+    ds_lower = (ds_name or "topography.earth").lower().strip()
+    tex_path = None
+    meta = None
+
+    if "s40rts" in ds_lower or "tomography" in ds_lower:
+        depth = float(params.get("depth", 2850.0) if params.get("depth") is not None else 2850.0)
+        grid = datasets.tomography.s40rts(depth=depth)
+    elif "egm2008" in ds_lower or "geoid" in ds_lower:
+        ds_factor = int(params.get("downsample_factor", 5) or 5)
+        grid = datasets.geoid.egm2008(downsample_factor=ds_factor)
+    elif "crust1" in ds_lower or "crust" in ds_lower:
+        layer = str(params.get("layer") or "moho")
+        if layer.lower() not in (
+            "surface", "topography", "water_bottom", "bathymetry", "ice_bottom",
+            "upper_sediment_bottom", "middle_sediment_bottom", "lower_sediment_bottom",
+            "upper_crust_bottom", "middle_crust_bottom", "moho", "lower_crust_bottom",
+        ):
+            layer = "moho"
+        grid = datasets.crust.crust1(layer=layer)
+    elif "thickness" in ds_lower or "lithosphere" in ds_lower:
+        param_name = str(params.get("parameter") or params.get("layer") or "total").lower()
+        if param_name not in ("total", "lid", "lab"):
+            param_name = "total"
+        grid = datasets.lithosphere.thickness(parameter=param_name)
+    elif "hoggard" in ds_lower or "dynamic" in ds_lower:
+        grid_step = float(params.get("grid_step", 1.0) or 1.0)
+        grid = datasets.dynamic_topography.hoggard2016(grid_step=grid_step)
+    elif "bouguer" in ds_lower or "gravity" in ds_lower:
+        grid = datasets.gravity.bouguer()
+    elif "emag2" in ds_lower or "magnetic" in ds_lower:
+        ds_factor = int(params.get("downsample_factor", 5) or 5)
+        grid = datasets.magnetics.emag2(downsample_factor=ds_factor)
+    elif "mars" in ds_lower:
+        res = str(params.get("resolution") or "30m")
+        grid = datasets.topography.mars(resolution=res)
+    elif "moon" in ds_lower:
+        res = str(params.get("resolution") or "30m")
+        grid = datasets.topography.moon(resolution=res)
+    elif "venus" in ds_lower:
+        res = str(params.get("resolution") or "30m")
+        grid = datasets.topography.venus(resolution=res)
+    elif "mercury" in ds_lower:
+        res = str(params.get("resolution") or "30m")
+        grid = datasets.topography.mercury(resolution=res)
+    elif "scotese" in ds_lower or "paleo" in ds_lower:
+        age = float(params.get("age", 0.0) if params.get("age") is not None else 0.0)
+        res = str(params.get("resolution") or "1d")
+        if res not in ("6m", "6min", "1d", "1deg"):
+            res = "1d"
+        grid, tex_path, meta = datasets.paleo.scotese(
+            age=age,
+            name=params.get("name"),
+            resolution=res,
+            data_dir=params.get("data_dir"),
+        )
+    elif "gebco" in ds_lower:
+        if params.get("url"):
+            grid = datasets.topography.gebco(url=params.get("url"))
+        else:
+            res = str(params.get("resolution") or "30m")
+            grid = datasets.topography.earth(resolution=res)
+    elif "earth" in ds_lower or "etopo" in ds_lower or "topography" in ds_lower:
+        res = str(params.get("resolution") or "30m")
+        grid = datasets.topography.earth(resolution=res)
+    else:
+        grid = _generate_synthetic_grid("continents", params)
+
+    return grid, tex_path, meta
+
+
+def _resolve_local_grid_filepath(filepath: Optional[str]) -> Optional[str]:
+    """Resolves a local grid filepath against the workspace, repo root, or download cache."""
+    if not filepath or not str(filepath).strip():
+        return None
+    fp = str(filepath).strip()
+    if os.path.isfile(fp):
+        return os.path.abspath(fp)
+    from .dataset_service import REPO_ROOT
+    cache_dir = datasets._get_cache_dir()
+    bname = os.path.basename(fp)
+    for cand in (
+        os.path.join(REPO_ROOT, fp),
+        os.path.normpath(os.path.join(REPO_ROOT, "examples", fp)),
+        os.path.join(cache_dir, fp),
+        os.path.join(cache_dir, bname),
+        os.path.join(cache_dir, "uploads", bname),
+    ):
+        if os.path.isfile(cand):
+            return os.path.abspath(cand)
+    return None
 
 
 def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional[str], Optional[Dict[str, Any]]]:
@@ -111,119 +208,61 @@ def _load_base_grid(grid_cfg: GridSourceModel) -> Tuple[GeographicGrid, Optional
     meta = None
     src = (grid_cfg.source or "online").lower()
     params = dict(grid_cfg.params or {})
+    loaded_ok = True
 
     if src == "synthetic":
         grid = _generate_synthetic_grid(grid_cfg.synthetic_type or "procedural_waves", params)
-    elif src in ("local", "local_or_dataset"):
-        local_exists = bool(grid_cfg.filepath and os.path.exists(grid_cfg.filepath))
-        if local_exists:
-            ext = os.path.splitext(grid_cfg.filepath)[1].lower()
+    elif src in ("local", "local_or_dataset", "netcdf", "tiff"):
+        resolved_fp = _resolve_local_grid_filepath(grid_cfg.filepath)
+        if resolved_fp:
+            ext = os.path.splitext(resolved_fp)[1].lower()
             if ext in (".tif", ".tiff"):
                 grid = datasets._load_tiff_grid(
-                    grid_cfg.filepath,
-                    downsample_factor=int(params.get("downsample_factor", 1)),
+                    resolved_fp,
+                    downsample_factor=int(params.get("downsample_factor", 1) or 1),
                 )
             else:
                 grid = datasets._load_netcdf_grid(
-                    grid_cfg.filepath,
+                    resolved_fp,
                     lat_var=grid_cfg.lat_var,
                     lon_var=grid_cfg.lon_var,
                     data_var=grid_cfg.data_var,
+                    depth=params.get("depth"),
                 )
         elif grid_cfg.dataset:
-            # Fall back to specified online dataset instead of procedural grid
             ds_name = (grid_cfg.dataset or "topography.earth").lower()
             try:
-                if ds_name in ("topography.earth", "earth"):
-                    grid = datasets.topography.earth(**params)
-                elif ds_name in ("topography.etopo", "etopo"):
-                    grid = datasets.topography.etopo(**params)
-                elif ds_name in ("topography.gebco", "gebco"):
-                    grid = datasets.topography.gebco(**params)
-                elif ds_name in ("topography.mars", "mars"):
-                    grid = datasets.topography.mars(**params)
-                elif "s40rts" in ds_name:
-                    grid = datasets.tomography.s40rts(**params)
-                elif "egm2008" in ds_name or "geoid" in ds_name:
-                    grid = datasets.geoid.egm2008(**params)
-                elif "crust1" in ds_name:
-                    grid = datasets.crust.crust1(**params)
-                elif "thickness" in ds_name or "lithosphere" in ds_name:
-                    grid = datasets.lithosphere.thickness(**params)
-                elif "hoggard" in ds_name or "dynamic" in ds_name:
-                    grid = datasets.dynamic_topography.hoggard2016(**params)
-                elif "bouguer" in ds_name or "gravity" in ds_name:
-                    grid = datasets.gravity.bouguer(**params)
-                elif "emag2" in ds_name or "magnetic" in ds_name:
-                    grid = datasets.magnetics.emag2(**params)
-                elif "mars" in ds_name:
-                    grid = datasets.topography.mars(**params)
-                elif "moon" in ds_name:
-                    grid = datasets.topography.moon(**params)
-                elif "venus" in ds_name:
-                    grid = datasets.topography.venus(**params)
-                elif "mercury" in ds_name:
-                    grid = datasets.topography.mercury(**params)
-                elif "earth" in ds_name or "etopo" in ds_name:
-                    grid = datasets.topography.earth(**params)
-                elif "gebco" in ds_name:
-                    grid = datasets.topography.gebco(**params)
-                elif "scotese" in ds_name or "paleo" in ds_name:
-                    grid, tex_path, meta = datasets.paleo.scotese(**params)
-                else:
-                    grid = _generate_synthetic_grid("continents", params)
+                grid, tex_path, meta = _load_online_dataset_by_name(ds_name, params)
             except Exception as e:
+                loaded_ok = False
                 print(f"[engine] Warning: fallback dataset '{ds_name}' failed ({e}), using synthetic grid.")
                 grid = _generate_synthetic_grid("continents", params)
         else:
+            loaded_ok = False
             grid = _generate_synthetic_grid("continents", params)
     elif src == "paleo":
-        age = float(params.get("age", 250.0))
-        res = str(params.get("resolution", "1d"))
+        age = float(params.get("age", 250.0) if params.get("age") is not None else 250.0)
+        res = str(params.get("resolution", "1d") or "1d")
+        if res not in ("6m", "6min", "1d", "1deg"):
+            res = "1d"
         data_dir = params.get("data_dir")
         try:
             grid, tex_path, meta = datasets.paleo.scotese(age=age, resolution=res, data_dir=data_dir)
-        except Exception:
+        except Exception as e:
+            loaded_ok = False
+            print(f"[engine] Warning: paleo dataset failed ({e}), using synthetic grid.")
             grid = _generate_synthetic_grid("continents", {"amplitude": 3500.0})
     else:
-        # Online dataset e.g. "topography.earth", "tomography.s40rts", "geoid.egm2008", "crust.crust1"
         ds_name = (grid_cfg.dataset or "topography.earth").lower()
         try:
-            if "s40rts" in ds_name:
-                grid = datasets.tomography.s40rts(**params)
-            elif "egm2008" in ds_name or "geoid" in ds_name:
-                grid = datasets.geoid.egm2008(**params)
-            elif "crust1" in ds_name:
-                grid = datasets.crust.crust1(**params)
-            elif "thickness" in ds_name or "lithosphere" in ds_name:
-                grid = datasets.lithosphere.thickness(**params)
-            elif "hoggard" in ds_name or "dynamic" in ds_name:
-                grid = datasets.dynamic_topography.hoggard2016(**params)
-            elif "bouguer" in ds_name or "gravity" in ds_name:
-                grid = datasets.gravity.bouguer(**params)
-            elif "emag2" in ds_name or "magnetic" in ds_name:
-                grid = datasets.magnetics.emag2(**params)
-            elif "mars" in ds_name:
-                grid = datasets.topography.mars(**params)
-            elif "moon" in ds_name:
-                grid = datasets.topography.moon(**params)
-            elif "venus" in ds_name:
-                grid = datasets.topography.venus(**params)
-            elif "mercury" in ds_name:
-                grid = datasets.topography.mercury(**params)
-            elif "earth" in ds_name or "etopo" in ds_name:
-                grid = datasets.topography.earth(**params)
-            elif "gebco" in ds_name:
-                grid = datasets.topography.gebco(**params)
-            elif "scotese" in ds_name or "paleo" in ds_name:
-                grid, tex_path, meta = datasets.paleo.scotese(**params)
-            else:
-                grid = _generate_synthetic_grid("continents", params)
+            grid, tex_path, meta = _load_online_dataset_by_name(ds_name, params)
         except Exception as e:
+            loaded_ok = False
             print(f"[engine] Warning: dataset '{ds_name}' failed ({e}), using synthetic grid.")
             grid = _generate_synthetic_grid("continents", params)
 
-    _GRID_CACHE[cache_key] = (grid, tex_path, meta)
+    if loaded_ok:
+        _GRID_CACHE[cache_key] = (grid, tex_path, meta)
     return GeographicGrid(grid.lats.copy(), grid.lons.copy(), grid.grid.copy()), tex_path, meta
 
 
@@ -661,9 +700,18 @@ def _apply_colourers(
                     cmap_obj, norm_obj = create_banded_colormap(rgb_list, c_cfg.levels)
                     colourer_obj = GridColourer(g, colormap=cmap_obj, norm=norm_obj)
             if colourer_obj is None:
+                g_min = float(np.nanmin(g.grid))
+                g_max = float(np.nanmax(g.grid))
+                g_span = max(g_max - g_min, 1e-6)
                 vmin = c_cfg.vmin
                 vmax = c_cfg.vmax
-                if c_cfg.symmetric and vmin is None and vmax is None:
+                if vmin is not None and vmax is not None:
+                    c_span = float(vmax) - float(vmin)
+                    # Auto-fit if configured bounds are from a completely different scale/dataset or pre-transform
+                    if c_span <= 0 or c_span > 5.0 * g_span or c_span < 0.35 * g_span or float(vmax) < g_min or float(vmin) > g_max:
+                        vmin = g_min
+                        vmax = g_max
+                if c_cfg.symmetric and (c_cfg.vmin is None or vmin == g_min):
                     abs_max = float(np.nanmax(np.abs(g.grid)))
                     vmin, vmax = -abs_max, abs_max
                 chosen_cmap = c_cfg.cmap if (c_cfg.cmap and c_cfg.cmap.lower() not in ("none", "null")) else "terrain"

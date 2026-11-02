@@ -50,10 +50,13 @@ class GeographicGrid:
             raise ValueError("Grid must be a 2D array.")
 
         if self.grid.shape != (len(self.lats), len(self.lons)):
-            raise ValueError(
-                f"Grid shape {self.grid.shape} does not match (len(lats), len(lons)) "
-                f"which is ({len(self.lats)}, {len(self.lons)})."
-            )
+            if len(self.lats) != len(self.lons) and self.grid.shape == (len(self.lons), len(self.lats)):
+                self.grid = self.grid.T
+            else:
+                raise ValueError(
+                    f"Grid shape {self.grid.shape} does not match (len(lats), len(lons)) "
+                    f"which is ({len(self.lats)}, {len(self.lons)})."
+                )
 
         # Handle duplicate values (not allowed for interpolator)
         if len(self.lats) > 1 and len(np.unique(self.lats)) != len(self.lats):
@@ -69,6 +72,16 @@ class GeographicGrid:
 
         # Sort longitudes ascending and rearrange grid
         if len(self.lons) > 1 and not np.all(np.diff(self.lons) > 0):
+            idx = np.argsort(self.lons)
+            self.lons = self.lons[idx]
+            self.grid = self.grid[:, idx]
+
+        # Automatically normalize [0, 360] longitude grids to [-180, 180]
+        if len(self.lons) > 2 and self.lons[0] >= -1e-6 and self.lons[-1] > 180.0 + 1e-6:
+            if np.isclose(self.lons[-1] - self.lons[0], 360.0):
+                self.lons = self.lons[:-1]
+                self.grid = self.grid[:, :-1]
+            self.lons = np.where(self.lons > 180.0, self.lons - 360.0, self.lons)
             idx = np.argsort(self.lons)
             self.lons = self.lons[idx]
             self.grid = self.grid[:, idx]
